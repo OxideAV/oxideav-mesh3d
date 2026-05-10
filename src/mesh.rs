@@ -6,6 +6,11 @@
 //! reference, and one [`Topology`] (how the vertices are stitched).
 //! This mirrors glTF 2.0 §3.7.2 mesh.primitive (which itself
 //! generalises the OpenGL VAO).
+//!
+//! Morph targets — typed deltas applied on top of the base vertex
+//! buffer to interpolate between named poses — live on
+//! [`Primitive::targets`] (per the glTF 2.0 §3.7.2.2 schema), with the
+//! per-target blend weights' default values on [`Mesh::weights`].
 
 use std::collections::HashMap;
 
@@ -56,6 +61,45 @@ impl Indices {
     }
 }
 
+/// One named morph-target delta set applied on top of a [`Primitive`]'s
+/// base vertex buffer.
+///
+/// Per glTF 2.0 §3.7.2.2, a morph target is an ordered map from
+/// attribute name (`POSITION`, `NORMAL`, `TANGENT`) to a delta accessor
+/// of the same length as the base attribute. The deltas are added to
+/// the base values, scaled by the per-target weight (sourced from
+/// either [`Mesh::weights`] or, at runtime, the
+/// [`crate::AnimationProperty::MorphWeights`] channel).
+///
+/// We surface those three named slots as typed `Option`s so callers
+/// don't have to round-trip through string keys. Other attribute names
+/// allowed by future glTF extensions (e.g. `COLOR_0`) still travel via
+/// [`Primitive::extras`].
+///
+/// All present buffers must have the same length as the corresponding
+/// base attribute on the parent [`Primitive`]. Absent slots
+/// (`None`/`tangent: None`) leave that attribute untouched at runtime
+/// for this target.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MorphTarget {
+    /// Per-vertex `POSITION` delta (added to the base `positions`).
+    pub position: Option<Vec<[f32; 3]>>,
+    /// Per-vertex `NORMAL` delta (added to the base `normals`).
+    pub normal: Option<Vec<[f32; 3]>>,
+    /// Per-vertex `TANGENT` delta (added to the base `tangents` xyz;
+    /// the handedness `w` is *not* morphed per spec §3.7.2.2).
+    pub tangent: Option<Vec<[f32; 3]>>,
+}
+
+impl MorphTarget {
+    /// Empty target — no deltas in any slot. Useful as a starting
+    /// builder before the format-crate decoder fills the slots that
+    /// the wire actually carried.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// One drawable submesh.
 ///
 /// `positions` is mandatory; every other attribute is optional and,
@@ -63,6 +107,12 @@ impl Indices {
 /// vertex-colour buffers are vectors-of-vectors so multi-channel
 /// content (lightmaps, second UV set) is representable without
 /// flattening into the spec's TEXCOORD_0/_1 strings.
+///
+/// **Round-7 candidate:** mark `#[non_exhaustive]` once every
+/// downstream caller (the format crates in particular) has migrated
+/// off literal `Primitive { … }` construction onto
+/// [`Primitive::new`] + per-field assignment. Tracked in MEMORY
+/// alongside the same deferral on `oxideav_core::Group`.
 #[derive(Clone, Debug)]
 pub struct Primitive {
     pub topology: Topology,
@@ -81,6 +131,14 @@ pub struct Primitive {
     pub weights: Option<Vec<[f32; 4]>>,
     pub indices: Option<Indices>,
     pub material: Option<MaterialId>,
+    /// Morph-target delta sets per glTF 2.0 §3.7.2.2. Empty vec means
+    /// no morph targets on this primitive. Each entry is one named
+    /// pose (e.g. "smile", "blink") whose blend weight is sourced
+    /// from [`Mesh::weights`] (default) or an animation channel
+    /// (runtime). The number of targets across every primitive in the
+    /// parent [`Mesh`] should match — the spec mandates that the
+    /// `i`th target on each primitive shares one weight slot.
+    pub targets: Vec<MorphTarget>,
     pub extras: HashMap<String, serde_json::Value>,
 }
 
@@ -99,6 +157,7 @@ impl Primitive {
             weights: None,
             indices: None,
             material: None,
+            targets: Vec::new(),
             extras: HashMap::new(),
         }
     }
@@ -126,10 +185,24 @@ impl Primitive {
 /// Most authoring tools split a logical "object" into one primitive
 /// per material so the renderer can issue one draw call per
 /// primitive without rebinding state.
+///
+/// **Round-7 candidate:** mark `#[non_exhaustive]` once every
+/// downstream caller has migrated off literal `Mesh { … }`
+/// construction onto [`Mesh::new`] + builders + struct-update
+/// `..Mesh::default()` syntax. See the [`Primitive`] doc-note for
+/// the rationale.
 #[derive(Clone, Debug, Default)]
 pub struct Mesh {
     pub name: Option<String>,
     pub primitives: Vec<Primitive>,
+    /// Default morph-target blend weights (glTF 2.0 §3.7.2.2
+    /// `mesh.weights`). When non-empty, `weights[i]` is the static
+    /// blend factor for the `i`th [`MorphTarget`] on every primitive
+    /// in [`Mesh::primitives`]. An animation channel of property
+    /// [`crate::AnimationProperty::MorphWeights`] overrides this
+    /// vector at runtime. Empty vec means no static weights — the
+    /// runtime falls back to zero (i.e. base mesh).
+    pub weights: Vec<f32>,
 }
 
 impl Mesh {
@@ -138,12 +211,21 @@ impl Mesh {
         Self {
             name: name.into(),
             primitives: Vec::new(),
+            weights: Vec::new(),
         }
     }
 
     /// Push a primitive and return `&mut self` for chaining.
     pub fn with_primitive(mut self, primitive: Primitive) -> Self {
         self.primitives.push(primitive);
+        self
+    }
+
+    /// Set the static morph-blend `weights` and return `&mut self`
+    /// for chaining. The vector length should match the number of
+    /// [`MorphTarget`]s on each [`Primitive`] in this mesh.
+    pub fn with_weights(mut self, weights: impl Into<Vec<f32>>) -> Self {
+        self.weights = weights.into();
         self
     }
 }

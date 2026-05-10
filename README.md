@@ -138,12 +138,53 @@ Round 5 lands two test extensions:
   varies per process invocation; we test flavour-id parity +
   decode-equivalence instead.
 
-## Round 6 candidates
+Round 6 lands typed morph-target fields (BREAKING, pre-v0.1):
+
+- `MorphTarget { position, normal, tangent }` — typed delta-buffer
+  struct for one named morph pose per glTF 2.0 §3.7.2.2. Each slot
+  is `Option<Vec<[f32; 3]>>` (the TANGENT slot is xyz-only — the
+  base TANGENT's handedness `w` is not morphed per spec).
+- `Primitive::targets: Vec<MorphTarget>` for the per-pose roster.
+- `Mesh::weights: Vec<f32>` for the static default morph blend (an
+  `AnimationProperty::MorphWeights` channel overrides at runtime).
+- New builder helper `Mesh::with_weights`. The forward-compatible
+  construction style is `Primitive::new(Topology)` /
+  `Mesh::new(name)` + `with_*` builders + per-field assignment;
+  literal `Primitive { … }` / `Mesh { … }` construction still
+  compiles in this round but must populate the two new fields.
+  `#[non_exhaustive]` is deferred to round 7.
+
+Sketch:
+
+```rust
+use oxideav_mesh3d::{Mesh, MorphTarget, Primitive, Topology};
+
+let mut prim = Primitive::new(Topology::Triangles);
+prim.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+prim.normals = Some(vec![[0.0, 0.0, 1.0]; 3]);
+// One morph target ("smile") with POSITION + NORMAL deltas.
+prim.targets.push(MorphTarget {
+    position: Some(vec![[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]]),
+    normal: Some(vec![[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]]),
+    tangent: None,
+});
+
+let mesh = Mesh::new(Some("face".to_owned()))
+    .with_primitive(prim)
+    .with_weights(vec![0.0_f32]);  // static blend: target 0 disabled
+```
+
+## Round 7 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to
   publish 0.0.1 (which lands its first encoder); 0.0.0 ships a
   decoder only. Once the encoder is on crates.io, add stl→usdz,
   obj→usdz, gltf→usdz pairs to `cross_format_roundtrip.rs`.
+- glTF consumer migration off the `__morph_targets` /
+  `__mesh_weights` extras sentinels onto the new typed
+  `Primitive::targets` / `Mesh::weights` fields (the round-6 typed
+  surface lands here; gltf encoder/decoder consumes it once mesh3d
+  publishes 0.0.2).
 - glTF scene-level `skins` + `skeletons` + `animations` array
   serialisation — the round-4 pinning tests will flip from "drops"
   to "survives" in the same commit. Producer-side change in

@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 6 (typed morph-target fields)
+
+- `MorphTarget { position, normal, tangent }` — typed delta-buffer
+  struct for one named morph pose per glTF 2.0 §3.7.2.2. Each slot
+  is `Option<Vec<[f32; 3]>>`; `position` and `normal` deltas add to
+  the base attribute, `tangent` carries xyz only (handedness `w` on
+  the base TANGENT is not morphed per spec). Re-exported from the
+  crate root.
+- `Primitive::targets: Vec<MorphTarget>` — per-primitive morph-target
+  roster. Empty vec means no morph targets. The `i`th entry across
+  every primitive in a [`Mesh`] shares one weight slot per spec
+  §3.7.2.2.
+- `Mesh::weights: Vec<f32>` — static default morph-blend weights
+  (spec §3.7.2.2 `mesh.weights`); empty default. An animation channel
+  of `AnimationProperty::MorphWeights` overrides at runtime.
+- `Mesh::with_weights(impl Into<Vec<f32>>)` builder helper for
+  chained construction.
+- `tests/morph_targets.rs` — 13 tests covering: defaults are empty
+  (5 sub-tests on `Primitive::new` / `Mesh::new` / `Mesh::default` /
+  `MorphTarget::new` / `MorphTarget::default` empty + None invariants),
+  `Primitive` with two `MorphTarget`s (POSITION + NORMAL each)
+  round-trips bit-exact through `Clone` + `PartialEq`, TANGENT-slot
+  dimensionality is `[f32; 3]` per spec §3.7.2.2, four-weight `Mesh`
+  round-trips, crate-root re-export parity with the module path,
+  `with_weights` overwrite + array-literal acceptance, recommended
+  builder construction style for both `Primitive` and `Mesh`.
+
+### Changed — BREAKING (round 6, pre-v0.1)
+
+- **`Primitive` gains a non-`Option`-defaulted `targets` field.**
+  Callers constructing `Primitive` literally
+  (`Primitive { topology, positions, … extras }`) must add
+  `targets: Vec::new()` to the literal, or migrate to the
+  `Primitive::new(Topology::…)` constructor + per-field assignment
+  (recommended forward-compatible style).
+- **`Mesh` gains a non-`Option`-defaulted `weights` field.**
+  Callers constructing `Mesh` literally must add
+  `weights: Vec::new()`, or migrate to `Mesh::new(name)` +
+  the `with_*` builders, or struct-update syntax with
+  `..Mesh::default()`.
+
+`Primitive` and `Mesh` are **not** marked `#[non_exhaustive]` in
+this round (deferred to round 7 alongside the
+`oxideav_core::Group` deferral tracked in MEMORY) so existing
+struct-literal construction sites still compile after adding the
+two new fields, instead of also having to refactor onto builders.
+
+### Release-order note
+
+Sibling format crates (`oxideav-stl 0.0.0`, `oxideav-obj 0.0.0`,
+`oxideav-gltf 0.0.0`, `oxideav-usdz 0.0.0`) at the time of this
+commit:
+
+- `oxideav-stl 0.0.0` constructs `Primitive { … }` and `Mesh { … }`
+  literally and will fail to compile against new mesh3d until it
+  adds the two new fields to the literal.
+- `oxideav-obj 0.0.0` and `oxideav-usdz 0.0.0` already use
+  `Primitive::new` / `Mesh::new` + builders and are unaffected.
+- `oxideav-gltf 0.0.0` operates on its own crate-local
+  `gltf::json_model::Primitive` / `Mesh` types and is unaffected;
+  the migration of its `__morph_targets` / `__mesh_weights`
+  sentinels onto the new typed fields lands in round 7 on the gltf
+  side.
+
+Recommended publish order:
+
+1. Publish `oxideav-mesh3d` 0.0.2 (this commit) to crates.io.
+2. Update `oxideav-stl` to add `targets: Vec::new()` and
+   `weights: Vec::new()` to its two struct-literal construction
+   sites in `binary.rs` and `ascii.rs`. Publish 0.0.1.
+3. Update `oxideav-gltf` to consume the new typed fields in place
+   of the `__morph_targets` / `__mesh_weights` extras sentinels;
+   round-4 / round-5 pinning tests in this crate flip from "drops"
+   to "survives". Publish 0.0.1.
+4. mesh3d's own dev-dep CI (cross-format roundtrip suite) goes
+   green again on the next release-plz cycle once the bumped
+   sibling versions are published.
+
 ### Added — Round 5 (multi-mesh stress + encoder option round-trip)
 
 - `tests/multi_material_pool_stress.rs` — 12 tests across four
