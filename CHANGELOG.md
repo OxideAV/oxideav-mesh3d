@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 5 (multi-mesh stress + encoder option round-trip)
+
+- `tests/multi_material_pool_stress.rs` — 12 tests across four
+  sections that extend round 4's two-primitive coverage:
+  - **Cross-mesh OBJ vertex pool dedup** — six raw vertex positions
+    spanning two separate `Mesh`es collapse to three `v` lines (the
+    `serialize_obj` global pool reaches *across* meshes, not just
+    across primitives within one mesh). glTF keeps both meshes
+    distinct; STL flattens to one triangle stream and survives the
+    triangle count.
+  - **Five-material binding survival** — one mesh with five
+    primitives bound to five distinct materials emits five `usemtl`
+    directives in OBJ output; all five names round-trip via
+    `Primitive::extras["obj:usemtl"]`. glTF keeps five distinct
+    `materials[]` and five distinct primitive `material` indices.
+  - **Multi-mesh hierarchy** — a parent node with two child nodes
+    (each carrying its own mesh) survives all three encoders;
+    glTF keeps the per-mesh partition; STL flattens.
+  - **Material aliasing** — three primitives bound to the *same*
+    material id still emit three `usemtl` directives in OBJ output
+    (one per primitive boundary) but glTF collapses to one
+    `materials[]` entry with three indices pointing at index 0.
+- `tests/encoder_options_roundtrip.rs` — 18 tests pinning every
+  configuration knob the published 0.0.0 sibling crates expose:
+  - **STL** — `new_binary` / `new_ascii` / `new(StlFormat)` /
+    `default()` constructor parity (byte-equal output, `format()`
+    getter agrees), `solid` token marker on ASCII output, 80-byte
+    header + `u32` triangle count layout on binary output, both
+    flavours round-trip to the same decoded positions.
+  - **OBJ** — `ObjEncoder::new()` ↔ `default()` byte-equal,
+    `with_mtl_basename("foo")` injects exactly one
+    `mtllib foo.mtl` directive, default emits zero, the directive
+    survives a re-encode via `Scene3D::extras["obj:mtllibs"]`.
+    `MtlEncoder::new()` output re-parses through `parse_mtl` to
+    the same material name + base colour and matches the
+    free-function `serialize_mtl` byte-for-byte.
+  - **glTF** — `new()` and `with_output(Glb)` both target
+    `OutputFlavour::Glb` and decode to identical positions
+    (byte-equal not asserted: glTF JSON serialises a `HashMap`
+    whose iteration order varies per process). `OutputFlavour::default()`
+    is `Glb`. `Glb` bytes start with `b"glTF"` magic;
+    `JsonEmbedded` bytes start with `b'{'`. The `json_encoder()`
+    helper picks `JsonEmbedded` and decodes equivalently to
+    `with_output(JsonEmbedded)`. Both flavours decode the same
+    `Scene3D` to identical positions and material name.
+
 ### Added — Round 4 (skinning + multi-primitive + extras audit coverage)
 
 - `tests/extras_and_skinning_coverage.rs` — 15 tests grouped into

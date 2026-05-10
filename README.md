@@ -116,7 +116,29 @@ Round 4 lands a 15-test extension to the cross-format matrix in
   `up_axis = PosY` / `unit = Metres`, gltf → OBJ scene-extras drop,
   and gltf primitive-extras JSON value preservation.
 
-## Round 5 candidates
+Round 5 lands two test extensions:
+
+- `tests/multi_material_pool_stress.rs` (12 tests) — five-material
+  bindings, cross-mesh OBJ vertex-pool dedup, multi-mesh hierarchy,
+  material aliasing. Confirms the OBJ encoder's global vertex pool
+  collapses across separate `Mesh`es (not just within one), the
+  glTF encoder preserves five distinct `material` indices on five
+  primitives, and STL flattens hierarchy into a flat triangle list.
+- `tests/encoder_options_roundtrip.rs` (18 tests) — pins every
+  configuration knob the published 0.0.0 sibling crates expose:
+  `StlEncoder` constructor parity (`new_binary` / `new(StlFormat::Binary)`
+  / `default`) + `format()` getter + `solid` and 80-byte-header
+  byte markers, `ObjEncoder::with_mtl_basename` directive injection
+  + `obj:mtllibs` round-trip into `Scene3D::extras`, `MtlEncoder`
+  ↔ `parse_mtl` / `serialize_mtl` parity, `GltfEncoder` flavour
+  selection (`new` / `with_output(Glb)` / `default()`), `json_encoder()`
+  helper parity with `with_output(JsonEmbedded)`. Byte-equality is
+  not asserted on the glTF side because the encoder serialises a
+  `HashMap` (per-primitive `attributes`) whose iteration order
+  varies per process invocation; we test flavour-id parity +
+  decode-equivalence instead.
+
+## Round 6 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to
   publish 0.0.1 (which lands its first encoder); 0.0.0 ships a
