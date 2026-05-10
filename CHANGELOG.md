@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 4 (skinning + multi-primitive + extras audit coverage)
+
+- `tests/extras_and_skinning_coverage.rs` — 15 tests grouped into
+  four sections that extend round 3's matrix without overlapping it:
+  - **Skinning data primitive-level survival** — gltf round-trips
+    `Primitive::joints` + `Primitive::weights` bit-exact (JOINTS_0 +
+    WEIGHTS_0 accessor channels); STL + OBJ silently drop them
+    (no in-format surface). Two pinning tests assert that the
+    `Scene3D::skins` / `Scene3D::skeletons` / `Scene3D::animations`
+    arrays are dropped by gltf 0.0.0 — when the encoder gains
+    skin-array + animation serialisation the assertions flip in the
+    same commit that lifts the gap.
+  - **Multi-primitive vertex pool dedup (OBJ)** — six raw vertex
+    positions across two primitives sharing four physical corners
+    pool to four `v` lines in the OBJ output (intra+inter-primitive
+    interning). Triangle count survives the round-trip; gltf keeps
+    the two primitives distinct in the round-tripped mesh.
+  - **Multi-material binding** — two primitives, two materials emit
+    two distinct `usemtl` directives in OBJ output and round-trip
+    both names back through `Primitive::extras["obj:usemtl"]`. gltf
+    preserves the per-primitive `material` index; resolved names
+    survive.
+  - **Cross-format extras audit** — pins which `extras` keys a
+    downstream conversion pipeline can rely on:
+    `stl:source = "binary" | "ascii"` is idempotent across STL → STL
+    round-trips; STL decoder stamps `up_axis = PosZ` +
+    `unit = Millimetres`; OBJ decoder stamps `up_axis = PosY` +
+    `unit = Metres`; gltf-side `Scene3D::extras` are silently
+    dropped on a gltf → OBJ pass (OBJ has no scene-level free-form
+    key surface); arbitrary JSON values on `Primitive::extras`
+    survive a gltf round-trip intact.
+
 ### Added — Round 3 (cross-format conversion roundtrip suite)
 
 - `tests/cross_format_roundtrip.rs` — 16 tests exercising the

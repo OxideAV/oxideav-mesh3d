@@ -93,25 +93,45 @@ Round 3 lands a cross-format roundtrip suite that exercises the
   (`decoder_extensions(format_id)`), and the `Default::default()` /
   `new()` parity.
 
-## Round 4 candidates
+Round 4 lands a 15-test extension to the cross-format matrix in
+`tests/extras_and_skinning_coverage.rs`:
 
-- USDZ encoder — write back the typed model into a fresh USDZ
-  archive so the cross-format suite can author USDZ in-test instead
-  of skipping its row of the matrix. Lit up by the
-  `raw_storage()` pass-through path on `AssetSource` so a USDZ →
-  USDZ converter can copy ZIP-stored payloads verbatim.
+- **Skinning data primitive-level** — `Primitive::joints` +
+  `Primitive::weights` survive a glTF round-trip bit-exact (JOINTS_0 +
+  WEIGHTS_0 accessor channels); STL + OBJ silently drop them. The
+  scene-level `skins` / `skeletons` / `animations` arrays are *not*
+  yet round-tripped by glTF 0.0.0 — two tests pin that gap so a
+  future encoder upgrade flips them from "drops" to "survives" in
+  the same commit.
+- **Multi-primitive vertex pool dedup (OBJ)** — two primitives
+  sharing four corners pool to four `v` lines in the OBJ output;
+  triangle count survives; glTF keeps the per-primitive partition
+  distinct.
+- **Multi-material binding** — two primitives × two materials emit
+  two `usemtl` directives in OBJ; both names round-trip via
+  `Primitive::extras["obj:usemtl"]`. glTF preserves per-primitive
+  `material` index.
+- **Cross-format extras audit** — pins `stl:source` idempotence,
+  STL `up_axis = PosZ` / `unit = Millimetres`, OBJ
+  `up_axis = PosY` / `unit = Metres`, gltf → OBJ scene-extras drop,
+  and gltf primitive-extras JSON value preservation.
+
+## Round 5 candidates
+
+- USDZ row of the cross-format matrix — needs `oxideav-usdz` to
+  publish 0.0.1 (which lands its first encoder); 0.0.0 ships a
+  decoder only. Once the encoder is on crates.io, add stl→usdz,
+  obj→usdz, gltf→usdz pairs to `cross_format_roundtrip.rs`.
+- glTF scene-level `skins` + `skeletons` + `animations` array
+  serialisation — the round-4 pinning tests will flip from "drops"
+  to "survives" in the same commit. Producer-side change in
+  `oxideav-gltf`; consumer-side flip-and-republish here.
 - KHR extension surface (`KHR_materials_emissive_strength`,
   `KHR_materials_unlit`, `KHR_lights_punctual`,
   `KHR_audio_emitter`) on top of the existing glTF round-trip.
-- Skinning + animation cross-format coverage — the round-3 suite
-  only exercises the geometry / material / texture surfaces.
-  glTF is the only sibling that round-trips skin/animation data
-  today; OBJ + STL drop them.
-- Multi-mesh / multi-material fixtures — the round-3 suite uses
-  one-triangle and one-quad scenes; larger fixtures (per-face
-  materials, multiple primitives per mesh) would catch
-  vertex-pool dedup bugs the OBJ encoder side of the round-trip
-  could otherwise hide.
+- Per-face material binding via `UsdGeomSubset` (USDZ decoder
+  side) + glTF KHR_materials_variants for per-LOD or per-instance
+  swapping.
 
 ## Standalone build
 
