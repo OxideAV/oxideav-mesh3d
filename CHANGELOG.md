@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.1...v0.0.2) - 2026-05-10
+
+### Other
+
+- Drop dev-deps + cross-format tests; live in crates/oxideav-tests/ now
+- Round 6: typed morph-target fields (Primitive.targets + Mesh.weights)
+- Round 5: multi-mesh stress + encoder option round-trip coverage
+- Round 4: skinning + multi-primitive + extras audit coverage
+- Round 3: cross-format conversion roundtrip suite
+
 ### Added — Round 6 (typed morph-target fields)
 
 - `MorphTarget { position, normal, tangent }` — typed delta-buffer
