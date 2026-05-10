@@ -31,30 +31,15 @@ oxideav-core = { version = "0.1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-[dev-dependencies]
-# Format codec siblings used by the cross-format roundtrip suite +
-# `Mesh3DRegistry` lookup tests. They all implement
-# `Mesh3DDecoder` / `Mesh3DEncoder` against the typed model in this
-# crate and expose a `register(&mut Mesh3DRegistry)` helper under their
-# default `registry` feature (which we keep on so the registry tests
-# can exercise the `register()` entry points end-to-end).
+# Cross-format roundtrip suite + `Mesh3DRegistry` lookup tests
+# previously lived here as `[dev-dependencies]` on
+# oxideav-{stl,obj,gltf,usdz}. They moved to
+# `crates/oxideav-tests/tests/mesh3d_*.rs` in the workspace umbrella
+# so the typed-model crate doesn't import its own consumers — that
+# inverted dep was the root cause of the r6 BREAKING-field cascade
+# (every literal `Primitive { … }` site in the dev-depped 0.0.0
+# format crates broke when mesh3d added new public fields).
 #
-# Versioned at the minor track ("0.0") so patch bumps from release-plz
-# don't ripple through. Cargo resolves the cycle by using the local
-# path for `oxideav-mesh3d` (this crate) while pulling the format
-# crates from crates.io.
-oxideav-stl = "0.0"
-oxideav-obj = "0.0"
-oxideav-gltf = "0.0"
-oxideav-usdz = "0.0"
-
-# The format crates dev-depped above all carry their own
-# `oxideav-mesh3d = "0.0"` runtime dep. Without `[patch]` Cargo would
-# resolve _their_ copy from crates.io and _our_ copy from this local
-# path as two distinct compilation units (even at the same version
-# string), giving us two `Scene3D` types the trait surface can't
-# shuttle between. The patch unifies every consumer of `oxideav-mesh3d`
-# in the test build onto the local path so a single `Scene3D` flows
-# through the cross-format roundtrip suite.
-[patch.crates-io]
-oxideav-mesh3d = { path = "." }
+# Production code already follows the right pattern:
+# `oxideav-meta::populate_mesh3d_registry` does the actual format-
+# crate registration into a `Mesh3DRegistry`. Tests now mirror that.
