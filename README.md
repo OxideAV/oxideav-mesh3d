@@ -70,21 +70,48 @@ No format support yet; sibling crates (`oxideav-stl`,
 `oxideav-obj`, `oxideav-gltf`) plug in via `Mesh3DRegistry` once
 this crate is published.
 
-## Round 3 candidates
+Round 3 lands a cross-format roundtrip suite that exercises the
+`Mesh3DRegistry` surface against the four published siblings
+(`oxideav-stl 0.0`, `oxideav-obj 0.0`, `oxideav-gltf 0.0`,
+`oxideav-usdz 0.0`) consumed as `[dev-dependencies]`:
 
-- `oxideav-stl` (binary + ASCII) — STL is the smallest realistic
-  consumer of the type model and validates the encoder side
-  immediately.
-- `oxideav-obj` + Wavefront MTL — exercises the multi-material
-  primitive split + the `Material::extras` round-trip path.
-- `oxideav-gltf` (JSON + GLB) — proves the type model round-trips
-  losslessly against its design source-of-truth, including the
-  `KHR_audio_emitter` extension against the new audio types.
-- `oxideav-usdz` — first real consumer of the `raw_storage()`
-  pass-through path.
+- `tests/cross_format_roundtrip.rs` — 16 tests covering
+  typed-fixture → encoder → decoder fidelity for STL binary, STL
+  ASCII, OBJ, glTF GLB, glTF JSON, plus six format-to-format chains
+  (stl ↔ obj, stl ↔ gltf, obj ↔ gltf). Side-channel checks confirm
+  that OBJ `usemtl` round-trips through `Primitive::extras`, glTF
+  preserves `base_color` literally, STL drops materials but keeps
+  geometry, and `ImageData::Source(InMemoryAsset)` survives a glTF
+  JSON `data:` URI inline. Encoder rejection of `Lines` topology by
+  STL is asserted as a typed `Err`, not a panic.
+- `tests/registry_lookup.rs` — 18 tests for the
+  `Mesh3DRegistry` resolution surface after every sibling crate's
+  `register(&mut reg)` helper has run: extension and format-id
+  routes for every codec, case-insensitivity contract, overwrite
+  semantics on repeated `register_decoder` / `register_encoder`
+  calls, unknown-key behaviour, reverse lookup
+  (`decoder_extensions(format_id)`), and the `Default::default()` /
+  `new()` parity.
+
+## Round 4 candidates
+
+- USDZ encoder — write back the typed model into a fresh USDZ
+  archive so the cross-format suite can author USDZ in-test instead
+  of skipping its row of the matrix. Lit up by the
+  `raw_storage()` pass-through path on `AssetSource` so a USDZ →
+  USDZ converter can copy ZIP-stored payloads verbatim.
 - KHR extension surface (`KHR_materials_emissive_strength`,
   `KHR_materials_unlit`, `KHR_lights_punctual`,
-  `KHR_audio_emitter`) once `oxideav-gltf` lands.
+  `KHR_audio_emitter`) on top of the existing glTF round-trip.
+- Skinning + animation cross-format coverage — the round-3 suite
+  only exercises the geometry / material / texture surfaces.
+  glTF is the only sibling that round-trips skin/animation data
+  today; OBJ + STL drop them.
+- Multi-mesh / multi-material fixtures — the round-3 suite uses
+  one-triangle and one-quad scenes; larger fixtures (per-face
+  materials, multiple primitives per mesh) would catch
+  vertex-pool dedup bugs the OBJ encoder side of the round-trip
+  could otherwise hide.
 
 ## Standalone build
 

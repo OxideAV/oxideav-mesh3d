@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 3 (cross-format conversion roundtrip suite)
+
+- `tests/cross_format_roundtrip.rs` — 16 tests exercising the
+  `Mesh3DRegistry` decode → re-encode matrix end-to-end across the
+  four sibling format crates (`oxideav-stl`, `oxideav-obj`,
+  `oxideav-gltf`, `oxideav-usdz`) consumed as `[dev-dependencies]`.
+  Coverage:
+  - **Typed → format → typed** for all five
+    encoder targets: STL binary, STL ASCII, OBJ, glTF GLB,
+    glTF JSON-embedded.
+  - **Format → format chain**: stl→obj, stl→gltf, obj→stl, obj→gltf,
+    gltf→stl, gltf→obj — each authored as a one-triangle (or
+    two-triangle quad) `Scene3D`, encoded → decoded → re-encoded →
+    re-decoded, with positions resolved through the index buffer
+    when present so the assert is codec-layout-agnostic.
+  - **Side-channel preservation**: OBJ `usemtl` round-trips through
+    `Primitive::extras["obj:usemtl"]`; glTF preserves PBR
+    `base_color` literally; STL silently drops the material binding
+    while keeping geometry; `ImageData::Source(InMemoryAsset)`
+    survives a glTF JSON `data:` URI round-trip.
+  - **Encoder rejection**: STL surfaces an `Err` (not a panic) when
+    asked to encode a `Lines`-topology primitive.
+- `tests/registry_lookup.rs` — 18 tests covering the
+  `Mesh3DRegistry` resolution surface after the four sibling crates'
+  `register(&mut reg)` helpers run:
+  - Every canonical extension (`.stl`, `.obj`, `.mtl`, `.gltf`,
+    `.glb`, `.usdz`) and format id resolves through both
+    `decoder_for_*` and `encoder_for_*` lookups (USDZ is
+    decoder-only, asserted explicitly).
+  - Case-insensitivity contract: `STL`, `Stl`, `GLTF`, `Glb`, `OBJ`
+    all hit; `decoder_for_format("GlTf")` resolves.
+  - `register_decoder` / `register_encoder` overwrite semantics
+    when called twice with the same format id (last writer wins),
+    plus the extension-route remap when the second call narrows the
+    extension list.
+  - Reverse lookup via `decoder_extensions("gltf")` returning both
+    `[gltf, glb]`, encoder reverse lookup for `gltf`/`glb` as
+    separate format ids, USDZ encoder absence.
+  - Unknown extension / format id → `None`; empty-registry contract;
+    `Default::default()` parity with `new()`; `Debug` impl
+    enumerates the registered keysets.
+- `[dev-dependencies]` adds the four format crates at version
+  `"0.0"` so future patch releases don't ripple. A
+  `[patch.crates-io] oxideav-mesh3d = { path = "." }` block keeps
+  the test-time dependency graph single-version (the format crates'
+  own `oxideav-mesh3d = "0.0"` runtime dep otherwise resolves to
+  the published copy alongside our local one, producing two
+  incompatible `Scene3D` types).
+
 ## [0.0.1](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.0...v0.0.1) - 2026-05-10
 
 ### Other
