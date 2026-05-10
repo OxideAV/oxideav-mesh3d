@@ -1,0 +1,32 @@
+[package]
+name = "oxideav-mesh3d"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["Mark Karpeles"]
+description = "Pure-Rust 3D scene + mesh typed model — Decoder/Encoder traits for STL/OBJ/glTF/FBX/USD format crates"
+repository = "https://github.com/OxideAV/oxideav-mesh3d"
+homepage = "https://github.com/OxideAV/oxideav-mesh3d"
+readme = "README.md"
+keywords = ["3d", "mesh", "scene", "gltf", "pbr"]
+categories = ["multimedia", "rendering::data-formats"]
+
+[features]
+default = ["registry"]
+
+# `registry` wires up the `Mesh3DRegistry` and the `oxideav-core` Error
+# alias so this crate plugs into the broader oxideav framework. Drop it
+# (`default-features = false`) for a free-standing build that only
+# exposes the typed model + standalone Decoder/Encoder traits with a
+# crate-local Error type.
+registry = ["dep:oxideav-core"]
+
+[dependencies]
+# Optional under the `registry` feature so consumers can use the type
+# model without pulling the framework dependency tree.
+oxideav-core = { version = "0.1", optional = true }
+# `extras: HashMap<String, serde_json::Value>` round-trips loss-tolerant
+# side-channel data from non-glTF formats (FBX/USD/OBJ extensions).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
