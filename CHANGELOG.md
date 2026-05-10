@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.0...v0.0.1) - 2026-05-10
+
+### Other
+
+- Round 2: AssetSource trait + audio types (BREAKING, pre-publish)
+
 ### Added — Round 2 (asset trait + audio types)
 
 - `AssetSource` trait — `Send + Sync + Debug` lazy reference to a
