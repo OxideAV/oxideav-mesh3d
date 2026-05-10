@@ -18,8 +18,15 @@
 use std::collections::HashMap;
 
 use crate::{
-    animation::Animation, camera::Camera, light::Light, material::Material, mesh::Mesh,
-    skin::Skeleton, skin::Skin, texture::Texture,
+    animation::Animation,
+    audio::{AudioEmitter, AudioEmitterId, AudioSource, AudioSourceId},
+    camera::Camera,
+    light::Light,
+    material::Material,
+    mesh::Mesh,
+    skin::Skeleton,
+    skin::Skin,
+    texture::Texture,
 };
 
 macro_rules! id_newtype {
@@ -272,6 +279,12 @@ pub struct Node {
     pub camera: Option<CameraId>,
     pub light: Option<LightId>,
     pub skin: Option<SkinId>,
+    /// Optional audio emitter attached to this node. The emitter's
+    /// position + orientation come from this node's world transform
+    /// when [`AudioEmitter::spatial`](crate::AudioEmitter::spatial)
+    /// is `Some`; non-spatial emitters ignore the transform and play
+    /// globally.
+    pub audio_emitter: Option<AudioEmitterId>,
     pub extras: HashMap<String, serde_json::Value>,
 }
 
@@ -286,6 +299,7 @@ impl Node {
             camera: None,
             light: None,
             skin: None,
+            audio_emitter: None,
             extras: HashMap::new(),
         }
     }
@@ -305,6 +319,12 @@ impl Node {
     /// Builder-style mesh attachment.
     pub fn with_mesh(mut self, mesh: MeshId) -> Self {
         self.mesh = Some(mesh);
+        self
+    }
+
+    /// Builder-style audio-emitter attachment.
+    pub fn with_audio_emitter(mut self, emitter: AudioEmitterId) -> Self {
+        self.audio_emitter = Some(emitter);
         self
     }
 }
@@ -334,6 +354,10 @@ pub struct Scene3D {
     pub animations: Vec<Animation>,
     pub cameras: Vec<Camera>,
     pub lights: Vec<Light>,
+    /// Audio assets owned by the scene; addressed by [`AudioSourceId`].
+    pub audio_sources: Vec<AudioSource>,
+    /// In-scene audio-emitter instances; addressed by [`AudioEmitterId`].
+    pub audio_emitters: Vec<AudioEmitter>,
     pub up_axis: Axis,
     pub front_axis: Axis,
     pub unit: Unit,
@@ -355,6 +379,8 @@ impl Scene3D {
             animations: Vec::new(),
             cameras: Vec::new(),
             lights: Vec::new(),
+            audio_sources: Vec::new(),
+            audio_emitters: Vec::new(),
             up_axis: Axis::PosY,
             front_axis: Axis::NegZ,
             unit: Unit::Metres,
@@ -424,6 +450,30 @@ impl Scene3D {
         let id = LightId(self.lights.len() as u32);
         self.lights.push(light);
         id
+    }
+
+    /// Push an [`AudioSource`] and return its id.
+    pub fn add_audio_source(&mut self, source: AudioSource) -> AudioSourceId {
+        let id = AudioSourceId(self.audio_sources.len() as u32);
+        self.audio_sources.push(source);
+        id
+    }
+
+    /// Push an [`AudioEmitter`] and return its id.
+    pub fn add_audio_emitter(&mut self, emitter: AudioEmitter) -> AudioEmitterId {
+        let id = AudioEmitterId(self.audio_emitters.len() as u32);
+        self.audio_emitters.push(emitter);
+        id
+    }
+
+    /// Borrow an audio source by id, if it exists.
+    pub fn audio_source(&self, id: AudioSourceId) -> Option<&AudioSource> {
+        self.audio_sources.get(id.0 as usize)
+    }
+
+    /// Borrow an audio emitter by id, if it exists.
+    pub fn audio_emitter(&self, id: AudioEmitterId) -> Option<&AudioEmitter> {
+        self.audio_emitters.get(id.0 as usize)
     }
 
     /// Promote a node to a root of the scene-graph forest.

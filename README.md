@@ -29,8 +29,10 @@ Round 1 ships:
   (`base_color`, `metallic`, `roughness`, `normal`, `occlusion`,
   `emissive`) plus `AlphaMode { Opaque, Mask{cutoff}, Blend }` and
   `double_sided`.
-- `Texture` / `ImageData { Embedded(VideoFrame), External, Encoded }`
-  / `Sampler` with the usual mag/min filters and wrap modes.
+- `Texture` / `ImageData { Embedded(VideoFrame), Source(Arc<dyn AssetSource>), External }`
+  / `Sampler` with the usual mag/min filters and wrap modes. The
+  `Source` variant lets format crates pass a lazy reader through
+  the type model without materialising a `Vec<u8>` (round 2).
 - `Skeleton` (joint nodes + inverse-bind matrices) + `Skin`
   binding to a mesh.
 - `Animation` / `AnimationChannel` / `AnimationSampler` /
@@ -42,11 +44,33 @@ Round 1 ships:
   (case-insensitive extension lookup) — mirrors the codec-registry
   pattern from `oxideav-core`.
 
-No format support this round; sibling crates (`oxideav-stl`,
+Round 2 adds (still pre-publish, BREAKING vs round 1):
+
+- `AssetSource` trait — `Send + Sync + Debug` lazy reference to a
+  binary asset (texture, audio, anything blob-shaped). `open()`
+  returns a streaming reader; optional `raw_storage()` exposes
+  the asset's stored bytes + a scheme identifier so a writer
+  targeting the same scheme (USDZ → USDZ, GLB → GLB) can pass
+  the payload through without re-encoding.
+- `RawStorage<'a> { scheme, bytes, uncompressed_size }` and
+  `InMemoryAsset` (trivial owning impl).
+- Audio surface — `AudioSource`, `AudioEmitter`, `SpatialAudio`,
+  `AuralMode { SpatialNonAcoustic, SpatialAcoustic }`,
+  `DistanceModel { Linear, Inverse, Exponential }`. Aligned with
+  USD `UsdMediaSpatialAudio` + glTF `KHR_audio_emitter`.
+  `Scene3D` gains `audio_sources` + `audio_emitters` arenas;
+  `Node` gains `audio_emitter: Option<AudioEmitterId>`.
+- BREAKING: `ImageData::Encoded { mime, bytes }` removed in favour
+  of `ImageData::Source(Arc<dyn AssetSource>)`. Migration: wrap
+  bytes in `InMemoryAsset { mime, bytes }`. The
+  `Texture::from_encoded(mime, bytes)` helper signature is
+  unchanged — it now wraps internally.
+
+No format support yet; sibling crates (`oxideav-stl`,
 `oxideav-obj`, `oxideav-gltf`) plug in via `Mesh3DRegistry` once
 this crate is published.
 
-## Round 2 candidates
+## Round 3 candidates
 
 - `oxideav-stl` (binary + ASCII) — STL is the smallest realistic
   consumer of the type model and validates the encoder side
@@ -54,10 +78,13 @@ this crate is published.
 - `oxideav-obj` + Wavefront MTL — exercises the multi-material
   primitive split + the `Material::extras` round-trip path.
 - `oxideav-gltf` (JSON + GLB) — proves the type model round-trips
-  losslessly against its design source-of-truth.
+  losslessly against its design source-of-truth, including the
+  `KHR_audio_emitter` extension against the new audio types.
+- `oxideav-usdz` — first real consumer of the `raw_storage()`
+  pass-through path.
 - KHR extension surface (`KHR_materials_emissive_strength`,
-  `KHR_materials_unlit`, `KHR_lights_punctual`) once
-  `oxideav-gltf` lands.
+  `KHR_materials_unlit`, `KHR_lights_punctual`,
+  `KHR_audio_emitter`) once `oxideav-gltf` lands.
 
 ## Standalone build
 
@@ -69,9 +96,13 @@ oxideav-mesh3d = { version = "0.0", default-features = false }
 ```
 
 The typed model and trait definitions stay available — only the
-embedded-`VideoFrame` `ImageData::Embedded` variant disappears and
-the `Error` / `Result` aliases resolve to a crate-local enum
-instead of `oxideav_core::Error`.
+embedded `VideoFrame` / `AudioFrame` variants
+(`ImageData::Embedded` / `AudioData::Embedded`) disappear, and the
+`Error` / `Result` aliases resolve to a crate-local enum instead
+of `oxideav_core::Error`. `AssetSource::open()` returns a
+crate-local `ReadSeek` trait alias with the same shape as
+`oxideav_core::ReadSeek`, so the trait surface is identical
+either way.
 
 ## License
 

@@ -7,15 +7,19 @@
 //!   `oxideav_core::VideoFrame` (only available with the `registry`
 //!   feature). Use this when the format crate decoded the image
 //!   itself or already had pixel data on hand.
+//! * [`ImageData::Source`] — lazy reference to an [`AssetSource`]
+//!   that can be opened on demand and (optionally) supports
+//!   zero-copy raw-storage pass-through. Replaces round-1's
+//!   `Encoded { mime, bytes }` so massive scenes (USDZ archives in
+//!   the hundreds of MB) don't have to be materialised in RAM.
 //! * [`ImageData::External`] — URI reference (`file://`, relative
 //!   path, or `http(s)://`) plus optional MIME hint. The caller
 //!   resolves and decodes lazily.
-//! * [`ImageData::Encoded`] — raw bytes of a still-encoded image
-//!   payload (PNG/JPEG/WebP/...). Use this when the format embeds
-//!   the texture but the mesh3d crate doesn't want to pull in an
-//!   image decoder.
 
 use std::fmt;
+use std::sync::Arc;
+
+use crate::asset::{AssetSource, InMemoryAsset};
 
 /// Encoded or decoded texture pixels.
 #[derive(Clone, Debug)]
@@ -25,11 +29,13 @@ pub enum ImageData {
     /// `oxideav-core`'s [`VideoFrame`](oxideav_core::VideoFrame)).
     #[cfg(feature = "registry")]
     Embedded(oxideav_core::VideoFrame),
+    /// Lazy reference. The wrapped [`AssetSource`] streams bytes on
+    /// demand (`open()`) and may expose `raw_storage()` so a writer
+    /// targeting the same container scheme can pass the original
+    /// payload through without re-encoding.
+    Source(Arc<dyn AssetSource>),
     /// URI to fetch and decode lazily. `mime` is a hint when known.
     External { uri: String, mime: Option<String> },
-    /// Encoded image bytes (PNG/JPEG/WebP/...). `mime` identifies
-    /// the codec so the caller can route to the right decoder.
-    Encoded { mime: String, bytes: Vec<u8> },
 }
 
 /// Magnification filter — applied when one screen pixel covers less
@@ -137,16 +143,28 @@ impl Texture {
         }
     }
 
-    /// Construct a texture from encoded bytes plus MIME with the
-    /// default glTF sampler.
-    pub fn from_encoded(mime: impl Into<String>, bytes: Vec<u8>) -> Self {
+    /// Construct a texture from any [`AssetSource`] implementor.
+    /// Use this when the format crate already exposes its blob via
+    /// a custom `AssetSource` (USDZ ZIP entry, GLB bin chunk slice,
+    /// FBX embedded media handle).
+    pub fn from_source(source: Arc<dyn AssetSource>) -> Self {
         Self {
             name: None,
-            image: ImageData::Encoded {
-                mime: mime.into(),
-                bytes,
-            },
+            image: ImageData::Source(source),
             sampler: Sampler::default_sampler(),
         }
+    }
+
+    /// Convenience constructor that wraps owned `bytes` + `mime` in
+    /// an [`InMemoryAsset`] and exposes it as `ImageData::Source`.
+    /// Replaces round-1's `from_encoded(mime, bytes)` constructor —
+    /// migration is field-for-field, but the in-memory blob now goes
+    /// through the trait so consumers get one uniform code path.
+    pub fn from_encoded(mime: impl Into<String>, bytes: Vec<u8>) -> Self {
+        let asset = Arc::new(InMemoryAsset {
+            mime: Some(mime.into()),
+            bytes,
+        });
+        Self::from_source(asset)
     }
 }

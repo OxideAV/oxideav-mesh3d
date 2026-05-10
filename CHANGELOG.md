@@ -7,9 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added — Round 2 (asset trait + audio types)
 
-- Round 1 — initial bootstrap.
+- `AssetSource` trait — `Send + Sync + Debug` lazy reference to a
+  binary asset (texture, audio, anything blob-shaped). Methods:
+  - `mime() -> Option<&str>`
+  - `size_hint() -> Option<u64>` — total uncompressed length when
+    known without consuming the asset
+  - `open() -> io::Result<Box<dyn ReadSeek + Send>>` — streaming
+    reader, callers `read_to_end()` for small assets or chunk for
+    large ones
+  - `raw_storage() -> Option<RawStorage>` — optional pass-through
+    hint exposing the asset's underlying stored bytes plus a
+    scheme identifier (`"zip-deflate"`, `"zip-stored"`,
+    `"usdc-crate"`, `"tar-stored"`, ...). When a writer's output
+    container scheme matches, it can copy the bytes verbatim and
+    skip decode + re-encode (USDZ → USDZ pass-through).
+- `RawStorage<'a> { scheme: &str, bytes: &[u8], uncompressed_size: Option<u64> }`
+  — payload + scheme identifier returned by `raw_storage()`.
+- `InMemoryAsset { mime, bytes }` — trivial owning implementor of
+  `AssetSource` for unit tests and small embedded payloads.
+- Audio type surface (aligned with USD `UsdMediaSpatialAudio` +
+  glTF `KHR_audio_emitter`):
+  - `AudioData { Embedded(AudioFrame), Source(Arc<dyn AssetSource>),
+    External { uri, mime } }` — analogue of `ImageData` for audio.
+    `Embedded` is feature-gated behind `registry`.
+  - `AudioSource { name, data, extras }` — owned audio asset.
+  - `AudioEmitter { name, source, gain, looping, auto_play, spatial,
+    extras }` — in-scene playback instance. Defaults: `gain = 1.0`,
+    `looping = false`, `auto_play = false`, `spatial = None`
+    (global non-positional source).
+  - `SpatialAudio { aural_mode, cone_inner_angle, cone_outer_angle,
+    cone_outer_gain, min_distance, max_distance, rolloff_factor,
+    distance_model }` — positional rendering parameters. Defaults:
+    `aural_mode = SpatialNonAcoustic`, both cone angles `2π`
+    (omnidirectional), `cone_outer_gain = 0.0`, `min_distance = 1.0`
+    metres, `max_distance = 10000.0` metres, `rolloff_factor = 1.0`,
+    `distance_model = Inverse`.
+  - `AuralMode { SpatialNonAcoustic, SpatialAcoustic }` — flag
+    carried through to the renderer; type model doesn't apply HRTF
+    itself.
+  - `DistanceModel { Linear, Inverse, Exponential }` — WebAudio /
+    OpenAL attenuation curves.
+  - `AudioSourceId(u32)` and `AudioEmitterId(u32)` newtypes.
+- `Scene3D::audio_sources: Vec<AudioSource>` and
+  `Scene3D::audio_emitters: Vec<AudioEmitter>` arenas, plus
+  `add_audio_source` / `add_audio_emitter` push-and-id helpers and
+  `audio_source(id)` / `audio_emitter(id)` lookups.
+- `Node::audio_emitter: Option<AudioEmitterId>` field plus
+  `Node::with_audio_emitter` builder method.
+- `oxideav_core::ReadSeek` re-exported from `asset::ReadSeek` so
+  callers don't need a direct framework dependency to name the
+  `AssetSource::open` return type. Standalone build supplies a
+  crate-local trait alias with the same shape.
+
+### Changed — BREAKING (round 2, pre-v0.1)
+
+- **`ImageData::Encoded { mime, bytes }` removed**, replaced by
+  **`ImageData::Source(Arc<dyn AssetSource>)`**. Migration:
+  ```rust
+  // Before:
+  ImageData::Encoded { mime: "image/png".into(), bytes: payload }
+  // After:
+  ImageData::Source(Arc::new(InMemoryAsset {
+      mime: Some("image/png".into()),
+      bytes: payload,
+  }))
+  ```
+  The `Texture::from_encoded(mime, bytes)` constructor signature is
+  unchanged — it now wraps in an `InMemoryAsset` internally — so
+  most call sites that used the constructor compile unchanged.
+- **`Node` gains a non-`Option`-defaulted `audio_emitter` field.**
+  Callers constructing `Node` literally (`Node { name, transform,
+  ... }` without `..Node::new()`) need to add
+  `audio_emitter: None`. Builder / `Node::new()` paths are
+  unaffected.
+- **`Scene3D` gains `audio_sources` + `audio_emitters` fields.**
+  Same caveat: literal struct construction must populate them.
+
+### Design intent
+
+- Lazy access: huge scenes (USDZ archives in the hundreds of MB)
+  shouldn't materialise every embedded blob in `Vec<u8>`. Format
+  crates expose blobs through `AssetSource::open()` so consumers
+  stream chunks on demand.
+- Pass-through: a USDZ → USDZ (or GLB → GLB) converter that sees
+  matching `raw_storage()` schemes copies the deflated payload
+  verbatim instead of inflate + decode + re-encode + deflate.
+- Trait sits in `oxideav-mesh3d` for now to keep the type model
+  self-contained; can promote to `oxideav-core` in a future round
+  if more crates want it.
+
+### Added — Round 1 (initial bootstrap)
   - `Scene3D` top-level container with `nodes`, `roots`, `meshes`,
     `materials`, `textures`, `skeletons`, `skins`, `animations`,
     `cameras`, `lights`, `up_axis`, `front_axis`, `unit`, and a

@@ -24,6 +24,24 @@
 //! Round 1 ships the type model + the trait surface only. No format
 //! support — that lands in dedicated sibling crates.
 //!
+//! Round 2 adds:
+//!
+//! * [`AssetSource`] trait — lazy reference to a binary asset
+//!   ([`Texture`] or [`AudioSource`]) so massive scenes (USDZ
+//!   archives in the hundreds of MB) don't have to be materialised
+//!   in RAM. Supports optional `raw_storage()` pass-through so a
+//!   USDZ → USDZ converter can copy deflated payloads verbatim
+//!   instead of inflate + re-deflate.
+//! * `Audio*` types — [`AudioSource`], [`AudioEmitter`],
+//!   [`SpatialAudio`], [`AuralMode`], [`DistanceModel`]. Aligned
+//!   with USD `UsdMediaSpatialAudio` + glTF `KHR_audio_emitter`.
+//! * [`ImageData::Source`] replaces the round-1
+//!   `ImageData::Encoded { mime, bytes }` variant. Migration: wrap
+//!   bytes in [`InMemoryAsset`], `Arc::new()` it, pass into
+//!   `ImageData::Source(...)` (or keep using the
+//!   [`Texture::from_encoded`] convenience constructor — the
+//!   signature is unchanged).
+//!
 //! ## Standalone build
 //!
 //! `oxideav-core` is gated behind the default-on `registry` cargo
@@ -41,6 +59,8 @@
 #![warn(missing_debug_implementations)]
 
 pub mod animation;
+pub mod asset;
+pub mod audio;
 pub mod camera;
 pub mod decoder;
 pub mod encoder;
@@ -56,6 +76,11 @@ pub mod texture;
 pub use animation::{
     Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
     AnimationValues, Interpolation,
+};
+pub use asset::{AssetSource, InMemoryAsset, RawStorage};
+pub use audio::{
+    AudioData, AudioEmitter, AudioEmitterId, AudioSource, AudioSourceId, AuralMode, DistanceModel,
+    SpatialAudio,
 };
 pub use camera::Camera;
 pub use decoder::Mesh3DDecoder;
