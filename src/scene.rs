@@ -518,7 +518,308 @@ impl Scene3D {
             .map(|p| p.positions.len())
             .sum()
     }
+
+    /// Walk every cross-collection reference and report dangling
+    /// indices + inconsistent buffer lengths. Returns `Ok(())` when
+    /// the scene is internally consistent, or `Err` carrying every
+    /// problem found (the walk does not short-circuit, so callers see
+    /// the full set in one pass).
+    ///
+    /// Currently checks:
+    ///
+    /// * `roots` reference live `nodes`.
+    /// * Every `Node::children`, `Node::mesh`, `Node::camera`,
+    ///   `Node::light`, `Node::skin`, `Node::audio_emitter` references
+    ///   a live entry in the corresponding arena.
+    /// * Every primitive's optional attribute buffer (`normals`,
+    ///   `tangents`, `uvs[i]`, `colors[i]`, `joints`, `weights`)
+    ///   matches `positions.len()`.
+    /// * `Primitive::indices` values stay within `positions.len()`.
+    /// * `Primitive::material` indices are live.
+    /// * Each `MorphTarget` slot length matches the corresponding
+    ///   base attribute on the parent `Primitive`.
+    /// * `Mesh::weights.len()` matches the morph-target count of
+    ///   every contained primitive (or every primitive has zero
+    ///   targets and `weights` is empty).
+    ///
+    /// This is a defensive check for fuzzers and codec authors —
+    /// production decoders are expected to produce valid scenes
+    /// already; the runtime cost is `O(N)` over every typed buffer.
+    pub fn validate(&self) -> std::result::Result<(), Vec<ValidationError>> {
+        let mut errors = Vec::new();
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        let n_materials = self.materials.len();
+        let n_cameras = self.cameras.len();
+        let n_lights = self.lights.len();
+        let n_skins = self.skins.len();
+        let n_emitters = self.audio_emitters.len();
+
+        for (i, root) in self.roots.iter().enumerate() {
+            if (root.0 as usize) >= n_nodes {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("roots[{i}]"),
+                    id: root.0,
+                    arena: "nodes",
+                });
+            }
+        }
+        for (i, node) in self.nodes.iter().enumerate() {
+            for (j, child) in node.children.iter().enumerate() {
+                if (child.0 as usize) >= n_nodes {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("nodes[{i}].children[{j}]"),
+                        id: child.0,
+                        arena: "nodes",
+                    });
+                }
+            }
+            if let Some(m) = node.mesh {
+                if (m.0 as usize) >= n_meshes {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("nodes[{i}].mesh"),
+                        id: m.0,
+                        arena: "meshes",
+                    });
+                }
+            }
+            if let Some(c) = node.camera {
+                if (c.0 as usize) >= n_cameras {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("nodes[{i}].camera"),
+                        id: c.0,
+                        arena: "cameras",
+                    });
+                }
+            }
+            if let Some(l) = node.light {
+                if (l.0 as usize) >= n_lights {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("nodes[{i}].light"),
+                        id: l.0,
+                        arena: "lights",
+                    });
+                }
+            }
+            if let Some(s) = node.skin {
+                if (s.0 as usize) >= n_skins {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("nodes[{i}].skin"),
+                        id: s.0,
+                        arena: "skins",
+                    });
+                }
+            }
+            if let Some(e) = node.audio_emitter {
+                if (e.0 as usize) >= n_emitters {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("nodes[{i}].audio_emitter"),
+                        id: e.0,
+                        arena: "audio_emitters",
+                    });
+                }
+            }
+        }
+
+        for (mi, mesh) in self.meshes.iter().enumerate() {
+            let mesh_weights = mesh.weights.len();
+            for (pi, prim) in mesh.primitives.iter().enumerate() {
+                let n_pos = prim.positions.len();
+                let here = |field: &str| format!("meshes[{mi}].primitives[{pi}].{field}");
+                if let Some(v) = &prim.normals {
+                    if v.len() != n_pos {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: here("normals"),
+                            expected: n_pos,
+                            actual: v.len(),
+                        });
+                    }
+                }
+                if let Some(v) = &prim.tangents {
+                    if v.len() != n_pos {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: here("tangents"),
+                            expected: n_pos,
+                            actual: v.len(),
+                        });
+                    }
+                }
+                for (k, set) in prim.uvs.iter().enumerate() {
+                    if set.len() != n_pos {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: here(&format!("uvs[{k}]")),
+                            expected: n_pos,
+                            actual: set.len(),
+                        });
+                    }
+                }
+                for (k, set) in prim.colors.iter().enumerate() {
+                    if set.len() != n_pos {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: here(&format!("colors[{k}]")),
+                            expected: n_pos,
+                            actual: set.len(),
+                        });
+                    }
+                }
+                if let Some(v) = &prim.joints {
+                    if v.len() != n_pos {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: here("joints"),
+                            expected: n_pos,
+                            actual: v.len(),
+                        });
+                    }
+                }
+                if let Some(v) = &prim.weights {
+                    if v.len() != n_pos {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: here("weights"),
+                            expected: n_pos,
+                            actual: v.len(),
+                        });
+                    }
+                }
+                if let Some(idx) = &prim.indices {
+                    let max_ok = n_pos as u32;
+                    let bad = match idx {
+                        crate::mesh::Indices::U16(v) => v.iter().any(|i| (*i as u32) >= max_ok),
+                        crate::mesh::Indices::U32(v) => v.iter().any(|i| *i >= max_ok),
+                    };
+                    if bad {
+                        errors.push(ValidationError::IndexOutOfRange {
+                            location: here("indices"),
+                            vertex_count: n_pos,
+                        });
+                    }
+                }
+                if let Some(m) = prim.material {
+                    if (m.0 as usize) >= n_materials {
+                        errors.push(ValidationError::DanglingId {
+                            location: here("material"),
+                            id: m.0,
+                            arena: "materials",
+                        });
+                    }
+                }
+                for (ti, tgt) in prim.targets.iter().enumerate() {
+                    let tgt_loc = |field: &str| here(&format!("targets[{ti}].{field}"));
+                    if let Some(v) = &tgt.position {
+                        if v.len() != n_pos {
+                            errors.push(ValidationError::AttributeLengthMismatch {
+                                location: tgt_loc("position"),
+                                expected: n_pos,
+                                actual: v.len(),
+                            });
+                        }
+                    }
+                    if let Some(v) = &tgt.normal {
+                        if v.len() != n_pos {
+                            errors.push(ValidationError::AttributeLengthMismatch {
+                                location: tgt_loc("normal"),
+                                expected: n_pos,
+                                actual: v.len(),
+                            });
+                        }
+                    }
+                    if let Some(v) = &tgt.tangent {
+                        if v.len() != n_pos {
+                            errors.push(ValidationError::AttributeLengthMismatch {
+                                location: tgt_loc("tangent"),
+                                expected: n_pos,
+                                actual: v.len(),
+                            });
+                        }
+                    }
+                }
+                if mesh_weights != 0 && prim.targets.len() != mesh_weights {
+                    errors.push(ValidationError::MorphWeightCountMismatch {
+                        location: format!("meshes[{mi}].primitives[{pi}].targets"),
+                        mesh_weights,
+                        primitive_targets: prim.targets.len(),
+                    });
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
+
+/// One issue surfaced by [`Scene3D::validate`]. The variants intentionally
+/// carry breadcrumb strings (`"meshes[3].primitives[0].normals"`) so a
+/// caller can render a usable diagnostic without re-walking the scene.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ValidationError {
+    /// A typed `IdT(u32)` field points outside its arena.
+    DanglingId {
+        location: String,
+        id: u32,
+        arena: &'static str,
+    },
+    /// An optional attribute buffer is present but its length disagrees
+    /// with the parent primitive's `positions.len()`.
+    AttributeLengthMismatch {
+        location: String,
+        expected: usize,
+        actual: usize,
+    },
+    /// A primitive's index buffer references a vertex past
+    /// `positions.len()`.
+    IndexOutOfRange {
+        location: String,
+        vertex_count: usize,
+    },
+    /// `Mesh::weights` is non-empty and disagrees with one of the
+    /// child primitives' morph-target count.
+    MorphWeightCountMismatch {
+        location: String,
+        mesh_weights: usize,
+        primitive_targets: usize,
+    },
+}
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DanglingId {
+                location,
+                id,
+                arena,
+            } => write!(f, "{location}: id {id} is out of bounds for {arena}"),
+            Self::AttributeLengthMismatch {
+                location,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "{location}: length {actual} disagrees with positions length {expected}"
+            ),
+            Self::IndexOutOfRange {
+                location,
+                vertex_count,
+            } => write!(
+                f,
+                "{location}: index buffer references vertex >= {vertex_count}"
+            ),
+            Self::MorphWeightCountMismatch {
+                location,
+                mesh_weights,
+                primitive_targets,
+            } => write!(
+                f,
+                "{location}: mesh has {mesh_weights} weights but primitive carries {primitive_targets} morph targets"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ValidationError {}
 
 impl Default for Scene3D {
     fn default() -> Self {

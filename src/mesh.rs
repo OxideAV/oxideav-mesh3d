@@ -108,12 +108,15 @@ impl MorphTarget {
 /// content (lightmaps, second UV set) is representable without
 /// flattening into the spec's TEXCOORD_0/_1 strings.
 ///
-/// **Round-7 candidate:** mark `#[non_exhaustive]` once every
-/// downstream caller (the format crates in particular) has migrated
-/// off literal `Primitive { … }` construction onto
-/// [`Primitive::new`] + per-field assignment. Tracked in MEMORY
-/// alongside the same deferral on `oxideav_core::Group`.
+/// **`#[non_exhaustive]` (round 7):** new attribute fields land in
+/// minor releases without breaking downstream callers. Construct via
+/// [`Primitive::new`] + per-field assignment; struct-update syntax
+/// (`Primitive { positions, ..Primitive::new(Topology::Triangles) }`)
+/// works inside this crate but not from external crates — that's the
+/// whole point of the attribute. Outside this crate, always go
+/// through the constructor.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Primitive {
     pub topology: Topology,
     pub positions: Vec<[f32; 3]>,
@@ -186,12 +189,13 @@ impl Primitive {
 /// per material so the renderer can issue one draw call per
 /// primitive without rebinding state.
 ///
-/// **Round-7 candidate:** mark `#[non_exhaustive]` once every
-/// downstream caller has migrated off literal `Mesh { … }`
-/// construction onto [`Mesh::new`] + builders + struct-update
-/// `..Mesh::default()` syntax. See the [`Primitive`] doc-note for
-/// the rationale.
+/// **`#[non_exhaustive]` (round 7):** new fields can be added in
+/// minor releases without breaking downstream callers. Construct via
+/// [`Mesh::new`] + the [`Mesh::with_primitive`] / [`Mesh::with_weights`]
+/// builders. From outside this crate, struct literal syntax is
+/// rejected by the compiler — go through the constructor.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct Mesh {
     pub name: Option<String>,
     pub primitives: Vec<Primitive>,

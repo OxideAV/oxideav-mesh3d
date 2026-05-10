@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — BREAKING (round 7, pre-v0.1)
+
+- **`Primitive` is now `#[non_exhaustive]`.** Future attribute fields
+  (a second skinning channel, a wireframe-edge buffer, …) land in
+  minor releases without breaking downstream callers — *provided*
+  those callers go through `Primitive::new(Topology::…)` and assign
+  fields per-attribute. Construct with:
+
+  ```rust
+  let mut p = Primitive::new(Topology::Triangles);
+  p.positions = positions;
+  p.normals = Some(normals);
+  // … etc.
+  ```
+
+  Literal struct construction `Primitive { topology, positions, … }`
+  from outside this crate is now a compile error (`E0639`).
+
+- **`Mesh` is now `#[non_exhaustive]`.** Construct with `Mesh::new(name)`
+  and the existing `with_primitive` / `with_weights` builders. Literal
+  `Mesh { name, primitives, weights }` is rejected from outside this
+  crate.
+
+This is the round-7 follow-through on the deferral noted in round 6
+(see "Round-6 candidate" doc-comments removed from `mesh.rs` in this
+commit). The same `#[non_exhaustive]` treatment for `oxideav_core::Group`
+remains tracked separately in MEMORY.
+
+### Added — Round 7 (Scene3D::validate)
+
+- `Scene3D::validate() -> Result<(), Vec<ValidationError>>` — defensive
+  cross-collection consistency check intended for fuzzers and codec
+  authors. Walks every typed `IdT(u32)` reference for danglers,
+  cross-checks per-primitive attribute buffer lengths against
+  `positions.len()`, range-checks `Primitive::indices`, validates
+  `MorphTarget` slot lengths, and asserts `Mesh::weights` parity with
+  child-primitive morph-target counts. Does not short-circuit — one
+  pass returns every issue found, so callers don't have to chase
+  cascade failures.
+- `ValidationError` enum (also `#[non_exhaustive]`): `DanglingId`,
+  `AttributeLengthMismatch`, `IndexOutOfRange`, `MorphWeightCountMismatch`.
+  Implements `Display` + `std::error::Error`. Re-exported from the
+  crate root.
+- `tests/scene_validate.rs` — 11 tests covering empty-scene OK path,
+  every error variant, the multi-error single-pass contract, and
+  `Display` breadcrumb format.
+
+### Sibling cascade impact
+
+After this commit lands and `oxideav-mesh3d 0.0.2` publishes, sibling
+format crates that construct `Primitive` / `Mesh` literally will fail
+to compile. Audit at the time of this commit:
+
+- `oxideav-stl 0.0.0` — **breaks**. Literal `Primitive { … }` /
+  `Mesh { … }` in `src/binary.rs`, `src/ascii.rs`, `src/encoder.rs` +
+  several test files. Fix: switch to `Primitive::new(Topology::…)` +
+  per-field assignment + `Mesh::new(name).with_primitive(…)`.
+- `oxideav-obj 0.0.0` — clean. Already uses builders.
+- `oxideav-gltf 0.0.0` — clean. Operates on its own crate-local
+  `gltf::json_model::{Primitive, Mesh}` types.
+- `oxideav-usdz 0.0.0` — clean. Already uses builders.
+- `crates/oxideav-tests/tests/mesh3d_usdz_apple_oracle.rs` — **breaks**.
+  Two literal sites; switch to constructors in the same release-batch
+  commit that consumes mesh3d 0.0.2.
+
+Recommended publish + bump order:
+
+1. Publish `oxideav-mesh3d` 0.0.2 (this commit) to crates.io.
+2. Patch `oxideav-stl` to migrate its 4 src/ + ~10 tests/ literal
+   sites onto the constructor + builders. Publish 0.0.1.
+3. Patch `crates/oxideav-tests/tests/mesh3d_usdz_apple_oracle.rs`
+   the same way (no separate publish — workspace-internal tests crate).
+
 ## [0.0.2](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.1...v0.0.2) - 2026-05-10
 
 ### Other
