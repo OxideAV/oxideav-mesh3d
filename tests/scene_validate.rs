@@ -6,7 +6,10 @@
 //! (per-primitive attribute length parity).
 
 use oxideav_mesh3d::{
-    Indices, Mesh, MeshId, MorphTarget, Node, NodeId, Primitive, Scene3D, Topology, ValidationError,
+    Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
+    AnimationValues, AudioEmitter, AudioSourceId, Indices, Interpolation, Material, Mesh, MeshId,
+    MorphTarget, Node, NodeId, Primitive, Scene3D, Skeleton, SkeletonId, Skin, TextureId,
+    TextureRef, Topology, ValidationError,
 };
 
 fn one_triangle_primitive() -> Primitive {
@@ -181,4 +184,374 @@ fn validation_error_display_carries_location() {
     let msg = format!("{}", errs[0]);
     assert!(msg.contains("roots[0]"), "got: {msg}");
     assert!(msg.contains("nodes"), "got: {msg}");
+}
+
+// ---- round-next: material / skin / animation / audio rules ---------------
+
+#[test]
+fn dangling_material_base_color_texture_reported() {
+    let mut m = Material::new();
+    m.base_color_texture = Some(TextureRef::new(TextureId(5)));
+    let mut s = Scene3D::new();
+    s.add_material(m);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId {
+            id: 5,
+            arena: "textures",
+            location,
+        } if location == "materials[0].base_color_texture"
+    )));
+}
+
+#[test]
+fn dangling_material_emissive_texture_reported() {
+    let mut m = Material::new();
+    m.emissive_texture = Some(TextureRef::new(TextureId(99)));
+    let mut s = Scene3D::new();
+    s.add_material(m);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId {
+            arena: "textures",
+            location,
+            ..
+        } if location.contains("emissive_texture")
+    )));
+}
+
+#[test]
+fn dangling_skeleton_joint_reported() {
+    let mut skel = Skeleton::new();
+    skel.joints = vec![NodeId(0), NodeId(7)];
+    let mut s = Scene3D::new();
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    s.add_skeleton(skel);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId {
+            id: 7,
+            arena: "nodes",
+            location,
+        } if location == "skeletons[0].joints[1]"
+    )));
+}
+
+#[test]
+fn skeleton_inverse_bind_matrix_mismatch_reported() {
+    let mut skel = Skeleton::new();
+    skel.joints = vec![NodeId(0), NodeId(0)];
+    skel.inverse_bind_matrices = vec![[[0.0; 4]; 4]]; // 1 vs 2 joints
+    let mut s = Scene3D::new();
+    s.add_node(Node::new());
+    s.add_skeleton(skel);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::SkeletonBindMatrixCountMismatch {
+            joints: 2,
+            inverse_bind_matrices: 1,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn skeleton_empty_inverse_bind_matrices_is_allowed() {
+    // glTF lets the field be omitted entirely; we keep that escape hatch.
+    let mut skel = Skeleton::new();
+    skel.joints = vec![NodeId(0)];
+    // inverse_bind_matrices left empty
+    let mut s = Scene3D::new();
+    s.add_node(Node::new());
+    s.add_skeleton(skel);
+    assert!(s.validate().is_ok());
+}
+
+#[test]
+fn dangling_skin_skeleton_reported() {
+    let mut s = Scene3D::new();
+    s.add_skin(Skin::new(SkeletonId(9)));
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId {
+            id: 9,
+            arena: "skeletons",
+            ..
+        }
+    )));
+}
+
+#[test]
+fn dangling_skin_root_node_reported() {
+    let mut s = Scene3D::new();
+    let sk = s.add_skeleton(Skeleton::new());
+    s.add_skin(Skin::new(sk).with_root(NodeId(42)));
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId {
+            id: 42,
+            arena: "nodes",
+            location,
+        } if location == "skins[0].root_node"
+    )));
+}
+
+#[test]
+fn dangling_audio_emitter_source_reported() {
+    let mut s = Scene3D::new();
+    s.add_audio_emitter(AudioEmitter::new(AudioSourceId(3)));
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId {
+            id: 3,
+            arena: "audio_sources",
+            ..
+        }
+    )));
+}
+
+#[test]
+fn animation_channel_dangling_target_node_reported() {
+    let mut s = Scene3D::new();
+    let mut anim = Animation::new(None);
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: NodeId(11),
+            property: AnimationProperty::Translation,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0],
+            values: AnimationValues::Vec3(vec![[0.0; 3], [1.0, 0.0, 0.0]]),
+            interpolation: Interpolation::Linear,
+        },
+    });
+    s.add_animation(anim);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId {
+            id: 11,
+            arena: "nodes",
+            location,
+        } if location.ends_with(".target.node")
+    )));
+}
+
+#[test]
+fn animation_sampler_empty_keyframes_reported() {
+    let mut s = Scene3D::new();
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    let mut anim = Animation::new(None);
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: nid,
+            property: AnimationProperty::Translation,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![],
+            values: AnimationValues::Vec3(vec![]),
+            interpolation: Interpolation::Linear,
+        },
+    });
+    s.add_animation(anim);
+    let errs = s.validate().unwrap_err();
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::AnimationSamplerEmpty { .. })));
+}
+
+#[test]
+fn animation_sampler_keyframes_must_strictly_increase() {
+    let mut s = Scene3D::new();
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    let mut anim = Animation::new(None);
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: nid,
+            property: AnimationProperty::Translation,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0, 0.5], // 0.5 < 1.0
+            values: AnimationValues::Vec3(vec![[0.0; 3]; 3]),
+            interpolation: Interpolation::Linear,
+        },
+    });
+    s.add_animation(anim);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::AnimationKeyframesNotStrictlyIncreasing { .. }
+    )));
+}
+
+#[test]
+fn animation_rotation_with_vec3_values_is_variant_mismatch() {
+    let mut s = Scene3D::new();
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    let mut anim = Animation::new(None);
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: nid,
+            property: AnimationProperty::Rotation,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0],
+            values: AnimationValues::Vec3(vec![[0.0; 3], [1.0, 0.0, 0.0]]),
+            interpolation: Interpolation::Linear,
+        },
+    });
+    s.add_animation(anim);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::AnimationValueVariantMismatch {
+            property: "Rotation",
+            expected_variant: "Quat",
+            actual_variant: "Vec3",
+            ..
+        }
+    )));
+}
+
+#[test]
+fn animation_cubicspline_values_must_be_three_times_keyframes() {
+    let mut s = Scene3D::new();
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    let mut anim = Animation::new(None);
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: nid,
+            property: AnimationProperty::Translation,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0, 2.0], // 3 keyframes → need 9 vec3 values
+            values: AnimationValues::Vec3(vec![[0.0; 3]; 3]), // only 3
+            interpolation: Interpolation::CubicSpline,
+        },
+    });
+    s.add_animation(anim);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::AnimationSamplerLengthMismatch {
+            keyframes: 3,
+            values: 3,
+            interpolation: "CubicSpline",
+            ..
+        }
+    )));
+}
+
+#[test]
+fn animation_linear_translation_passes_when_lengths_match() {
+    let mut s = Scene3D::new();
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    let mut anim = Animation::new(None);
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: nid,
+            property: AnimationProperty::Translation,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0, 2.0],
+            values: AnimationValues::Vec3(vec![[0.0; 3], [1.0; 3], [2.0; 3]]),
+            interpolation: Interpolation::Linear,
+        },
+    });
+    s.add_animation(anim);
+    assert!(s.validate().is_ok());
+}
+
+#[test]
+fn animation_morph_weights_must_be_multiple_of_keyframes() {
+    let mut s = Scene3D::new();
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    let mut anim = Animation::new(None);
+    // 2 keyframes, 2 morph targets on bound mesh ⇒ 4 scalars expected.
+    // We give 3 — not a multiple of keyframes count 2 ⇒ rejected.
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: nid,
+            property: AnimationProperty::MorphWeights,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0],
+            values: AnimationValues::Scalar(vec![0.0, 1.0, 0.5]),
+            interpolation: Interpolation::Linear,
+        },
+    });
+    s.add_animation(anim);
+    let errs = s.validate().unwrap_err();
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::AnimationSamplerLengthMismatch { .. })));
+}
+
+#[test]
+fn animation_morph_weights_multiple_passes() {
+    // 2 keyframes × 3 targets = 6 scalars ⇒ OK.
+    let mut s = Scene3D::new();
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    let mut anim = Animation::new(None);
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: nid,
+            property: AnimationProperty::MorphWeights,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0],
+            values: AnimationValues::Scalar(vec![0.0, 0.5, 1.0, 1.0, 0.5, 0.0]),
+            interpolation: Interpolation::Linear,
+        },
+    });
+    s.add_animation(anim);
+    assert!(s.validate().is_ok());
+}
+
+#[test]
+fn full_valid_scene_with_all_resource_kinds_passes() {
+    // Self-contained correctness oracle: builds a scene exercising
+    // every newly-checked relation and asserts validate() is Ok.
+    let mut s = Scene3D::new();
+    let tid = s.add_texture(oxideav_mesh3d::Texture::from_uri("img.png"));
+    let mut mat = Material::new();
+    mat.base_color_texture = Some(TextureRef::new(tid));
+    mat.normal_texture = Some(TextureRef::new(tid));
+    let _midx = s.add_material(mat);
+    let nid = s.add_node(Node::new());
+    s.add_root(nid);
+    let mut skel = Skeleton::new();
+    skel.joints = vec![nid];
+    skel.inverse_bind_matrices = vec![[[0.0; 4]; 4]];
+    let skel_id = s.add_skeleton(skel);
+    s.add_skin(Skin::new(skel_id).with_root(nid));
+    let mut anim = Animation::new(None);
+    anim.channels.push(AnimationChannel {
+        target: AnimationTarget {
+            node: nid,
+            property: AnimationProperty::Rotation,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0],
+            values: AnimationValues::Quat(vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]]),
+            interpolation: Interpolation::Linear,
+        },
+    });
+    s.add_animation(anim);
+    assert!(s.validate().is_ok(), "{:?}", s.validate().err());
 }

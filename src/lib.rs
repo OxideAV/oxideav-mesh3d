@@ -91,8 +91,8 @@ pub use material::{AlphaMode, Material, TextureRef};
 pub use mesh::{Indices, Mesh, MorphTarget, Primitive, Topology};
 pub use registry::Mesh3DRegistry;
 pub use scene::{
-    Axis, CameraId, LightId, MaterialId, MeshId, Node, NodeId, Scene3D, SkeletonId, SkinId,
-    TextureId, Transform, Unit, ValidationError,
+    Axis, BoundingBox, CameraId, LightId, MaterialId, MeshId, Node, NodeId, Scene3D, SkeletonId,
+    SkinId, TextureId, Transform, Unit, ValidationError,
 };
 pub use skin::{Skeleton, Skin};
 pub use texture::{ImageData, MagFilter, MinFilter, Sampler, Texture, WrapMode};

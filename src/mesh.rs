@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use crate::scene::MaterialId;
+use crate::scene::{BoundingBox, MaterialId};
 
 /// How the vertex buffer is interpreted as primitives.
 ///
@@ -181,6 +181,20 @@ impl Primitive {
             _ => 0,
         }
     }
+
+    /// Axis-aligned bounding box over [`Primitive::positions`] in the
+    /// primitive's local space (no transforms applied).
+    ///
+    /// Returns `None` for an empty primitive. Vertices not referenced
+    /// by `indices` are still included — this is the "data extent",
+    /// not the "drawn extent". For an index-aware extent, the caller
+    /// can iterate `indices` themselves and feed positions through
+    /// [`BoundingBox::from_points`].
+    ///
+    /// NaN coordinates are skipped (not propagated to the output).
+    pub fn bounding_box(&self) -> Option<BoundingBox> {
+        BoundingBox::from_points(self.positions.iter().copied())
+    }
 }
 
 /// A named bag of [`Primitive`]s sharing nothing but a name.
@@ -231,5 +245,20 @@ impl Mesh {
     pub fn with_weights(mut self, weights: impl Into<Vec<f32>>) -> Self {
         self.weights = weights.into();
         self
+    }
+
+    /// Axis-aligned bounding box over every contained primitive in
+    /// mesh-local space (no transforms applied; morph deltas + skin
+    /// pose ignored).
+    ///
+    /// Returns `None` if every primitive is empty. Morph targets are
+    /// not folded in — for a worst-case bound the caller would have
+    /// to walk each [`MorphTarget`] and union the deltas; the typed
+    /// model deliberately stays runtime-agnostic.
+    pub fn bounding_box(&self) -> Option<BoundingBox> {
+        self.primitives
+            .iter()
+            .filter_map(|p| p.bounding_box())
+            .reduce(BoundingBox::union)
     }
 }

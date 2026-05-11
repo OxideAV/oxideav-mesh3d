@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 8 (extended validate rules + bounding_box)
+
+- `Scene3D::validate()` gains cross-collection checks for the resource
+  arenas that round 7 didn't yet cover:
+  - **Materials → textures.** Every `Material::*_texture` slot's
+    `TextureRef::texture` is range-checked against `Scene3D::textures`.
+    All five PBR slots (`base_color`, `metallic_roughness`, `normal`,
+    `occlusion`, `emissive`) are reported individually so the
+    breadcrumb identifies which slot dangled.
+  - **Skeletons → nodes + IBM parity.** Every `Skeleton::joints` entry
+    is range-checked against `Scene3D::nodes`; when
+    `Skeleton::inverse_bind_matrices` is non-empty its length must
+    equal `joints.len()` (an empty vec is a documented escape hatch
+    per glTF's `inverseBindMatrices` being optional). New variant
+    `ValidationError::SkeletonBindMatrixCountMismatch`.
+  - **Skins → skeletons + optional root_node.** Both
+    `Skin::skeleton` and `Skin::root_node` are range-checked.
+  - **Audio emitters → audio sources.** `AudioEmitter::source` is
+    range-checked against `Scene3D::audio_sources`.
+  - **Animations.** Every `AnimationChannel::target.node` is
+    range-checked. Per-sampler parity is enforced:
+    - keyframes must be non-empty and strictly increasing
+      (`ValidationError::AnimationSamplerEmpty` /
+      `AnimationKeyframesNotStrictlyIncreasing`),
+    - the `AnimationValues` variant must match the channel's
+      `AnimationProperty` (`Translation`/`Scale` → `Vec3`,
+      `Rotation` → `Quat`, `MorphWeights` → `Scalar`) —
+      `ValidationError::AnimationValueVariantMismatch`,
+    - sample count must equal `keyframes.len() * factor` where
+      `factor = 3` for `CubicSpline` and `1` otherwise; for
+      `MorphWeights` the check relaxes to divisibility by
+      `keyframes.len() * factor` since the per-mesh
+      morph-target count needs out-of-band binding context to
+      verify exactly — `ValidationError::AnimationSamplerLengthMismatch`.
+- `tests/scene_validate.rs` adds 18 new tests covering every new
+  variant + a "full valid scene with every resource kind" happy-path
+  oracle that exercises every new check at once.
+
+### Added — Round 8 (bounding_box)
+
+- `BoundingBox { min: [f32; 3], max: [f32; 3] }` axis-aligned bounding
+  box value type, re-exported from the crate root. Methods:
+  `from_point`, `from_points<I: IntoIterator>` (NaN coordinates
+  skipped, empty input ⇒ `None`), `expand`, `union`, `center`, `size`,
+  `is_valid`, `transform([[f32; 4]; 4])`. `transform` fits a tight
+  AABB around the eight transformed corners, so a rotated input box
+  produces a tight (not loose) output box.
+- `Primitive::bounding_box() -> Option<BoundingBox>` — extent over
+  `Primitive::positions` in primitive-local space. Indices are *not*
+  consulted (data extent, not drawn extent); callers needing the
+  index-aware version go through `BoundingBox::from_points` themselves.
+- `Mesh::bounding_box() -> Option<BoundingBox>` — union over every
+  contained primitive in mesh-local space.
+- `Scene3D::bounding_box() -> Option<BoundingBox>` — depth-first walk
+  from `Scene3D::roots`, composing each ancestor node's transform
+  into a world matrix and folding the per-mesh AABB through it.
+  Skin pose + morph deltas are **not** applied (the typed model
+  stays runtime-agnostic). Detached meshes (reachable through
+  `Scene3D::meshes` but not from any root) are skipped — use
+  `Scene3D::meshes` + `Mesh::bounding_box` directly when that's the
+  intent. Self-cycles in the children graph are guarded with a
+  visited-set so the walk terminates.
+- `ValidationError` is now `PartialEq` only (no longer `Eq`) because
+  `AnimationKeyframesNotStrictlyIncreasing` carries `f32`. Existing
+  patterns continue to compile; only direct `assert_eq!`-on-errors
+  callers need to switch to pattern matching.
+- `tests/bounding_box.rs` — 23 new tests across `BoundingBox` basics
+  (zero-size point, NaN handling, union, transform under
+  translation/rotation/scale), `Primitive`/`Mesh` helpers, and full
+  `Scene3D` walks (parent-child compose, multi-root union, detached
+  mesh skipping, self-cycle termination).
+
 ### Changed — BREAKING (round 7, pre-v0.1)
 
 - **`Primitive` is now `#[non_exhaustive]`.** Future attribute fields

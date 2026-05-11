@@ -70,6 +70,139 @@ id_newtype!(
     LightId
 );
 
+/// Axis-aligned bounding box over a set of 3D points.
+///
+/// `min` is the componentwise minimum corner, `max` the componentwise
+/// maximum corner. Both are inclusive; for an empty point set this
+/// type returns [`None`] from its constructors rather than carrying a
+/// degenerate `[inf; 3]` / `[-inf; 3]` sentinel.
+///
+/// Use [`BoundingBox::from_points`] to build one from an iterator of
+/// `[f32; 3]`, [`BoundingBox::union`] to merge two boxes, and
+/// [`BoundingBox::transform`] to rotate / translate / scale the box
+/// by a 4x4 row-major-column-vector matrix (the eight corners are
+/// transformed and a new AABB is fitted around them — the rotated
+/// box's tight bound).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoundingBox {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+impl BoundingBox {
+    /// Bounding box of exactly one point. Both corners coincide.
+    pub fn from_point(p: [f32; 3]) -> Self {
+        Self { min: p, max: p }
+    }
+
+    /// Bounding box over a stream of points. Returns `None` if the
+    /// iterator yields zero finite points (NaN coordinates are
+    /// skipped on a per-component basis).
+    pub fn from_points<I: IntoIterator<Item = [f32; 3]>>(points: I) -> Option<Self> {
+        let mut acc: Option<Self> = None;
+        for p in points {
+            if p[0].is_nan() || p[1].is_nan() || p[2].is_nan() {
+                continue;
+            }
+            acc = Some(match acc {
+                None => Self::from_point(p),
+                Some(b) => b.expand(p),
+            });
+        }
+        acc
+    }
+
+    /// Grow the box to include `p`. Returns a new box; the input is
+    /// left unchanged. NaN components are kept as-is on the
+    /// existing box (they are not propagated by [`from_points`] either).
+    pub fn expand(self, p: [f32; 3]) -> Self {
+        Self {
+            min: [
+                self.min[0].min(p[0]),
+                self.min[1].min(p[1]),
+                self.min[2].min(p[2]),
+            ],
+            max: [
+                self.max[0].max(p[0]),
+                self.max[1].max(p[1]),
+                self.max[2].max(p[2]),
+            ],
+        }
+    }
+
+    /// Componentwise union of two boxes — the smallest AABB
+    /// containing both.
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            min: [
+                self.min[0].min(other.min[0]),
+                self.min[1].min(other.min[1]),
+                self.min[2].min(other.min[2]),
+            ],
+            max: [
+                self.max[0].max(other.max[0]),
+                self.max[1].max(other.max[1]),
+                self.max[2].max(other.max[2]),
+            ],
+        }
+    }
+
+    /// Centre of the box (average of `min` and `max`).
+    pub fn center(self) -> [f32; 3] {
+        [
+            0.5 * (self.min[0] + self.max[0]),
+            0.5 * (self.min[1] + self.max[1]),
+            0.5 * (self.min[2] + self.max[2]),
+        ]
+    }
+
+    /// Componentwise size of the box (`max - min`).
+    pub fn size(self) -> [f32; 3] {
+        [
+            self.max[0] - self.min[0],
+            self.max[1] - self.min[1],
+            self.max[2] - self.min[2],
+        ]
+    }
+
+    /// `true` if every component of `min` is less than or equal to the
+    /// corresponding component of `max` (i.e. the box is non-empty
+    /// and well-formed).
+    pub fn is_valid(self) -> bool {
+        self.min[0] <= self.max[0] && self.min[1] <= self.max[1] && self.min[2] <= self.max[2]
+    }
+
+    /// Tight AABB around the box transformed by a row-major
+    /// column-vector 4x4 matrix (`out = M * v`, same convention as
+    /// [`Transform::Matrix`]).
+    ///
+    /// Returns the AABB of the eight transformed corners. For
+    /// non-affine matrices (perspective `w != 1`) the result may not
+    /// be physically meaningful — this method is intended for the
+    /// scene-graph TRS / matrix chain composing every ancestor node's
+    /// local transform.
+    pub fn transform(self, m: [[f32; 4]; 4]) -> Self {
+        let corners = [
+            [self.min[0], self.min[1], self.min[2]],
+            [self.max[0], self.min[1], self.min[2]],
+            [self.min[0], self.max[1], self.min[2]],
+            [self.max[0], self.max[1], self.min[2]],
+            [self.min[0], self.min[1], self.max[2]],
+            [self.max[0], self.min[1], self.max[2]],
+            [self.min[0], self.max[1], self.max[2]],
+            [self.max[0], self.max[1], self.max[2]],
+        ];
+        let xf = corners.map(|c| {
+            [
+                m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2] + m[0][3],
+                m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2] + m[1][3],
+                m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2] + m[2][3],
+            ]
+        });
+        Self::from_points(xf).expect("eight corners always yield a finite AABB")
+    }
+}
+
 /// Coordinate-system principal axis. Stored on [`Scene3D`] so a
 /// renderer can apply (or skip) a global rotation when the file
 /// convention disagrees with its own.
@@ -197,6 +330,17 @@ impl Transform {
 
 fn vec3_len(v: [f32; 3]) -> f32 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
+/// Row-major column-vector 4x4 matrix multiply `a * b`.
+fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    let mut out = [[0.0f32; 4]; 4];
+    for (i, row) in out.iter_mut().enumerate() {
+        for (j, slot) in row.iter_mut().enumerate() {
+            *slot = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j] + a[i][3] * b[3][j];
+        }
+    }
+    out
 }
 
 fn trs_to_matrix(t: [f32; 3], r: [f32; 4], s: [f32; 3]) -> [[f32; 4]; 4] {
@@ -496,6 +640,73 @@ impl Scene3D {
         self.meshes.get(id.0 as usize)
     }
 
+    /// Axis-aligned bounding box over every mesh referenced by a node
+    /// reachable from [`Scene3D::roots`], with each mesh's vertices
+    /// projected through its node's full ancestor transform chain.
+    ///
+    /// Returns `None` when no reachable node carries a mesh, or every
+    /// reachable mesh is empty.
+    ///
+    /// **What this does NOT include:**
+    ///
+    /// * Skin pose deformation — the rest-pose vertices are used
+    ///   verbatim. A bound mesh whose vertices are rigged to a
+    ///   skeleton will report the *rest-pose* extent, not the
+    ///   skinned-pose extent at any particular animation time.
+    /// * Morph targets — only base [`Primitive::positions`](crate::Primitive::positions)
+    ///   are folded in.
+    /// * Meshes referenced by `nodes` not reachable from any root —
+    ///   detached resources are ignored. Use [`Scene3D::meshes`] +
+    ///   [`Mesh::bounding_box`](crate::Mesh::bounding_box) directly if
+    ///   you need every resource regardless of scene-graph reachability.
+    ///
+    /// Re-entry through a cycle (a node listed as its own descendant)
+    /// is guarded against — each node is visited at most once.
+    pub fn bounding_box(&self) -> Option<BoundingBox> {
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        if n_nodes == 0 || n_meshes == 0 {
+            return None;
+        }
+        let mut visited = vec![false; n_nodes];
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut acc: Option<BoundingBox> = None;
+        // Iterative depth-first walk; stack carries (node_id, ancestor_matrix).
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                    if let Some(b) = mesh.bounding_box() {
+                        let xf = b.transform(world);
+                        acc = Some(match acc {
+                            None => xf,
+                            Some(a) => a.union(xf),
+                        });
+                    }
+                }
+            }
+            // Walk children in reverse so leftmost child is popped first
+            // (deterministic for the deterministic-debug-output use case).
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        acc
+    }
+
     /// Sum of triangles across every mesh primitive.
     ///
     /// Lists / strips / fans contribute as if tessellated:
@@ -550,10 +761,13 @@ impl Scene3D {
         let n_nodes = self.nodes.len();
         let n_meshes = self.meshes.len();
         let n_materials = self.materials.len();
+        let n_textures = self.textures.len();
         let n_cameras = self.cameras.len();
         let n_lights = self.lights.len();
+        let n_skeletons = self.skeletons.len();
         let n_skins = self.skins.len();
         let n_emitters = self.audio_emitters.len();
+        let n_audio_sources = self.audio_sources.len();
 
         for (i, root) in self.roots.iter().enumerate() {
             if (root.0 as usize) >= n_nodes {
@@ -742,6 +956,171 @@ impl Scene3D {
             }
         }
 
+        // Materials → textures.
+        for (mi, mat) in self.materials.iter().enumerate() {
+            let slot = |field: &str| format!("materials[{mi}].{field}");
+            let mut check = |field: &str, t: Option<crate::material::TextureRef>| {
+                if let Some(r) = t {
+                    if (r.texture.0 as usize) >= n_textures {
+                        errors.push(ValidationError::DanglingId {
+                            location: slot(field),
+                            id: r.texture.0,
+                            arena: "textures",
+                        });
+                    }
+                }
+            };
+            check("base_color_texture", mat.base_color_texture);
+            check("metallic_roughness_texture", mat.metallic_roughness_texture);
+            check("normal_texture", mat.normal_texture);
+            check("occlusion_texture", mat.occlusion_texture);
+            check("emissive_texture", mat.emissive_texture);
+        }
+
+        // Skeletons → nodes + inverse-bind-matrix parity.
+        for (si, skel) in self.skeletons.iter().enumerate() {
+            for (ji, joint) in skel.joints.iter().enumerate() {
+                if (joint.0 as usize) >= n_nodes {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("skeletons[{si}].joints[{ji}]"),
+                        id: joint.0,
+                        arena: "nodes",
+                    });
+                }
+            }
+            if !skel.inverse_bind_matrices.is_empty()
+                && skel.inverse_bind_matrices.len() != skel.joints.len()
+            {
+                errors.push(ValidationError::SkeletonBindMatrixCountMismatch {
+                    location: format!("skeletons[{si}]"),
+                    joints: skel.joints.len(),
+                    inverse_bind_matrices: skel.inverse_bind_matrices.len(),
+                });
+            }
+        }
+
+        // Skins → skeletons + optional root node.
+        for (si, skin) in self.skins.iter().enumerate() {
+            if (skin.skeleton.0 as usize) >= n_skeletons {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("skins[{si}].skeleton"),
+                    id: skin.skeleton.0,
+                    arena: "skeletons",
+                });
+            }
+            if let Some(r) = skin.root_node {
+                if (r.0 as usize) >= n_nodes {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("skins[{si}].root_node"),
+                        id: r.0,
+                        arena: "nodes",
+                    });
+                }
+            }
+        }
+
+        // Audio emitters → audio sources.
+        for (ei, em) in self.audio_emitters.iter().enumerate() {
+            if (em.source.0 as usize) >= n_audio_sources {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("audio_emitters[{ei}].source"),
+                    id: em.source.0,
+                    arena: "audio_sources",
+                });
+            }
+        }
+
+        // Animations: channel target nodes + sampler parity.
+        for (ai, anim) in self.animations.iter().enumerate() {
+            for (ci, ch) in anim.channels.iter().enumerate() {
+                let loc = |suffix: &str| format!("animations[{ai}].channels[{ci}]{suffix}");
+                if (ch.target.node.0 as usize) >= n_nodes {
+                    errors.push(ValidationError::DanglingId {
+                        location: loc(".target.node"),
+                        id: ch.target.node.0,
+                        arena: "nodes",
+                    });
+                }
+                let k = ch.sampler.keyframes.len();
+                if k == 0 {
+                    errors.push(ValidationError::AnimationSamplerEmpty {
+                        location: loc(".sampler"),
+                    });
+                } else {
+                    let mut prev = f32::NEG_INFINITY;
+                    for (ki, t) in ch.sampler.keyframes.iter().enumerate() {
+                        if t.partial_cmp(&prev) != Some(std::cmp::Ordering::Greater) {
+                            errors.push(ValidationError::AnimationKeyframesNotStrictlyIncreasing {
+                                location: loc(&format!(".sampler.keyframes[{ki}]")),
+                                at: *t,
+                                previous: prev,
+                            });
+                            break;
+                        }
+                        prev = *t;
+                    }
+                }
+
+                use crate::animation::{AnimationProperty as P, AnimationValues as V};
+                let variant_ok = matches!(
+                    (ch.target.property, &ch.sampler.values),
+                    (P::Translation | P::Scale, V::Vec3(_))
+                        | (P::Rotation, V::Quat(_))
+                        | (P::MorphWeights, V::Scalar(_))
+                );
+                if !variant_ok {
+                    let expected: &'static str = match ch.target.property {
+                        P::Translation | P::Scale => "Vec3",
+                        P::Rotation => "Quat",
+                        P::MorphWeights => "Scalar",
+                    };
+                    let actual: &'static str = match ch.sampler.values {
+                        V::Vec3(_) => "Vec3",
+                        V::Quat(_) => "Quat",
+                        V::Scalar(_) => "Scalar",
+                    };
+                    errors.push(ValidationError::AnimationValueVariantMismatch {
+                        location: loc(""),
+                        property: match ch.target.property {
+                            P::Translation => "Translation",
+                            P::Rotation => "Rotation",
+                            P::Scale => "Scale",
+                            P::MorphWeights => "MorphWeights",
+                        },
+                        expected_variant: expected,
+                        actual_variant: actual,
+                    });
+                }
+
+                if k != 0 {
+                    let v = ch.sampler.values.len();
+                    let expected_factor = match ch.sampler.interpolation {
+                        crate::animation::Interpolation::CubicSpline => 3,
+                        _ => 1,
+                    };
+                    let ok = match (ch.target.property, &ch.sampler.values) {
+                        (P::MorphWeights, V::Scalar(_)) => {
+                            let denom = k * expected_factor;
+                            denom != 0 && v % denom == 0 && v >= denom
+                        }
+                        _ => v == k * expected_factor,
+                    };
+                    if !ok {
+                        errors.push(ValidationError::AnimationSamplerLengthMismatch {
+                            location: loc(".sampler"),
+                            keyframes: k,
+                            values: v,
+                            interpolation: match ch.sampler.interpolation {
+                                crate::animation::Interpolation::Step => "Step",
+                                crate::animation::Interpolation::Linear => "Linear",
+                                crate::animation::Interpolation::CubicSpline => "CubicSpline",
+                            },
+                        });
+                    }
+                }
+            }
+        }
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -753,7 +1132,12 @@ impl Scene3D {
 /// One issue surfaced by [`Scene3D::validate`]. The variants intentionally
 /// carry breadcrumb strings (`"meshes[3].primitives[0].normals"`) so a
 /// caller can render a usable diagnostic without re-walking the scene.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `Eq` is not implemented because
+/// [`AnimationKeyframesNotStrictlyIncreasing`](Self::AnimationKeyframesNotStrictlyIncreasing)
+/// carries `f32` keyframe values; use `PartialEq` or pattern-match on
+/// the variant fields when asserting in tests.
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum ValidationError {
     /// A typed `IdT(u32)` field points outside its arena.
@@ -781,6 +1165,44 @@ pub enum ValidationError {
         location: String,
         mesh_weights: usize,
         primitive_targets: usize,
+    },
+    /// [`Skeleton::inverse_bind_matrices`](crate::Skeleton::inverse_bind_matrices)
+    /// is non-empty and its length disagrees with
+    /// [`Skeleton::joints`](crate::Skeleton::joints).
+    SkeletonBindMatrixCountMismatch {
+        location: String,
+        joints: usize,
+        inverse_bind_matrices: usize,
+    },
+    /// An animation channel's sampler has zero keyframes; no
+    /// keyframe-time table to interpolate against.
+    AnimationSamplerEmpty { location: String },
+    /// An animation sampler's keyframe times are not strictly
+    /// increasing — the renderer would search ambiguously.
+    AnimationKeyframesNotStrictlyIncreasing {
+        location: String,
+        at: f32,
+        previous: f32,
+    },
+    /// An animation sampler's value variant disagrees with the
+    /// channel target's property kind (e.g. `Rotation` channel
+    /// fed `Vec3` values).
+    AnimationValueVariantMismatch {
+        location: String,
+        property: &'static str,
+        expected_variant: &'static str,
+        actual_variant: &'static str,
+    },
+    /// An animation sampler's value count doesn't match the expected
+    /// `keyframes.len() * factor` (`factor = 1` for Step/Linear,
+    /// `factor = 3` for CubicSpline; MorphWeights additionally
+    /// multiplies by per-mesh morph-target count, so we only check
+    /// divisibility there).
+    AnimationSamplerLengthMismatch {
+        location: String,
+        keyframes: usize,
+        values: usize,
+        interpolation: &'static str,
     },
 }
 
@@ -814,6 +1236,43 @@ impl std::fmt::Display for ValidationError {
             } => write!(
                 f,
                 "{location}: mesh has {mesh_weights} weights but primitive carries {primitive_targets} morph targets"
+            ),
+            Self::SkeletonBindMatrixCountMismatch {
+                location,
+                joints,
+                inverse_bind_matrices,
+            } => write!(
+                f,
+                "{location}: skeleton has {joints} joints but {inverse_bind_matrices} inverse-bind matrices"
+            ),
+            Self::AnimationSamplerEmpty { location } => {
+                write!(f, "{location}: sampler has no keyframes")
+            }
+            Self::AnimationKeyframesNotStrictlyIncreasing {
+                location,
+                at,
+                previous,
+            } => write!(
+                f,
+                "{location}: keyframe time {at} is not greater than previous {previous}"
+            ),
+            Self::AnimationValueVariantMismatch {
+                location,
+                property,
+                expected_variant,
+                actual_variant,
+            } => write!(
+                f,
+                "{location}: property {property} expects {expected_variant} values but sampler carries {actual_variant}"
+            ),
+            Self::AnimationSamplerLengthMismatch {
+                location,
+                keyframes,
+                values,
+                interpolation,
+            } => write!(
+                f,
+                "{location}: interpolation {interpolation} with {keyframes} keyframes expects matching values, got {values}"
             ),
         }
     }
