@@ -752,6 +752,9 @@ impl Scene3D {
     /// * `Mesh::weights.len()` matches the morph-target count of
     ///   every contained primitive (or every primitive has zero
     ///   targets and `weights` is empty).
+    /// * Every `Skeleton::inverse_bind_matrices` entry has its fourth
+    ///   row set to `[0, 0, 0, 1]` (glTF 2.0 §5.28.1 affine-IBM
+    ///   constraint).
     ///
     /// This is a defensive check for fuzzers and codec authors —
     /// production decoders are expected to produce valid scenes
@@ -997,6 +1000,22 @@ impl Scene3D {
                     inverse_bind_matrices: skel.inverse_bind_matrices.len(),
                 });
             }
+            // glTF 2.0 §5.28.1: an accessor referenced by
+            // `inverseBindMatrices` MUST have its fourth row set to
+            // `[0.0, 0.0, 0.0, 1.0]` (the matrix is affine — a pure
+            // composition of rotations/translations/scales/shears,
+            // never projective). Our matrix is row-major
+            // column-vector, so the "fourth row" of the math matrix
+            // is the row at index 3.
+            for (ji, ibm) in skel.inverse_bind_matrices.iter().enumerate() {
+                let last = ibm[3];
+                if last[0] != 0.0 || last[1] != 0.0 || last[2] != 0.0 || last[3] != 1.0 {
+                    errors.push(ValidationError::SkeletonBindMatrixNotAffine {
+                        location: format!("skeletons[{si}].inverse_bind_matrices[{ji}]"),
+                        last_row: last,
+                    });
+                }
+            }
         }
 
         // Skins → skeletons + optional root node.
@@ -1174,6 +1193,16 @@ pub enum ValidationError {
         joints: usize,
         inverse_bind_matrices: usize,
     },
+    /// One of [`Skeleton::inverse_bind_matrices`](crate::Skeleton::inverse_bind_matrices)
+    /// has a non-affine fourth row. The glTF 2.0 spec §5.28.1
+    /// requires every IBM's last row to be `[0.0, 0.0, 0.0, 1.0]`;
+    /// any other value implies a projective component that the
+    /// skinning math `(weight_i * joint_world_i * IBM_i * pos)` would
+    /// silently corrupt.
+    SkeletonBindMatrixNotAffine {
+        location: String,
+        last_row: [f32; 4],
+    },
     /// An animation channel's sampler has zero keyframes; no
     /// keyframe-time table to interpolate against.
     AnimationSamplerEmpty { location: String },
@@ -1244,6 +1273,10 @@ impl std::fmt::Display for ValidationError {
             } => write!(
                 f,
                 "{location}: skeleton has {joints} joints but {inverse_bind_matrices} inverse-bind matrices"
+            ),
+            Self::SkeletonBindMatrixNotAffine { location, last_row } => write!(
+                f,
+                "{location}: inverse-bind matrix last row {last_row:?} is not [0, 0, 0, 1]"
             ),
             Self::AnimationSamplerEmpty { location } => {
                 write!(f, "{location}: sampler has no keyframes")

@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 9 (AnimationSampler::sample + IBM affine validation)
+
+- `AnimationSampler::sample(t: f32) -> Option<SampledValue>` — keyframe
+  evaluator implementing every glTF 2.0 Appendix C interpolation mode.
+  `SampledValue { Vec3([f32; 3]), Quat([f32; 4]), Scalar(Vec<f32>) }`
+  is re-exported from the crate root; `Scalar` carries `Vec<f32>` since
+  `MorphWeights` samplers stride the per-frame value table by the
+  per-mesh morph-target count (variable arity, not fixed-width).
+  - **C.1 clamping.** `t <= keyframes[0]` returns the first centre
+    value; `t >= keyframes[n-1]` returns the last; an exact-keyframe
+    match short-circuits the interpolation arithmetic.
+  - **C.2 STEP** — `v_t = v_k`.
+  - **C.3 LINEAR** (non-rotation) — `(1-u)*v_k + u*v_{k+1}`,
+    componentwise; same logic re-used for `Scalar` morph weights with
+    per-frame stride.
+  - **C.4 SLERP** (rotation under LINEAR) — short-arc dot-product sign
+    correction + `sin(a*(1-t))/sin(a) * v_k + sign*sin(a*t)/sin(a) * v_{k+1}`,
+    with a normalised componentwise-lerp fallback when `|sin(a)| < 1e-6`
+    (the spec's "close-to-zero a" note).
+  - **C.5 CUBICSPLINE** — Hermite blend
+    `(2u³-3u²+1)v_k + t_d(u³-2u²+u)b_k + (-2u³+3u²)v_{k+1} + t_d(u³-u²)a_{k+1}`
+    over the `[in, value, out]` storage layout; rotation output is
+    **not** auto-normalised (spec note: caller's responsibility).
+  - Empty samplers, length-mismatched value tables, and zero per-frame
+    strides return `None` — a fuzzer-safe surface that codec authors
+    can plug straight into a renderer.
+- `tests/animation_sample.rs` — 19 tests across §C.1 (clamping +
+  exact-match), §C.2 (Step), §C.3 (Linear Vec3 + Scalar with two morph
+  targets), §C.4 (SLERP identity-to-identity, 90° about Z midpoint =
+  45° about Z, short-arc dot-negative collapse), §C.5 (centre value at
+  keyframe, zero-tangent ↔ Hermite basis collapse, non-zero out-tangent
+  shifts midpoint off the linear blend, pre/post clamp ignores
+  tangents), plus a multi-segment binary-search walk and Step
+  morph-weights stride check.
+
+### Added — Round 9 (IBM affine-row validation)
+
+- `Scene3D::validate()` gains a glTF 2.0 §5.28.1 check: every
+  `Skeleton::inverse_bind_matrices` entry must have its fourth row set
+  to `[0, 0, 0, 1]`. Non-affine IBMs would silently corrupt the
+  skinning math `sum_i weight_i * joint_world_i * IBM_i * pos`. New
+  variant `ValidationError::SkeletonBindMatrixNotAffine { location,
+  last_row }` with `Display` breadcrumb. Existing
+  `full_valid_scene_with_all_resource_kinds_passes` oracle updated to
+  use a proper identity IBM. Three new tests in
+  `tests/scene_validate.rs`: zero-last-row caught, projective-last-row
+  caught, identity passes, plus a Display breadcrumb check.
+
 ### Added — Round 8 (extended validate rules + bounding_box)
 
 - `Scene3D::validate()` gains cross-collection checks for the resource

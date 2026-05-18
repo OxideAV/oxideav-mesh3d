@@ -537,7 +537,13 @@ fn full_valid_scene_with_all_resource_kinds_passes() {
     s.add_root(nid);
     let mut skel = Skeleton::new();
     skel.joints = vec![nid];
-    skel.inverse_bind_matrices = vec![[[0.0; 4]; 4]];
+    // Affine identity IBM — fourth row is [0, 0, 0, 1] per glTF §5.28.1.
+    skel.inverse_bind_matrices = vec![[
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]];
     let skel_id = s.add_skeleton(skel);
     s.add_skin(Skin::new(skel_id).with_root(nid));
     let mut anim = Animation::new(None);
@@ -554,4 +560,93 @@ fn full_valid_scene_with_all_resource_kinds_passes() {
     });
     s.add_animation(anim);
     assert!(s.validate().is_ok(), "{:?}", s.validate().err());
+}
+
+#[test]
+fn skeleton_ibm_last_row_must_be_affine() {
+    // glTF 2.0 §5.28.1: the fourth row of every inverse-bind matrix
+    // MUST be [0, 0, 0, 1]. A zero last row is the most common bug
+    // (forgetting to set the homogeneous component).
+    let mut skel = Skeleton::new();
+    skel.joints = vec![NodeId(0)];
+    skel.inverse_bind_matrices = vec![[[0.0; 4]; 4]]; // last row = [0,0,0,0]
+    let mut s = Scene3D::new();
+    s.add_node(Node::new());
+    s.add_skeleton(skel);
+    let errs = s.validate().unwrap_err();
+    assert!(
+        errs.iter().any(|e| matches!(
+            e,
+            ValidationError::SkeletonBindMatrixNotAffine {
+                last_row: [0.0, 0.0, 0.0, 0.0],
+                ..
+            }
+        )),
+        "expected SkeletonBindMatrixNotAffine, got {errs:?}"
+    );
+}
+
+#[test]
+fn skeleton_ibm_projective_last_row_reported() {
+    // A non-(0,0,0,1) last row that's not all-zero — would imply a
+    // perspective projection getting smuggled into the skinning math.
+    let mut skel = Skeleton::new();
+    skel.joints = vec![NodeId(0)];
+    skel.inverse_bind_matrices = vec![[
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.5, 1.0], // perspective-ish entry
+    ]];
+    let mut s = Scene3D::new();
+    s.add_node(Node::new());
+    s.add_skeleton(skel);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::SkeletonBindMatrixNotAffine {
+            last_row: [0.0, 0.0, 0.5, 1.0],
+            ..
+        }
+    )));
+}
+
+#[test]
+fn skeleton_ibm_affine_identity_passes() {
+    let mut skel = Skeleton::new();
+    skel.joints = vec![NodeId(0)];
+    skel.inverse_bind_matrices = vec![[
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]];
+    let mut s = Scene3D::new();
+    s.add_node(Node::new());
+    s.add_skeleton(skel);
+    assert!(s.validate().is_ok());
+}
+
+#[test]
+fn skeleton_ibm_display_breadcrumb() {
+    let mut skel = Skeleton::new();
+    skel.joints = vec![NodeId(0)];
+    skel.inverse_bind_matrices = vec![[[0.0; 4]; 4]];
+    let mut s = Scene3D::new();
+    s.add_node(Node::new());
+    s.add_skeleton(skel);
+    let errs = s.validate().unwrap_err();
+    let msg = errs
+        .iter()
+        .find(|e| matches!(e, ValidationError::SkeletonBindMatrixNotAffine { .. }))
+        .unwrap()
+        .to_string();
+    assert!(
+        msg.contains("skeletons[0].inverse_bind_matrices[0]"),
+        "{msg}"
+    );
+    assert!(
+        msg.contains("[0.0, 0.0, 0.0, 0.0]") || msg.contains("[0, 0, 0, 0]"),
+        "{msg}"
+    );
 }

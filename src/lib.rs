@@ -75,7 +75,7 @@ pub mod texture;
 
 pub use animation::{
     Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
-    AnimationValues, Interpolation,
+    AnimationValues, Interpolation, SampledValue,
 };
 pub use asset::{AssetSource, InMemoryAsset, RawStorage};
 pub use audio::{
