@@ -195,6 +195,125 @@ impl Primitive {
     pub fn bounding_box(&self) -> Option<BoundingBox> {
         BoundingBox::from_points(self.positions.iter().copied())
     }
+
+    /// Evaluate the per-vertex morph-blend formula from glTF 2.0
+    /// §3.7.2.2 against this primitive's [`Primitive::targets`] using
+    /// the supplied per-target `weights`, and return the blended
+    /// attribute buffers.
+    ///
+    /// Per spec §3.7.2.2:
+    ///
+    /// ```text
+    /// morphed[k] = base[k]
+    ///            + weights[0] * targets[0].ATTR[k]
+    ///            + weights[1] * targets[1].ATTR[k]
+    ///            + ...
+    /// ```
+    ///
+    /// The contract:
+    ///
+    /// * **Per-attribute opt-in.** A target whose slot is `None`
+    ///   contributes nothing for that attribute (spec line 3589:
+    ///   *"Attributes present in the base mesh primitive but not
+    ///   included in a given morph target MUST retain their original
+    ///   values for the morph target."*). The output attribute is
+    ///   `Some(_)` iff the base attribute was `Some(_)`/non-empty.
+    ///   `POSITION` is always present in the output (it's required on
+    ///   every primitive); the other two are mirrors of the base
+    ///   presence.
+    /// * **Tangent handedness preserved.** §3.7.2.2 (line 3616):
+    ///   morph TANGENT deltas are VEC3 — the base TANGENT's `w`
+    ///   handedness is **not** morphed and is copied through verbatim.
+    /// * **Weight count is `weights.len()`.** Any target index `i`
+    ///   beyond `weights.len()` is skipped (`weight = 0` per spec
+    ///   line 3697: missing weights default to zero). Any `weights[i]`
+    ///   for `i >= self.targets.len()` is also ignored (no target to
+    ///   apply it to). Empty `weights` returns the base attributes
+    ///   unmodified.
+    /// * **Buffer-length mismatch is a soft error.** A target slot
+    ///   whose length disagrees with the base attribute is skipped
+    ///   for that vertex range (we still apply the prefix where lengths
+    ///   line up). Callers should run [`crate::Scene3D::validate`]
+    ///   first to catch this — the runtime path stays panic-free.
+    ///
+    /// Cost is `O(V * (1 + T))` where `V = positions.len()` and
+    /// `T = min(weights.len(), targets.len())`. Allocates one
+    /// `Vec<[f32; 3]>` (positions) plus one per present output
+    /// attribute.
+    pub fn apply_morph_weights(&self, weights: &[f32]) -> MorphedAttributes {
+        let n = self.positions.len();
+        let mut positions = self.positions.clone();
+        let mut normals = self.normals.clone();
+        let mut tangents = self.tangents.clone();
+
+        let t_max = self.targets.len().min(weights.len());
+        for (target, &w) in self.targets.iter().zip(weights.iter()).take(t_max) {
+            if w == 0.0 {
+                continue; // Skip no-op contributions; same observable result.
+            }
+            if let Some(d) = &target.position {
+                let lim = n.min(d.len());
+                for k in 0..lim {
+                    positions[k][0] += w * d[k][0];
+                    positions[k][1] += w * d[k][1];
+                    positions[k][2] += w * d[k][2];
+                }
+            }
+            if let (Some(base), Some(d)) = (normals.as_mut(), target.normal.as_ref()) {
+                let lim = base.len().min(d.len());
+                for k in 0..lim {
+                    base[k][0] += w * d[k][0];
+                    base[k][1] += w * d[k][1];
+                    base[k][2] += w * d[k][2];
+                }
+            }
+            if let (Some(base), Some(d)) = (tangents.as_mut(), target.tangent.as_ref()) {
+                // TANGENT is [f32; 4] (xyz + handedness w). Morph
+                // delta is [f32; 3] — handedness is NOT morphed
+                // (spec §3.7.2.2 line 3616). Add xyz only; leave w
+                // untouched.
+                let lim = base.len().min(d.len());
+                for k in 0..lim {
+                    base[k][0] += w * d[k][0];
+                    base[k][1] += w * d[k][1];
+                    base[k][2] += w * d[k][2];
+                }
+            }
+        }
+
+        MorphedAttributes {
+            positions,
+            normals,
+            tangents,
+        }
+    }
+}
+
+/// Evaluated output of [`Primitive::apply_morph_weights`].
+///
+/// One blended copy of each base attribute on a [`Primitive`]. The
+/// `Option` shape mirrors the input primitive's attribute presence:
+/// `normals` / `tangents` are `Some` iff the corresponding base
+/// attribute was `Some`. `positions` is always present (every
+/// primitive carries it).
+///
+/// The buffers live in mesh-local space — skin pose, parent
+/// transforms, and the renderer's projection are not applied. Per
+/// glTF 2.0 §3.7.2.2 line 3697, callers feeding into a draw call
+/// should consume these as the input to skinning/projection rather
+/// than re-blending each frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MorphedAttributes {
+    /// Blended `POSITION` buffer, length equal to the source
+    /// primitive's `positions.len()`.
+    pub positions: Vec<[f32; 3]>,
+    /// Blended `NORMAL` buffer (only when the source primitive carried
+    /// normals). Length matches `positions`.
+    pub normals: Option<Vec<[f32; 3]>>,
+    /// Blended `TANGENT` buffer, xyz blended and `w` handedness
+    /// preserved verbatim (spec §3.7.2.2 forbids morphing handedness).
+    /// Length matches `positions`.
+    pub tangents: Option<Vec<[f32; 4]>>,
 }
 
 /// A named bag of [`Primitive`]s sharing nothing but a name.

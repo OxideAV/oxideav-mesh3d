@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 10 (Primitive::apply_morph_weights)
+
+- `Primitive::apply_morph_weights(weights: &[f32]) -> MorphedAttributes`
+  — typed evaluator for the glTF 2.0 §3.7.2.2 morph-blend formula
+  `morphed[k] = base[k] + Σ weights[i] * targets[i].ATTR[k]` over the
+  three typed slots (`POSITION`, `NORMAL`, `TANGENT`). Contract:
+  - Output `positions` is always present; `normals` / `tangents` are
+    `Some` iff the corresponding base attribute was `Some` (spec line
+    3586: morph attributes require a base attribute).
+  - Tangent handedness `w` is preserved verbatim — morph TANGENT is
+    xyz-only per spec line 3616.
+  - Missing or excess `weights` default to zero (spec line 3697); a
+    weight of `0.0` short-circuits per-target.
+  - Buffer-length mismatch is a soft error: the prefix is applied,
+    the remainder is left untouched (callers run `Scene3D::validate`
+    first to catch this in their test pipeline).
+- `MorphedAttributes { positions, normals, tangents }` — `Clone +
+  Debug + PartialEq` output struct re-exported from the crate root.
+- `tests/morph_apply.rs` — 20 tests across no-op cases (empty weights,
+  no targets, all-zero weights), single-target full / half / negative
+  weights, two-target weighted sum, missing-weight default-to-zero,
+  excess weights ignored, NORMAL slot blending + base-absence drop,
+  TANGENT handedness preservation, combined three-attribute blend,
+  output-presence mirrors input-presence (3 cases), soft-error
+  prefix/excess length handling, `MorphedAttributes` clone+eq, and
+  crate-root re-export parity.
+
 ### Added — Round 9 (AnimationSampler::sample + IBM affine validation)
 
 - `AnimationSampler::sample(t: f32) -> Option<SampledValue>` — keyframe

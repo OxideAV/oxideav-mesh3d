@@ -174,7 +174,24 @@ let mesh = Mesh::new(Some("face".to_owned()))
     .with_weights(vec![0.0_f32]);  // static blend: target 0 disabled
 ```
 
-## Round 7 candidates
+Round 10 lands the typed morph-blend evaluator
+(`tests/morph_apply.rs`, 20 tests):
+
+- `Primitive::apply_morph_weights(weights: &[f32]) -> MorphedAttributes`
+  — pure-Rust evaluation of the glTF 2.0 §3.7.2.2 morph formula
+  `morphed[k] = base[k] + Σ weights[i] * targets[i].ATTR[k]` over the
+  three typed slots (`POSITION`, `NORMAL`, `TANGENT`). The base
+  attribute presence drives output presence (a target slot named when
+  the base is absent is silently dropped per spec line 3586).
+  Tangent handedness `w` is preserved verbatim per spec line 3616
+  (delta is xyz-only). Missing or excess weights default to zero per
+  spec line 3697; buffer-length mismatches apply the prefix and
+  leave the remainder untouched. Empty weights / no targets short-
+  circuit to a verbatim base clone.
+- `MorphedAttributes { positions, normals, tangents }` — `Clone +
+  Debug + PartialEq` output struct re-exported from the crate root.
+
+## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to
   publish 0.0.1 (which lands its first encoder); 0.0.0 ships a
