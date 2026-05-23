@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 101 (area-weighted per-vertex normal recomputation)
+
+- `Primitive::compute_normals(&self) -> Vec<[f32; 3]>` — recomputes
+  smooth, area-weighted per-vertex normals from the primitive's
+  triangle connectivity (the de-stripped list from `triangle_indices`,
+  so `Triangles` / `TriangleStrip` / `TriangleFan` all feed in). For
+  each triangle the un-normalised face normal is the edge cross product
+  `(P[b]-P[a]) × (P[c]-P[a])`; its magnitude equals twice the triangle
+  area, so accumulating it into each incident vertex and normalising the
+  sum yields the area-weighted average of neighbouring face normals —
+  the textbook smooth-shading recomputation (Gouraud 1971; Foley, van
+  Dam et al., *Computer Graphics: Principles and Practice*).
+  - Output length always equals `positions.len()`; CCW = front-facing
+    (right-handed, glTF-aligned) so the normal points out of the front
+    face.
+  - Robust: unreferenced vertices, vertices touched only by degenerate
+    (collinear/coincident) faces, out-of-range index entries, and
+    NaN-producing faces all fall back to `[0, 0, 1]` rather than a zero
+    vector or a panic. Non-triangle topologies (lines/points) produce an
+    all-fallback buffer.
+  - Pure: does not mutate `self`. Assign to `Primitive::normals` to
+    store. This is the recompute step a format decoder runs when the
+    wire stream omits normals (OBJ without `vn`, glTF without `NORMAL`).
+- `tests/compute_normals.rs` — 22 tests: flat-triangle direction in
+  XY/XZ/tilted planes, CW winding flip, area weighting (large face
+  dominates a shared vertex; coplanar neighbours stay identical),
+  strip/fan integration, U16/U32 index parity, degenerate-face / NaN /
+  out-of-range robustness, fallback for unreferenced vertices,
+  `to_triangle_list` invariance, and a cube-corner diagonal normal.
+
 ### Added — Round 97 (strip/fan → triangle-list de-stripping)
 
 - `Primitive::triangle_indices(&self) -> Vec<[u32; 3]>` — de-strips the

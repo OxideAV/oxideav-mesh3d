@@ -314,6 +314,107 @@ impl Primitive {
         out
     }
 
+    /// Recompute smooth, area-weighted per-vertex normals from this
+    /// primitive's triangle connectivity and return them as one
+    /// `[f32; 3]` per vertex (length `positions.len()`).
+    ///
+    /// This is the standard smooth-shading normal-estimation scheme.
+    /// For each triangle `(a, b, c)` the un-normalised face normal is
+    /// the edge cross product
+    ///
+    /// ```text
+    /// N_face = (P[b] - P[a]) × (P[c] - P[a])
+    /// ```
+    ///
+    /// whose direction is the geometric normal and whose **magnitude
+    /// equals twice the triangle's area** (`|u × v| = |u||v|sinθ`).
+    /// Accumulating these un-normalised vectors into each of the
+    /// triangle's three vertices, then normalising the per-vertex sum,
+    /// therefore yields the **area-weighted** average of the incident
+    /// face normals — larger faces pull the shared vertex normal more
+    /// strongly, which is the textbook recomputation (the area weighting
+    /// falls out of the cross-product magnitude; see the smooth-shading
+    /// normal averaging of Gouraud, "Continuous Shading of Curved
+    /// Surfaces", IEEE TC 1971, and the area-weighted face-normal
+    /// accumulation in Foley, van Dam et al., *Computer Graphics:
+    /// Principles and Practice*).
+    ///
+    /// Winding convention: vertices are taken counter-clockwise =
+    /// front-facing (the crate's right-handed, glTF-aligned convention),
+    /// so `N_face` points out of the front face. The connectivity is the
+    /// de-stripped triangle list from [`Primitive::triangle_indices`], so
+    /// `Triangles` / `TriangleStrip` (alternating winding honoured) /
+    /// `TriangleFan` all feed in correctly; non-triangle topologies
+    /// (lines/points) contribute no faces and every output normal stays
+    /// at the `[0, 0, 1]` fallback.
+    ///
+    /// Contract:
+    ///
+    /// * **Output length is always `positions.len()`.** Vertices not
+    ///   referenced by any triangle (or by an out-of-range index, which
+    ///   is skipped) receive the fallback normal `[0, 0, 1]` rather than
+    ///   a zero vector, so the result is always renderable.
+    /// * **Degenerate faces contribute nothing.** A triangle whose edge
+    ///   cross product is the zero vector (collinear or coincident
+    ///   vertices) adds zero — it neither helps nor corrupts the
+    ///   accumulation. A vertex touched only by degenerate faces falls
+    ///   back to `[0, 0, 1]`.
+    /// * **NaN-safe.** A face producing a non-finite normal is skipped;
+    ///   a vertex whose accumulated sum is non-finite or zero-length
+    ///   falls back to `[0, 0, 1]`.
+    /// * **Does not mutate `self`.** Assign the result to
+    ///   [`Primitive::normals`] (matching `positions` length) if you want
+    ///   to store it. This is the recompute step a format decoder runs
+    ///   when the wire stream omits normals (STL face normals aside, OBJ
+    ///   without `vn`, glTF without `NORMAL`).
+    ///
+    /// Cost is `O(triangle_count + V)`; allocates one `Vec<[f32; 3]>`.
+    pub fn compute_normals(&self) -> Vec<[f32; 3]> {
+        const FALLBACK: [f32; 3] = [0.0, 0.0, 1.0];
+        let n = self.positions.len();
+        let mut acc = vec![[0.0f32; 3]; n];
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            // Defensive: an index buffer can dereference out of range
+            // for a malformed primitive — skip such a face rather than
+            // panic. validate() catches it ahead of time.
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = self.positions[ia];
+            let pb = self.positions[ib];
+            let pc = self.positions[ic];
+            let u = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+            let v = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+            // Cross product u × v: magnitude is twice the triangle area,
+            // so summing it area-weights the contribution automatically.
+            let fn_ = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            if !fn_[0].is_finite() || !fn_[1].is_finite() || !fn_[2].is_finite() {
+                continue;
+            }
+            for &i in &[ia, ib, ic] {
+                acc[i][0] += fn_[0];
+                acc[i][1] += fn_[1];
+                acc[i][2] += fn_[2];
+            }
+        }
+        for a in acc.iter_mut() {
+            let len = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+            if len.is_finite() && len > 0.0 {
+                a[0] /= len;
+                a[1] /= len;
+                a[2] /= len;
+            } else {
+                *a = FALLBACK;
+            }
+        }
+        acc
+    }
+
     /// Evaluate the per-vertex morph-blend formula from glTF 2.0
     /// §3.7.2.2 against this primitive's [`Primitive::targets`] using
     /// the supplied per-target `weights`, and return the blended

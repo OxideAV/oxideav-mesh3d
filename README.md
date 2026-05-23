@@ -214,6 +214,29 @@ Round 97 lands strip/fan → triangle-list de-stripping
   can't emit strips/fans natively consume this to flatten glTF/FBX
   strip primitives.
 
+Round 101 lands area-weighted per-vertex normal recomputation
+(`tests/compute_normals.rs`, 22 tests):
+
+- `Primitive::compute_normals(&self) -> Vec<[f32; 3]>` — recomputes
+  smooth per-vertex normals from the primitive's triangle connectivity
+  (the de-stripped list from `triangle_indices`, so `Triangles` /
+  `TriangleStrip` / `TriangleFan` all feed in correctly). Each
+  triangle's un-normalised face normal is the edge cross product
+  `(P[b]-P[a]) × (P[c]-P[a])`; because its magnitude is twice the
+  triangle area, accumulating it into each incident vertex and
+  normalising the sum gives the **area-weighted** average of the
+  neighbouring face normals — the textbook smooth-shading recomputation
+  (Gouraud 1971; Foley, van Dam et al., *Computer Graphics: Principles
+  and Practice*). CCW = front-facing (right-handed, glTF-aligned).
+  Output length always equals `positions.len()`. Unreferenced vertices,
+  vertices touched only by degenerate (collinear/coincident) faces,
+  out-of-range index entries, and NaN-producing faces fall back to
+  `[0, 0, 1]` rather than a zero vector or a panic; non-triangle
+  topologies produce an all-fallback buffer. Pure (no `self` mutation) —
+  assign the result to `Primitive::normals` to store. This is the
+  recompute step a format decoder runs when the wire stream omits
+  normals (OBJ without `vn`, glTF without `NORMAL`).
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to
