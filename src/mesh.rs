@@ -196,6 +196,124 @@ impl Primitive {
         BoundingBox::from_points(self.positions.iter().copied())
     }
 
+    /// De-strip this primitive's topology into a flat triangle list of
+    /// **vertex indices**, each triple being one triangle wound
+    /// counter-clockwise (front-facing) in the same orientation the
+    /// source topology specifies.
+    ///
+    /// This is the standard OpenGL/glTF strip→list expansion (see the
+    /// [`Topology`] variant docs, which mirror the OpenGL primitive
+    /// assembly rules):
+    ///
+    /// * [`Topology::Triangles`] — already a list; index triples are
+    ///   returned verbatim (the trailing 0–2 leftover indices that
+    ///   don't complete a triangle are dropped).
+    /// * [`Topology::TriangleStrip`] — `v[0],v[1],v[2]` then
+    ///   `v[1],v[2],v[3]`, … with **alternating winding**: every
+    ///   odd-numbered triangle swaps its last two vertices so the
+    ///   visible winding stays consistent (OpenGL §10.1 triangle-strip
+    ///   rule; glTF inherits it).
+    /// * [`Topology::TriangleFan`] — `v[0],v[1],v[2]` then
+    ///   `v[0],v[2],v[3]`, … sharing the anchor `v[0]`; winding is
+    ///   uniform (no alternation).
+    /// * Non-triangle topologies ([`Topology::Lines`],
+    ///   [`Topology::Points`], …) yield an empty list.
+    ///
+    /// The values returned are **vertex indices** into the attribute
+    /// buffers (`positions`, `normals`, …): if an index buffer is
+    /// present its entries are dereferenced (so the result indexes the
+    /// vertex pool, not the index buffer); if absent, the implicit
+    /// sequence `0,1,2,…` over `positions.len()` is used. Indices are
+    /// widened to `u32` so a `U16` source and a `U32` source produce the
+    /// same type.
+    ///
+    /// The output count equals [`Primitive::triangle_count`] for
+    /// triangle topologies. Cost is `O(triangle_count)`; one
+    /// `Vec<[u32; 3]>` is allocated.
+    pub fn triangle_indices(&self) -> Vec<[u32; 3]> {
+        // The logical vertex-index sequence: either the index buffer
+        // widened to u32, or the implicit 0..positions.len() range.
+        let seq: Vec<u32> = match &self.indices {
+            Some(Indices::U16(v)) => v.iter().map(|&i| i as u32).collect(),
+            Some(Indices::U32(v)) => v.clone(),
+            None => (0..self.positions.len() as u32).collect(),
+        };
+        let n = seq.len();
+        match self.topology {
+            Topology::Triangles => {
+                let tris = n / 3;
+                let mut out = Vec::with_capacity(tris);
+                for t in 0..tris {
+                    out.push([seq[3 * t], seq[3 * t + 1], seq[3 * t + 2]]);
+                }
+                out
+            }
+            Topology::TriangleStrip => {
+                if n < 3 {
+                    return Vec::new();
+                }
+                let mut out = Vec::with_capacity(n - 2);
+                for i in 0..(n - 2) {
+                    // Even-indexed triangle keeps (i, i+1, i+2);
+                    // odd-indexed swaps the last two to keep winding
+                    // consistent (OpenGL triangle-strip rule).
+                    if i % 2 == 0 {
+                        out.push([seq[i], seq[i + 1], seq[i + 2]]);
+                    } else {
+                        out.push([seq[i], seq[i + 2], seq[i + 1]]);
+                    }
+                }
+                out
+            }
+            Topology::TriangleFan => {
+                if n < 3 {
+                    return Vec::new();
+                }
+                let anchor = seq[0];
+                let mut out = Vec::with_capacity(n - 2);
+                for i in 1..(n - 1) {
+                    out.push([anchor, seq[i], seq[i + 1]]);
+                }
+                out
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// De-strip this primitive into an equivalent
+    /// [`Topology::Triangles`] primitive with a freshly built `U32`
+    /// index buffer.
+    ///
+    /// The vertex attribute buffers (`positions`, `normals`,
+    /// `tangents`, `uvs`, `colors`, `joints`, `weights`) and the
+    /// `material` are carried over verbatim — only the connectivity is
+    /// rewritten. The new index buffer is the flattening produced by
+    /// [`Primitive::triangle_indices`] (so the alternating
+    /// triangle-strip winding rule is honoured).
+    ///
+    /// `targets` (morph deltas) are carried over too: they are
+    /// per-vertex-parallel to the attribute buffers, which are
+    /// unchanged, so they stay valid. `extras` is cloned through.
+    ///
+    /// For a primitive that is already [`Topology::Triangles`] this is a
+    /// normalising round-trip: the output is `Triangles` with an
+    /// explicit index buffer even if the input was non-indexed. For a
+    /// non-triangle topology (lines/points) the result is an empty-index
+    /// `Triangles` primitive (the attribute buffers are still carried,
+    /// but nothing is drawn) — callers that care about line/point
+    /// topology should branch on [`Primitive::topology`] before calling.
+    pub fn to_triangle_list(&self) -> Primitive {
+        let tris = self.triangle_indices();
+        let mut flat: Vec<u32> = Vec::with_capacity(tris.len() * 3);
+        for t in &tris {
+            flat.extend_from_slice(t);
+        }
+        let mut out = self.clone();
+        out.topology = Topology::Triangles;
+        out.indices = Some(Indices::U32(flat));
+        out
+    }
+
     /// Evaluate the per-vertex morph-blend formula from glTF 2.0
     /// §3.7.2.2 against this primitive's [`Primitive::targets`] using
     /// the supplied per-target `weights`, and return the blended

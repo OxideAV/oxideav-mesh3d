@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 97 (strip/fan → triangle-list de-stripping)
+
+- `Primitive::triangle_indices(&self) -> Vec<[u32; 3]>` — de-strips the
+  primitive's topology into a flat list of triangle vertex-index
+  triples per the OpenGL/glTF primitive-assembly rules:
+  - `TriangleStrip` — `v[0],v[1],v[2]`, then `v[1],v[2],v[3]`, … with
+    the alternating-winding rule: odd-numbered triangles swap their
+    last two vertices so the visible (front-facing) winding stays
+    consistent.
+  - `TriangleFan` — `v[0],v[1],v[2]`, `v[0],v[2],v[3]`, … sharing the
+    anchor vertex `v[0]`; uniform winding.
+  - `Triangles` — index triples returned verbatim; a trailing
+    incomplete triple is dropped.
+  - Non-triangle topologies (`Lines`, `LineStrip`, `LineLoop`,
+    `Points`) yield an empty list.
+  - When an index buffer is present each entry is dereferenced so the
+    result indexes the vertex pool, not the index buffer; `U16` and
+    `U32` are both widened to `u32`. Output count equals
+    `triangle_count()` for triangle topologies.
+- `Primitive::to_triangle_list(&self) -> Primitive` — materialises an
+  equivalent `Topology::Triangles` primitive with a fresh `U32` index
+  buffer (the row-major flattening of `triangle_indices`). Attribute
+  buffers (`positions`, `normals`, `tangents`, `uvs`, `colors`,
+  `joints`, `weights`), `material`, morph `targets`, and `extras` are
+  carried over verbatim — only connectivity is rewritten. A
+  non-triangle source yields a `Triangles` primitive with an empty
+  index buffer (attribute pool preserved). For `Triangles` input it is
+  a normalising round-trip (output gains an explicit `U32` index
+  buffer; re-running is stable).
+- `tests/destrip.rs` — 25 tests: Triangles passthrough + incomplete-
+  triple drop + indexed-deref (U16/U32), TriangleStrip 4/5/6-vertex
+  alternating winding + indexed-deref + too-short cases, TriangleFan
+  shared-anchor + indexed-anchor + too-short cases, non-triangle
+  topologies yield empty, `to_triangle_list` strip/fan conversion +
+  attribute/material/morph-target carry-through + Triangles
+  idempotence + lines empty-index, and `triangle_indices().len()` ==
+  `triangle_count()` cross-checks for n = 3..=20 plus an
+  index-in-range invariant.
+
 ### Added — Round 10 (Primitive::apply_morph_weights)
 
 - `Primitive::apply_morph_weights(weights: &[f32]) -> MorphedAttributes`

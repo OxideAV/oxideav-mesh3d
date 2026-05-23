@@ -191,6 +191,29 @@ Round 10 lands the typed morph-blend evaluator
 - `MorphedAttributes { positions, normals, tangents }` — `Clone +
   Debug + PartialEq` output struct re-exported from the crate root.
 
+Round 97 lands strip/fan → triangle-list de-stripping
+(`tests/destrip.rs`, 25 tests):
+
+- `Primitive::triangle_indices(&self) -> Vec<[u32; 3]>` — expands the
+  primitive's topology into a flat list of triangle vertex-index
+  triples following the OpenGL/glTF primitive-assembly rules.
+  `TriangleStrip` applies the alternating-winding rule (odd-numbered
+  triangles swap their last two vertices so front-facing winding stays
+  consistent); `TriangleFan` shares the anchor vertex `v[0]`;
+  `Triangles` returns its triples verbatim (dropping a trailing
+  incomplete triple). When an index buffer is present each entry is
+  dereferenced so the result indexes the vertex pool (not the index
+  buffer), `U16`/`U32` both widened to `u32`. Non-triangle topologies
+  (lines/points) return an empty list. Output count equals
+  `triangle_count()` for triangle topologies.
+- `Primitive::to_triangle_list(&self) -> Primitive` — materialises an
+  equivalent `Topology::Triangles` primitive with a fresh `U32` index
+  buffer (the flattened `triangle_indices`). Attribute buffers,
+  `material`, morph `targets`, and `extras` are carried over verbatim —
+  only connectivity is rewritten. STL (list-only) and OBJ encoders that
+  can't emit strips/fans natively consume this to flatten glTF/FBX
+  strip primitives.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to
