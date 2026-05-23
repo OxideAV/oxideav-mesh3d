@@ -415,6 +415,248 @@ impl Primitive {
         acc
     }
 
+    /// Recompute per-vertex MikkTSpace-style tangent-space basis
+    /// vectors from this primitive's positions, UVs (UV set `uv_set`),
+    /// and per-vertex normals, returning one `[f32; 4]` per vertex
+    /// (length `positions.len()`) — the xyz is the unit tangent T and
+    /// the w is the handedness sign (`+1.0` or `-1.0`) such that the
+    /// bitangent reconstructs as `B = w * (N × T)`. This is exactly the
+    /// shape the existing [`Primitive::tangents`] field stores and
+    /// what glTF 2.0 §3.7.2.1 specifies for the `TANGENT` accessor.
+    ///
+    /// # Derivation (clean-room, first-principles)
+    ///
+    /// Texture coordinates parameterise the mesh surface as
+    /// `P(u, v)`. The tangent T and bitangent B are the partial
+    /// derivatives `∂P/∂u` and `∂P/∂v` respectively. Over a single
+    /// triangle the surface is linear, so for vertices `(P0, P1, P2)`
+    /// with UVs `(Q0, Q1, Q2)` and edge vectors `E1 = P1 - P0`,
+    /// `E2 = P2 - P0`, UV deltas
+    /// `(Δu1, Δv1) = Q1 - Q0`, `(Δu2, Δv2) = Q2 - Q0`, the chain rule
+    /// gives:
+    ///
+    /// ```text
+    /// [E1]   [Δu1  Δv1] [T]
+    /// [E2] = [Δu2  Δv2] [B]
+    /// ```
+    ///
+    /// Inverting the 2×2 UV-delta matrix yields the closed-form
+    /// per-triangle tangent and bitangent:
+    ///
+    /// ```text
+    /// det = Δu1·Δv2 - Δu2·Δv1
+    /// T   = ( Δv2·E1 - Δv1·E2) / det
+    /// B   = (-Δu2·E1 + Δu1·E2) / det
+    /// ```
+    ///
+    /// (This derivation appears in any partial-derivative treatment of
+    /// surface parameterisation — see Lengyel, "Computing Tangent
+    /// Space Basis Vectors for an Arbitrary Mesh" (2001), and the
+    /// "Normal Mapping" chapter of Akenine-Möller, Haines & Hoffman,
+    /// *Real-Time Rendering*. The math is just the inverse of a 2×2
+    /// linear system.)
+    ///
+    /// We accumulate the un-normalised per-triangle `T` (divided by
+    /// `det` only — so the sum is area-weighted, like
+    /// [`Primitive::compute_normals`]: a degenerate UV triangle whose
+    /// `det → 0` is skipped, not rescaled to infinity) into each of the
+    /// three vertices. The same is done for `B` so the handedness sign
+    /// can be tested per-vertex.
+    ///
+    /// After accumulation, at each vertex we project the accumulated
+    /// `T_sum` against the per-vertex normal `N` and Gram-Schmidt
+    /// orthonormalise:
+    ///
+    /// ```text
+    /// T' = normalise(T_sum - (T_sum · N) * N)
+    /// w  = sign((N × T') · B_sum)   // ±1
+    /// ```
+    ///
+    /// This is the "MikkTSpace handedness rule" (per glTF 2.0
+    /// §3.7.2.1): `B = w * (N × T)` — the renderer reconstructs the
+    /// bitangent from `N`, `T`, `w` rather than storing a separate
+    /// per-vertex `B`, halving the bandwidth.
+    ///
+    /// # Contract
+    ///
+    /// * Returns `None` if `normals` is absent, if UV set `uv_set` is
+    ///   absent or empty, or if `positions` is empty. The caller can
+    ///   then call [`Primitive::compute_normals`] + assignment and
+    ///   retry — tangents are normal-dependent.
+    /// * Output length always equals `positions.len()`. Vertices not
+    ///   touched by any triangle, vertices whose UV chart is degenerate
+    ///   (all triangles produce `det ≈ 0`), or vertices whose
+    ///   accumulated `T_sum` is parallel to `N` (no UV gradient
+    ///   information along the surface tangent plane) fall back to
+    ///   `[1.0, 0.0, 0.0, 1.0]` — a unit vector and a positive
+    ///   handedness, so the result is always renderable.
+    /// * UV set `uv_set` selects which channel in
+    ///   [`Primitive::uvs`] drives the tangent computation. Most
+    ///   meshes have one UV set (`uv_set = 0`); a lightmap-uv-only
+    ///   mesh would pass `uv_set = 1`.
+    /// * NaN-safe. Any face whose computed `T_tri` or `B_tri` is
+    ///   non-finite is skipped; any per-vertex sum that ends
+    ///   non-finite or zero-length falls back as above.
+    /// * The connectivity is the de-stripped triangle list from
+    ///   [`Primitive::triangle_indices`], so `Triangles` /
+    ///   `TriangleStrip` (alternating winding honoured) /
+    ///   `TriangleFan` all feed in correctly; non-triangle topologies
+    ///   produce an all-fallback buffer.
+    /// * **Does not mutate `self`.** Assign the result to
+    ///   [`Primitive::tangents`] if you want to store it — this is
+    ///   the recompute step a format decoder runs when the wire stream
+    ///   omits tangents (OBJ has no native tangent channel, glTF
+    ///   without `TANGENT`).
+    ///
+    /// Cost is `O(triangle_count + V)`; allocates two scratch
+    /// `Vec<[f32; 3]>` of length `V` (tangent and bitangent
+    /// accumulators) plus the output `Vec<[f32; 4]>`.
+    pub fn compute_tangents(&self, uv_set: usize) -> Option<Vec<[f32; 4]>> {
+        const FALLBACK: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+        let n = self.positions.len();
+        if n == 0 {
+            return None;
+        }
+        let normals = self.normals.as_ref()?;
+        if normals.len() != n {
+            return None;
+        }
+        let uvs = self.uvs.get(uv_set)?;
+        if uvs.len() != n {
+            return None;
+        }
+
+        // Per-vertex tangent/bitangent accumulators (area-weighted by
+        // construction: we skip the 1/det scaling that would otherwise
+        // make a small UV triangle dominate).
+        let mut t_acc = vec![[0.0f32; 3]; n];
+        let mut b_acc = vec![[0.0f32; 3]; n];
+
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = self.positions[ia];
+            let pb = self.positions[ib];
+            let pc = self.positions[ic];
+            let qa = uvs[ia];
+            let qb = uvs[ib];
+            let qc = uvs[ic];
+
+            // Edge vectors in object space.
+            let e1 = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+            let e2 = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+            // UV deltas.
+            let du1 = qb[0] - qa[0];
+            let dv1 = qb[1] - qa[1];
+            let du2 = qc[0] - qa[0];
+            let dv2 = qc[1] - qa[1];
+
+            let det = du1 * dv2 - du2 * dv1;
+            if !det.is_finite() || det == 0.0 {
+                // Degenerate UV triangle — no surface tangent
+                // information; contribute nothing.
+                continue;
+            }
+
+            // The exact per-triangle tangent/bitangent (the actual
+            // ∂P/∂u and ∂P/∂v on this triangle) are
+            //   T = ( dv2·E1 - dv1·E2) / det
+            //   B = (-du2·E1 + du1·E2) / det
+            // We want to accumulate them area-weighted (so a small UV
+            // triangle doesn't dominate). The unsigned UV triangle
+            // area is |det|/2, so the area-weighted contribution is
+            // numerator * sign(det) (= numerator/|det| * |det|).
+            // Scaling by sign(det) keeps T pointing in the +U surface
+            // direction even when the UV chart is mirrored (det<0):
+            // we recover that mirror-vs-not signal separately at the
+            // end via the cross-product handedness check, where it
+            // belongs.
+            let sgn = if det > 0.0 { 1.0 } else { -1.0 };
+            let t_tri = [
+                sgn * (dv2 * e1[0] - dv1 * e2[0]),
+                sgn * (dv2 * e1[1] - dv1 * e2[1]),
+                sgn * (dv2 * e1[2] - dv1 * e2[2]),
+            ];
+            let b_tri = [
+                sgn * (-du2 * e1[0] + du1 * e2[0]),
+                sgn * (-du2 * e1[1] + du1 * e2[1]),
+                sgn * (-du2 * e1[2] + du1 * e2[2]),
+            ];
+            if !t_tri[0].is_finite()
+                || !t_tri[1].is_finite()
+                || !t_tri[2].is_finite()
+                || !b_tri[0].is_finite()
+                || !b_tri[1].is_finite()
+                || !b_tri[2].is_finite()
+            {
+                continue;
+            }
+            for &i in &[ia, ib, ic] {
+                t_acc[i][0] += t_tri[0];
+                t_acc[i][1] += t_tri[1];
+                t_acc[i][2] += t_tri[2];
+                b_acc[i][0] += b_tri[0];
+                b_acc[i][1] += b_tri[1];
+                b_acc[i][2] += b_tri[2];
+            }
+        }
+
+        // Per-vertex Gram-Schmidt + handedness recovery.
+        let mut out = vec![FALLBACK; n];
+        for i in 0..n {
+            let n_v = normals[i];
+            let t_sum = t_acc[i];
+            let b_sum = b_acc[i];
+            // Skip vertices that received no contribution.
+            let tlen2 = t_sum[0] * t_sum[0] + t_sum[1] * t_sum[1] + t_sum[2] * t_sum[2];
+            if !tlen2.is_finite() || tlen2 == 0.0 {
+                continue;
+            }
+            // Skip vertices whose normal is degenerate (zero / NaN).
+            let nlen2 = n_v[0] * n_v[0] + n_v[1] * n_v[1] + n_v[2] * n_v[2];
+            if !nlen2.is_finite() || nlen2 == 0.0 {
+                continue;
+            }
+            // Project T_sum onto the plane perpendicular to N:
+            //   T' = T_sum - (T_sum · N) * N
+            // We can assume N is already unit-length (compute_normals
+            // returns unit normals); but to be safe against non-unit
+            // user-supplied normals we don't rescale N here — the
+            // Gram-Schmidt formula works for any N as long as we
+            // normalise the result.
+            let dot_tn = t_sum[0] * n_v[0] + t_sum[1] * n_v[1] + t_sum[2] * n_v[2];
+            // If N happens to be non-unit, the projection coefficient
+            // should be (T·N)/(N·N). Use the safe form.
+            let coef = dot_tn / nlen2;
+            let mut t = [
+                t_sum[0] - coef * n_v[0],
+                t_sum[1] - coef * n_v[1],
+                t_sum[2] - coef * n_v[2],
+            ];
+            let len = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt();
+            if !len.is_finite() || len == 0.0 {
+                // T_sum was parallel to N: no usable surface tangent.
+                continue;
+            }
+            t[0] /= len;
+            t[1] /= len;
+            t[2] /= len;
+            // Handedness: w = sign((N × T') · B_sum). +1.0 for
+            // right-handed (N, T, B), -1.0 for mirrored / left-handed.
+            let cross = [
+                n_v[1] * t[2] - n_v[2] * t[1],
+                n_v[2] * t[0] - n_v[0] * t[2],
+                n_v[0] * t[1] - n_v[1] * t[0],
+            ];
+            let dot_cb = cross[0] * b_sum[0] + cross[1] * b_sum[1] + cross[2] * b_sum[2];
+            let w = if dot_cb < 0.0 { -1.0 } else { 1.0 };
+            out[i] = [t[0], t[1], t[2], w];
+        }
+        Some(out)
+    }
+
     /// Evaluate the per-vertex morph-blend formula from glTF 2.0
     /// §3.7.2.2 against this primitive's [`Primitive::targets`] using
     /// the supplied per-target `weights`, and return the blended

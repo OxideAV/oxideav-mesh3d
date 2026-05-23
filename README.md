@@ -214,6 +214,38 @@ Round 97 lands strip/fan → triangle-list de-stripping
   can't emit strips/fans natively consume this to flatten glTF/FBX
   strip primitives.
 
+Round 105 lands per-vertex MikkTSpace-style tangent-space basis
+recomputation (`tests/compute_tangents.rs`, 28 tests):
+
+- `Primitive::compute_tangents(&self, uv_set: usize) -> Option<Vec<[f32; 4]>>` —
+  derives per-vertex tangents from positions, the selected UV channel
+  (`uv_set` indexes `Primitive::uvs`), and the existing per-vertex
+  normals. Each `[f32; 4]` is `xyz` = unit tangent T plus `w` = ±1.0
+  handedness, so the renderer reconstructs the bitangent as
+  `B = w * (N × T)` exactly the way glTF 2.0 §3.7.2.1 / the MikkTSpace
+  contract specifies the `TANGENT` accessor. The math is the closed
+  form `T = (Δv2·E1 − Δv1·E2) / det`, `B = (−Δu2·E1 + Δu1·E2) / det`
+  obtained by inverting the per-triangle 2×2 UV-delta linear system
+  (Lengyel, "Computing Tangent Space Basis Vectors for an Arbitrary
+  Mesh" 2001; the same derivation appears in the Normal Mapping
+  chapter of Akenine-Möller, Haines & Hoffman, *Real-Time
+  Rendering*). Per-triangle contributions are accumulated with the
+  numerator scaled by `sign(det)` (so the area weighting is by
+  unsigned UV area `|det|/2`, while a mirrored UV chart still pulls
+  T in the +U surface direction); per-vertex sums are then
+  Gram-Schmidt orthonormalised against N, and handedness is recovered
+  from `sign((N × T') · B_sum)`. Topology integration goes through
+  `triangle_indices`, so `Triangles` / `TriangleStrip` /
+  `TriangleFan` all feed in. Returns `None` when prerequisites are
+  missing (no normals, UV set absent, length mismatch); otherwise
+  output length always equals `positions.len()`, with unreferenced /
+  degenerate / T-parallel-to-N vertices falling back to
+  `[1.0, 0.0, 0.0, 1.0]` so the result is always renderable. Pure
+  (no `self` mutation) — assign to `Primitive::tangents`. This is the
+  recompute step a format decoder runs when the wire stream omits
+  tangents (OBJ has no native tangent channel, glTF without
+  `TANGENT`).
+
 Round 101 lands area-weighted per-vertex normal recomputation
 (`tests/compute_normals.rs`, 22 tests):
 

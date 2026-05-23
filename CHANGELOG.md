@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 105 (per-vertex MikkTSpace-style tangent-space recomputation)
+
+- `Primitive::compute_tangents(&self, uv_set: usize) -> Option<Vec<[f32; 4]>>` —
+  derives per-vertex tangents from positions, the selected UV channel,
+  and the existing per-vertex normals. Each `[f32; 4]` is xyz = unit
+  tangent T plus w = ±1.0 handedness, matching exactly the shape of
+  `Primitive::tangents` and the glTF 2.0 §3.7.2.1 `TANGENT` accessor
+  (renderer reconstructs `B = w * (N × T)`).
+  - Closed-form derivation per triangle: invert the 2×2 UV-delta
+    linear system `[E1; E2] = [Δu1 Δv1; Δu2 Δv2] · [T; B]` to get
+    `T = (Δv2·E1 − Δv1·E2) / det` and `B = (−Δu2·E1 + Δu1·E2) / det`
+    (Lengyel, "Computing Tangent Space Basis Vectors for an Arbitrary
+    Mesh" 2001; same derivation in the Normal Mapping chapter of
+    Akenine-Möller, Haines & Hoffman, *Real-Time Rendering*).
+  - Per-triangle contributions scaled by `sign(det)` and accumulated
+    per vertex — area-weighting by unsigned UV area `|det|/2`,
+    symmetric with how `compute_normals` area-weights by
+    cross-product magnitude. Mirrored UV charts still pull T in the
+    +U surface direction; the mirror-vs-not signal is recovered
+    separately as the per-vertex handedness w.
+  - Per-vertex Gram-Schmidt orthonormalisation against N
+    (`T' = normalise(T_sum − (T_sum·N)/|N|² · N)`); handedness
+    `w = sign((N × T') · B_sum)` rounded to ±1.0.
+  - Returns `None` when prerequisites are missing (no `normals`, UV
+    set absent / out of range, attribute length mismatches);
+    otherwise output length always equals `positions.len()`.
+  - Robust: vertices not referenced by any triangle, vertices whose
+    UV chart is degenerate (all incident triangles have `det ≈ 0`),
+    vertices whose accumulated T_sum is parallel to N, and out-of-
+    range index entries / NaN UVs all fall back to
+    `[1.0, 0.0, 0.0, 1.0]` — a unit tangent with positive handedness
+    — so the result is always renderable.
+  - Topology-integrated via `triangle_indices`, so `Triangles` /
+    `TriangleStrip` / `TriangleFan` all feed in; non-triangle
+    topologies (lines/points) produce an all-fallback buffer.
+  - Pure: does not mutate `self`. Assign to `Primitive::tangents`
+    to store. This is the recompute step a format decoder runs when
+    the wire stream omits tangents (OBJ has no native tangent
+    channel, glTF without `TANGENT`).
+- `tests/compute_tangents.rs` (28 tests) covers the axis-aligned XY-
+  and XZ-plane references, V-flip / U-flip handedness inversion,
+  Gram-Schmidt orthogonality to N, |w|=1 contract, bitangent
+  reconstruction `B = w · (N × T)`, missing-input None returns, length
+  mismatches, output-length contract, assignability to the
+  `Primitive::tangents` field, strip topology equivalence, non-
+  triangle fallback, degenerate UV / unreferenced vertex / out-of-
+  range index / NaN UV robustness, T-parallel-to-N fallback, multi-
+  UV-set channel selection, U16/U32 index parity, purity (no `self`
+  mutation, deterministic repeat).
+
 ### Added — Round 101 (area-weighted per-vertex normal recomputation)
 
 - `Primitive::compute_normals(&self) -> Vec<[f32; 3]>` — recomputes
