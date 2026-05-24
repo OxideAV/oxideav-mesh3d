@@ -314,6 +314,280 @@ impl Primitive {
         out
     }
 
+    /// Merge bit-identical vertices into a shared pool and return an
+    /// equivalent **indexed** primitive whose attribute buffers contain
+    /// only the distinct vertices, with the index buffer rewritten to
+    /// reference the deduplicated pool.
+    ///
+    /// This is the inverse of attribute "explosion": a decoder for a
+    /// non-shared format (binary STL stores three fresh vertices per
+    /// facet with no sharing; an OBJ `f` line that repeats a `v/vt/vn`
+    /// triple still produces a distinct rendering vertex per face corner)
+    /// produces a vertex *soup* where coincident corners are duplicated.
+    /// Welding collapses those duplicates so a vertex shared by `k`
+    /// faces is stored once and referenced `k` times, shrinking the
+    /// vertex buffer and letting the GPU's post-transform vertex cache do
+    /// its job. The reverse trip — `weld_vertices` then
+    /// [`Primitive::to_triangle_list`] applied to an already-indexed
+    /// primitive — is the explode step.
+    ///
+    /// # What counts as "the same vertex"
+    ///
+    /// Two source vertices merge **iff every attribute slot present on
+    /// the primitive is bit-identical** between them: `positions`, each
+    /// `NORMAL` / `TANGENT`, every UV set in `uvs`, every colour set in
+    /// `colors`, the `joints` quad, the `weights` quad, **and** the
+    /// per-vertex deltas of every [`MorphTarget`] in `targets`. A vertex
+    /// that agrees in position but differs in (say) UV or a morph delta
+    /// is a *distinct* rendering vertex and is kept separate — this is
+    /// the only correct rule for an indexed draw call, where one index
+    /// selects one tuple across *all* attribute streams simultaneously.
+    /// Callers that want to merge by position alone (e.g. to fix a
+    /// cracked surface before recomputing smooth normals) should strip
+    /// the other attributes first.
+    ///
+    /// Float comparison is **exact** (bit pattern), which is the right
+    /// choice for de-duplicating a decoder's vertex soup: identical
+    /// source numbers decode to identical bits, so genuine duplicates
+    /// collapse while authored-distinct values stay split. Two
+    /// normalisations make the bit key well-behaved: `-0.0` is folded to
+    /// `+0.0` (they are numerically equal and should merge), and every
+    /// `NaN` is folded to one canonical bit pattern (so two `NaN`
+    /// coordinates merge rather than the IEEE rule that `NaN != NaN`
+    /// silently preventing dedup; geometry should not carry `NaN`, but
+    /// the welder stays deterministic if it does). No epsilon tolerance
+    /// is applied — proximity-based welding is a separate, lossy
+    /// operation and is intentionally out of scope.
+    ///
+    /// # Output
+    ///
+    /// * `topology` is preserved verbatim — welding rewrites *which*
+    ///   pool entry each draw step references, never the stitching rule,
+    ///   so it is valid for every [`Topology`] (triangles, strips, fans,
+    ///   lines, points), not just triangle lists.
+    /// * The new index buffer walks the source's draw order: for an
+    ///   already-indexed input the existing index sequence is remapped
+    ///   through the dedup table; for a non-indexed input the implicit
+    ///   `0,1,2,…` order is materialised into an explicit buffer. Index
+    ///   width is [`Indices::U16`] when the deduplicated vertex count is
+    ///   `≤ 65 536`, else [`Indices::U32`] (matching glTF's default
+    ///   width-promotion).
+    /// * Attribute buffers (`positions`, `normals`, `tangents`, every
+    ///   `uvs` / `colors` set, `joints`, `weights`) and every
+    ///   [`MorphTarget`] slot are gathered down to the distinct vertices
+    ///   in first-seen order, so the pool is deterministic across runs.
+    ///   `material`, `targets` roster shape, and `extras` are carried
+    ///   over; only connectivity + the per-vertex buffers change.
+    /// * An out-of-range entry in an existing index buffer (malformed
+    ///   primitive) is dropped from the output index stream rather than
+    ///   panicking — [`Scene3D::validate`](crate::Scene3D::validate)
+    ///   catches such inputs ahead of time.
+    /// * **Does not mutate `self`.** An empty primitive (no positions)
+    ///   round-trips to an empty indexed primitive.
+    ///
+    /// Cost is `O(N · A)` where `N` is the source vertex count and `A`
+    /// the per-vertex attribute byte width (the hash key length); one
+    /// `HashMap` plus the gathered output buffers are allocated.
+    pub fn weld_vertices(&self) -> Primitive {
+        // Canonicalise an f32 to a stable hashable bit pattern: fold
+        // -0.0 → +0.0 (numerically equal, must merge) and every NaN to
+        // one pattern (so NaN coords merge instead of never matching).
+        fn key(x: f32) -> u32 {
+            if x == 0.0 {
+                0 // covers both +0.0 and -0.0
+            } else if x.is_nan() {
+                0x7fc0_0000 // one canonical quiet-NaN pattern
+            } else {
+                x.to_bits()
+            }
+        }
+
+        let n = self.positions.len();
+
+        // Build a per-vertex bit key over every present attribute slot.
+        // Order is fixed so the key is reproducible.
+        let build_key = |i: usize| -> Vec<u32> {
+            let mut k = Vec::new();
+            let p = self.positions[i];
+            k.extend([key(p[0]), key(p[1]), key(p[2])]);
+            if let Some(ns) = &self.normals {
+                if let Some(v) = ns.get(i) {
+                    k.extend([key(v[0]), key(v[1]), key(v[2])]);
+                }
+            }
+            if let Some(ts) = &self.tangents {
+                if let Some(v) = ts.get(i) {
+                    k.extend([key(v[0]), key(v[1]), key(v[2]), key(v[3])]);
+                }
+            }
+            for set in &self.uvs {
+                if let Some(v) = set.get(i) {
+                    k.extend([key(v[0]), key(v[1])]);
+                }
+            }
+            for set in &self.colors {
+                if let Some(v) = set.get(i) {
+                    k.extend([key(v[0]), key(v[1]), key(v[2]), key(v[3])]);
+                }
+            }
+            if let Some(js) = &self.joints {
+                if let Some(v) = js.get(i) {
+                    k.extend([v[0] as u32, v[1] as u32, v[2] as u32, v[3] as u32]);
+                }
+            }
+            if let Some(ws) = &self.weights {
+                if let Some(v) = ws.get(i) {
+                    k.extend([key(v[0]), key(v[1]), key(v[2]), key(v[3])]);
+                }
+            }
+            // Morph deltas are per-vertex parallel — a corner that
+            // differs only in a morph delta is a distinct vertex.
+            for t in &self.targets {
+                if let Some(d) = &t.position {
+                    if let Some(v) = d.get(i) {
+                        k.extend([key(v[0]), key(v[1]), key(v[2])]);
+                    }
+                }
+                if let Some(d) = &t.normal {
+                    if let Some(v) = d.get(i) {
+                        k.extend([key(v[0]), key(v[1]), key(v[2])]);
+                    }
+                }
+                if let Some(d) = &t.tangent {
+                    if let Some(v) = d.get(i) {
+                        k.extend([key(v[0]), key(v[1]), key(v[2])]);
+                    }
+                }
+            }
+            k
+        };
+
+        // Map each source vertex index → pool index; remember the
+        // first source index that produced each pool slot.
+        let mut dedup: HashMap<Vec<u32>, u32> = HashMap::new();
+        let mut remap: Vec<u32> = Vec::with_capacity(n);
+        let mut sources: Vec<usize> = Vec::new();
+        for i in 0..n {
+            let k = build_key(i);
+            let slot = *dedup.entry(k).or_insert_with(|| {
+                let id = sources.len() as u32;
+                sources.push(i);
+                id
+            });
+            remap.push(slot);
+        }
+
+        // Gather the deduplicated attribute buffers in first-seen order.
+        let gather3 =
+            |src: &Vec<[f32; 3]>| -> Vec<[f32; 3]> { sources.iter().map(|&i| src[i]).collect() };
+        let positions = gather3(&self.positions);
+        let normals = self.normals.as_ref().map(|s| {
+            sources
+                .iter()
+                .map(|&i| s.get(i).copied().unwrap_or([0.0; 3]))
+                .collect()
+        });
+        let tangents = self.tangents.as_ref().map(|s| {
+            sources
+                .iter()
+                .map(|&i| s.get(i).copied().unwrap_or([0.0; 4]))
+                .collect()
+        });
+        let uvs = self
+            .uvs
+            .iter()
+            .map(|set| {
+                sources
+                    .iter()
+                    .map(|&i| set.get(i).copied().unwrap_or([0.0; 2]))
+                    .collect()
+            })
+            .collect();
+        let colors = self
+            .colors
+            .iter()
+            .map(|set| {
+                sources
+                    .iter()
+                    .map(|&i| set.get(i).copied().unwrap_or([0.0; 4]))
+                    .collect()
+            })
+            .collect();
+        let joints = self.joints.as_ref().map(|s| {
+            sources
+                .iter()
+                .map(|&i| s.get(i).copied().unwrap_or([0; 4]))
+                .collect()
+        });
+        let weights = self.weights.as_ref().map(|s| {
+            sources
+                .iter()
+                .map(|&i| s.get(i).copied().unwrap_or([0.0; 4]))
+                .collect()
+        });
+        let targets = self
+            .targets
+            .iter()
+            .map(|t| MorphTarget {
+                position: t.position.as_ref().map(|d| {
+                    sources
+                        .iter()
+                        .map(|&i| d.get(i).copied().unwrap_or([0.0; 3]))
+                        .collect()
+                }),
+                normal: t.normal.as_ref().map(|d| {
+                    sources
+                        .iter()
+                        .map(|&i| d.get(i).copied().unwrap_or([0.0; 3]))
+                        .collect()
+                }),
+                tangent: t.tangent.as_ref().map(|d| {
+                    sources
+                        .iter()
+                        .map(|&i| d.get(i).copied().unwrap_or([0.0; 3]))
+                        .collect()
+                }),
+            })
+            .collect();
+
+        // Rewrite the draw order: remap an existing index buffer through
+        // the dedup table (dropping out-of-range entries), or
+        // materialise the implicit 0..n order.
+        let new_indices: Vec<u32> = match &self.indices {
+            Some(Indices::U16(v)) => v
+                .iter()
+                .filter_map(|&i| remap.get(i as usize).copied())
+                .collect(),
+            Some(Indices::U32(v)) => v
+                .iter()
+                .filter_map(|&i| remap.get(i as usize).copied())
+                .collect(),
+            None => remap.clone(),
+        };
+
+        // glTF width-promotion: U16 while the pool fits, else U32.
+        let indices = if sources.len() <= u16::MAX as usize + 1 {
+            Indices::U16(new_indices.iter().map(|&i| i as u16).collect())
+        } else {
+            Indices::U32(new_indices)
+        };
+
+        Primitive {
+            topology: self.topology,
+            positions,
+            normals,
+            tangents,
+            uvs,
+            colors,
+            joints,
+            weights,
+            indices: Some(indices),
+            material: self.material,
+            targets,
+            extras: self.extras.clone(),
+        }
+    }
+
     /// Recompute smooth, area-weighted per-vertex normals from this
     /// primitive's triangle connectivity and return them as one
     /// `[f32; 3]` per vertex (length `positions.len()`).

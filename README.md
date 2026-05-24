@@ -269,6 +269,37 @@ Round 101 lands area-weighted per-vertex normal recomputation
   recompute step a format decoder runs when the wire stream omits
   normals (OBJ without `vn`, glTF without `NORMAL`).
 
+Round 118 lands coincident-vertex welding / index de-duplication
+(`tests/weld_vertices.rs`, 29 tests):
+
+- `Primitive::weld_vertices(&self) -> Primitive` — merges bit-identical
+  rendering vertices into a shared pool and returns an equivalent
+  **indexed** primitive whose attribute buffers hold only the distinct
+  vertices, with the index buffer rewritten to reference the
+  deduplicated pool. This is the inverse of attribute explosion: a
+  decoder for a non-shared format (binary STL stores three fresh
+  vertices per facet; an OBJ `f` corner is a distinct rendering vertex)
+  produces a vertex *soup* where coincident corners are duplicated;
+  welding collapses them so the GPU's post-transform vertex cache can
+  reuse a shared vertex. Two source vertices merge iff **every present
+  attribute slot is bit-identical** — `positions`, each `NORMAL` /
+  `TANGENT`, every UV and colour set, the `joints` / `weights` quads,
+  *and* every [`MorphTarget`] delta — because one index in an indexed
+  draw selects one tuple across all attribute streams at once (so a UV
+  seam or a hard-edge normal correctly stays split). Float keys are
+  exact (bit pattern), with `-0.0` folded to `+0.0` and every `NaN`
+  canonicalised so dedup stays deterministic; no epsilon tolerance
+  (proximity welding is a separate lossy op, out of scope). `topology`
+  is preserved verbatim (valid for triangles/strips/fans/lines/points,
+  not just triangle lists); an existing index buffer is remapped
+  through the dedup table (out-of-range entries dropped, not panicked),
+  a non-indexed input materialises its implicit order. Index width
+  follows glTF promotion: `U16` while the pool is `≤ 65 536` entries,
+  else `U32`. The pool is gathered in first-seen order so the result is
+  reproducible; `material` / `targets` shape / `extras` carry over.
+  Pure (no `self` mutation). A position-only cube soup welds 36 → 8
+  corners; a flat-shaded cube (normal in the identity) welds 36 → 24.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to
