@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 155 (mesh-validity invariants: degenerate-triangle detection + edge-manifold classification)
+
+- `Primitive::degenerate_triangles(&self) -> Vec<usize>` — returns the
+  indices into `triangle_indices()` for **degenerate** triangles
+  (zero-area: collinear, coincident corners, out-of-range index, or
+  NaN-producing face). The detection criterion is the same
+  `|E1 × E2| == 0.0` test that `compute_normals` / `compute_tangents`
+  already use to silently drop bad faces; this surface is the
+  detection-only counterpart so a validator can warn, a repair pass
+  can prune, or a fixture-comparison test can pin them. No epsilon
+  thresholding — a triangle that is almost-but-not-quite collinear
+  within float precision is reported valid (proximity-based pruning is
+  a separate lossy operation, intentionally out of scope). Non-triangle
+  topologies (lines/points) return an empty `Vec`. Pure; cost
+  `O(triangle_count)`.
+- `Primitive::edge_manifold_report(&self) -> EdgeManifoldReport` —
+  classifies every undirected triangle edge of the primitive by its
+  **use count** (how many triangles share it):
+  * `1` — boundary edge (hole, crack, open rim)
+  * `2` — manifold-interior edge (clean two-manifold seam)
+  * `≥ 3` — non-manifold edge (T-junction / book-spine / feather)
+
+  A **closed two-manifold** mesh has zero boundary edges and zero
+  non-manifold edges — every edge is used by exactly two triangles.
+  This is the STL spec's "vertex-to-vertex rule" (Fabbers / Stratasys
+  1989: *"each triangle must share two vertices with each of its
+  adjacent triangles"*) and the classical solid-printable condition.
+  Triangles with a duplicate corner index or with an out-of-range
+  entry are excluded whole — they're degenerate by index and their
+  bogus edges would otherwise pollute neighbour counts. Topology
+  comparison is by vertex index, not by 3D position; run
+  `weld_vertices` first to merge positionally coincident corners
+  before counting. Connectivity goes through `triangle_indices`, so
+  `Triangles` / `TriangleStrip` (alternating winding) / `TriangleFan`
+  all feed in. Pure; cost `O(triangle_count)`; allocates one
+  `HashMap` of undirected edges.
+- `EdgeManifoldReport { total_edge_count, boundary_edge_count,
+  manifold_interior_edge_count, non_manifold_edge_count,
+  max_edge_use }` — typed summary returned by
+  `edge_manifold_report`. The report does not retain the per-edge map
+  (the heavy `HashMap` is freed after counting); callers needing the
+  actual edge endpoints can re-derive them from `triangle_indices`.
+  `Clone + Copy + Debug + Default + PartialEq + Eq`.
+  `EdgeManifoldReport::is_closed_manifold(&self) -> bool` is the
+  shortcut for `total_edge_count > 0 && boundary == 0 &&
+  non_manifold == 0`.
+- `tests/mesh_validity.rs` (34 tests) — degenerate detection across
+  empty primitives, single triangles, mixed lists, out-of-range
+  indices, NaN faces, strips/fans, and the almost-but-not-quite-
+  collinear boundary; edge classification on single triangles
+  (3 boundary), quad-split (1 interior + 4 boundary), tetrahedron
+  (6 interior, 0 boundary — closed manifold), three-page book-spine
+  (1 non-manifold, 6 boundary), four-page spine (`max_edge_use = 4`),
+  strip topology, lines/points (empty report), winding-independence,
+  index-vs-position semantics + post-weld behaviour, and sum/copy
+  invariants on the `EdgeManifoldReport` itself.
+
 ### Added — Round 105 (per-vertex MikkTSpace-style tangent-space recomputation)
 
 - `Primitive::compute_tangents(&self, uv_set: usize) -> Option<Vec<[f32; 4]>>` —

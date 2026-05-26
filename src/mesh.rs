@@ -1022,6 +1022,273 @@ impl Primitive {
             tangents,
         }
     }
+
+    /// Indices into [`Primitive::triangle_indices`] for **degenerate**
+    /// triangles — triangles whose three vertices are collinear or
+    /// coincident in 3D space.
+    ///
+    /// A triangle is degenerate iff its un-normalised face normal
+    /// (the cross product of two edge vectors out of the same corner)
+    /// is the zero vector. Equivalently, its signed area is zero —
+    /// the three positions sit on a single line (or all three at one
+    /// point). Such a triangle has no surface and contributes nothing
+    /// to a shaded image; downstream code uniformly treats it as
+    /// noise:
+    ///
+    /// * [`Primitive::compute_normals`] silently drops it (the
+    ///   accumulator adds zero) — a vertex touched only by degenerate
+    ///   faces ends up with the `[0, 0, 1]` fallback normal.
+    /// * [`Primitive::compute_tangents`] silently drops it
+    ///   (`det ≈ 0` in the UV-delta linear system).
+    /// * STL spec (Fabbers / Stratasys 1989) explicitly forbids
+    ///   degenerate facets — every facet must enclose three distinct
+    ///   non-collinear vertices.
+    ///
+    /// This is the **detection-only** counterpart to those quiet
+    /// drops: it surfaces *which* triangles are degenerate so a
+    /// validator can warn, a repair pass can prune them, or a
+    /// fixture-comparison test can pin them.
+    ///
+    /// # Contract
+    ///
+    /// * Returned indices reference [`Primitive::triangle_indices`] in
+    ///   walk order. For [`Topology::Triangles`] index `t` is the
+    ///   triangle whose corners are `triangle_indices()[t]`; for
+    ///   `TriangleStrip` / `TriangleFan` the same. An empty `Vec` means
+    ///   every (non-list-topology-implied-empty) triangle has non-zero
+    ///   area in 3D.
+    /// * **Collinear** is detected via the cross-product magnitude:
+    ///   `|E1 × E2| == 0.0` exactly (no epsilon — a triangle that is
+    ///   *almost* collinear within float precision but produces a
+    ///   non-zero cross product is still considered valid; proximity
+    ///   thresholding is a separate, lossy operation).
+    /// * **Coincident** is the special case where two or three corners
+    ///   share a position — the resulting edge vector is zero, the
+    ///   cross product is zero, and the triangle is reported.
+    /// * **Out-of-range index** entries are treated as degenerate
+    ///   (the triangle can't be evaluated — same observable effect as
+    ///   a zero-area triangle for downstream shaders).
+    /// * **NaN-producing faces** are reported as degenerate (a face
+    ///   whose cross product is non-finite has no well-defined area
+    ///   and can't be safely shaded).
+    /// * Non-triangle topologies (lines, points) return an empty `Vec`
+    ///   — there are no triangles to test.
+    /// * Pure (no `self` mutation). Cost is `O(triangle_count)`; one
+    ///   small `Vec<usize>` allocation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let bad = prim.degenerate_triangles();
+    /// if !bad.is_empty() {
+    ///     eprintln!("warning: {} degenerate triangles", bad.len());
+    /// }
+    /// ```
+    pub fn degenerate_triangles(&self) -> Vec<usize> {
+        let n = self.positions.len();
+        let mut out = Vec::new();
+        for (t, [ia, ib, ic]) in self.triangle_indices().into_iter().enumerate() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            // Out-of-range index: can't evaluate, treat as degenerate.
+            if ia >= n || ib >= n || ic >= n {
+                out.push(t);
+                continue;
+            }
+            let pa = self.positions[ia];
+            let pb = self.positions[ib];
+            let pc = self.positions[ic];
+            let u = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+            let v = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+            let cx = u[1] * v[2] - u[2] * v[1];
+            let cy = u[2] * v[0] - u[0] * v[2];
+            let cz = u[0] * v[1] - u[1] * v[0];
+            // NaN-producing face: report as degenerate (can't shade
+            // safely).
+            if !cx.is_finite() || !cy.is_finite() || !cz.is_finite() {
+                out.push(t);
+                continue;
+            }
+            // Collinear / coincident: |E1 × E2| == 0.
+            if cx == 0.0 && cy == 0.0 && cz == 0.0 {
+                out.push(t);
+            }
+        }
+        out
+    }
+
+    /// Classify every undirected triangle edge of this primitive by
+    /// how many triangles use it, and return an [`EdgeManifoldReport`]
+    /// summary.
+    ///
+    /// An **undirected edge** is the unordered pair of vertex pool
+    /// indices `(min(a, b), max(a, b))`. The "use count" is the number
+    /// of triangles in [`Primitive::triangle_indices`] that contain
+    /// that pair as one of their three sides, regardless of corner
+    /// winding direction. Each triangle contributes three undirected
+    /// edges.
+    ///
+    /// # Classification (standard piecewise-linear topology)
+    ///
+    /// For each undirected edge:
+    ///
+    /// * **Boundary** — use count `= 1`. The edge sits on a hole, a
+    ///   crack, or the outer rim of an open surface (a paper strip,
+    ///   a half-cup). A *closed* manifold mesh — one a solid 3D
+    ///   printer could fabricate — has **zero** boundary edges.
+    /// * **Manifold-interior** — use count `= 2`. Exactly two
+    ///   triangles meet at this edge, sharing the seam cleanly.
+    ///   This is the standard "two-manifold" condition.
+    /// * **Non-manifold** — use count `≥ 3`. Three or more triangles
+    ///   meet at this edge (a "T-junction" / "book spine" /
+    ///   "feather" defect). Most slicers and renderers can't
+    ///   unambiguously compute a normal / interior side at such an
+    ///   edge.
+    ///
+    /// The STL spec (Fabbers / Stratasys 1989) explicitly states the
+    /// **vertex-to-vertex rule**: *"Each triangle must share two
+    /// vertices with each of its adjacent triangles."* That rule
+    /// implies every edge is used by exactly two facets — i.e. the
+    /// mesh is closed and 2-manifold. This method gives a typed
+    /// readout for that rule.
+    ///
+    /// # Contract
+    ///
+    /// * Only triangle topologies ([`Topology::Triangles`],
+    ///   [`Topology::TriangleStrip`], [`Topology::TriangleFan`])
+    ///   contribute edges. Lines/points/empty topologies yield an
+    ///   all-zero report.
+    /// * Triangle connectivity goes through
+    ///   [`Primitive::triangle_indices`], so strip alternating winding
+    ///   is honoured and out-of-range index entries are detected
+    ///   ahead of edge counting.
+    /// * A triangle whose three corner indices contain a duplicate
+    ///   (so one or more of its edges has `a == b`, a *zero-length*
+    ///   edge) is **excluded** from edge counting entirely — it's a
+    ///   degenerate triangle by index, not a topology failure of its
+    ///   neighbours. Use [`Primitive::degenerate_triangles`] to count
+    ///   those.
+    /// * An index entry that references a vertex slot beyond
+    ///   `positions.len()` (out of range) is **excluded** along with
+    ///   the whole triangle. The remaining triangles still feed in
+    ///   normally — a single malformed corner doesn't poison the
+    ///   neighbour count.
+    /// * Topology comparison is by **vertex index**, not by 3D
+    ///   position. Two corners with identical positions but different
+    ///   indices are treated as distinct vertices on different edges
+    ///   — run [`Primitive::weld_vertices`] first if you want
+    ///   coincident corners to merge before counting.
+    /// * Cost is `O(triangle_count)`; allocates one `HashMap` of
+    ///   undirected edges. The `EdgeManifoldReport` itself does not
+    ///   own the per-edge map — it stores only the counts.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let r = prim.edge_manifold_report();
+    /// assert!(r.is_closed_manifold(),
+    ///     "{} boundary, {} non-manifold edges",
+    ///     r.boundary_edge_count, r.non_manifold_edge_count);
+    /// ```
+    pub fn edge_manifold_report(&self) -> EdgeManifoldReport {
+        let n = self.positions.len();
+        // Undirected edge → use count.
+        let mut edge_uses: HashMap<(u32, u32), u32> = HashMap::new();
+        for [ia, ib, ic] in self.triangle_indices() {
+            // Out-of-range triangle: skip entirely.
+            if (ia as usize) >= n || (ib as usize) >= n || (ic as usize) >= n {
+                continue;
+            }
+            // Triangle with a duplicate corner index has a zero-length
+            // edge — degenerate-by-index. Skip the whole triangle so
+            // its two "real" sides don't confuse neighbour counts.
+            if ia == ib || ib == ic || ia == ic {
+                continue;
+            }
+            for (a, b) in [(ia, ib), (ib, ic), (ic, ia)] {
+                let key = if a < b { (a, b) } else { (b, a) };
+                *edge_uses.entry(key).or_insert(0) += 1;
+            }
+        }
+
+        let mut boundary = 0usize;
+        let mut interior = 0usize;
+        let mut non_manifold = 0usize;
+        let mut max_use = 0u32;
+        for &count in edge_uses.values() {
+            match count {
+                0 => unreachable!("HashMap entry is always >= 1"),
+                1 => boundary += 1,
+                2 => interior += 1,
+                _ => non_manifold += 1,
+            }
+            if count > max_use {
+                max_use = count;
+            }
+        }
+
+        EdgeManifoldReport {
+            total_edge_count: edge_uses.len(),
+            boundary_edge_count: boundary,
+            manifold_interior_edge_count: interior,
+            non_manifold_edge_count: non_manifold,
+            max_edge_use: max_use,
+        }
+    }
+}
+
+/// Summary of the undirected-edge topology of a [`Primitive`], produced
+/// by [`Primitive::edge_manifold_report`].
+///
+/// Every undirected edge of every (valid, non-degenerate-by-index)
+/// triangle is bucketed by its **use count** — the number of
+/// triangles that share it:
+///
+/// | Use count   | Bucket                     | Meaning                                                        |
+/// | ----------- | -------------------------- | -------------------------------------------------------------- |
+/// | `1`         | `boundary_edge_count`      | Edge on a hole / crack / open rim                              |
+/// | `2`         | `manifold_interior_edge_count` | Standard two-manifold seam                                 |
+/// | `≥ 3`       | `non_manifold_edge_count`  | Three or more faces meet here (T-junction / book-spine)        |
+///
+/// A **closed two-manifold** mesh has `boundary_edge_count == 0` and
+/// `non_manifold_edge_count == 0` — every edge is shared by exactly
+/// two faces, which is the STL spec's "vertex-to-vertex rule" and the
+/// classical solid-printable condition. See
+/// [`EdgeManifoldReport::is_closed_manifold`].
+///
+/// The report does **not** retain the per-edge map; the heavy
+/// `HashMap` is freed as soon as it has been walked. Callers needing
+/// the actual edge endpoints can re-derive them by walking
+/// [`Primitive::triangle_indices`] themselves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EdgeManifoldReport {
+    /// Total number of distinct undirected edges seen across all
+    /// triangles. Sum of the three bucket counts.
+    pub total_edge_count: usize,
+    /// Edges used by exactly one triangle (open rim, crack, hole).
+    pub boundary_edge_count: usize,
+    /// Edges used by exactly two triangles (clean two-manifold seam).
+    pub manifold_interior_edge_count: usize,
+    /// Edges used by three or more triangles (non-manifold defect).
+    pub non_manifold_edge_count: usize,
+    /// Largest use count observed across all edges. `0` for an empty
+    /// or all-degenerate primitive, `2` for a clean closed manifold,
+    /// `≥ 3` when there is at least one non-manifold edge.
+    pub max_edge_use: u32,
+}
+
+impl EdgeManifoldReport {
+    /// `true` iff the primitive is a **closed two-manifold** — every
+    /// edge is used by exactly two triangles. Equivalent to
+    /// `boundary_edge_count == 0 && non_manifold_edge_count == 0 &&
+    /// total_edge_count > 0`.
+    ///
+    /// An empty primitive (no triangles, `total_edge_count == 0`) is
+    /// **not** considered closed — there is no surface to close.
+    pub fn is_closed_manifold(&self) -> bool {
+        self.total_edge_count > 0
+            && self.boundary_edge_count == 0
+            && self.non_manifold_edge_count == 0
+    }
 }
 
 /// Evaluated output of [`Primitive::apply_morph_weights`].

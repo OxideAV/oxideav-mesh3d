@@ -88,7 +88,9 @@ pub use encoder::Mesh3DEncoder;
 pub use error::{Error, Result};
 pub use light::Light;
 pub use material::{AlphaMode, Material, TextureRef};
-pub use mesh::{Indices, Mesh, MorphTarget, MorphedAttributes, Primitive, Topology};
+pub use mesh::{
+    EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, Primitive, Topology,
+};
 pub use registry::Mesh3DRegistry;
 pub use scene::{
     Axis, BoundingBox, CameraId, LightId, MaterialId, MeshId, Node, NodeId, Scene3D, SkeletonId,

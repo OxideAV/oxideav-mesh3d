@@ -269,6 +269,39 @@ Round 101 lands area-weighted per-vertex normal recomputation
   recompute step a format decoder runs when the wire stream omits
   normals (OBJ without `vn`, glTF without `NORMAL`).
 
+Round 155 lands mesh-validity invariants — degenerate-triangle
+detection + edge-manifold classification (`tests/mesh_validity.rs`,
+34 tests):
+
+- `Primitive::degenerate_triangles(&self) -> Vec<usize>` — returns the
+  indices into `triangle_indices()` for triangles whose three corners
+  are collinear or coincident in 3D (i.e. zero-area). Detection is the
+  same `|E1 × E2| == 0` test that `compute_normals` / `compute_tangents`
+  already use to silently drop bad faces; this is the **detection-only**
+  counterpart so a validator can warn or a repair pass can prune them.
+  No epsilon thresholding (a triangle that is *almost* collinear within
+  float precision but produces a non-zero cross product is reported
+  valid — proximity-based pruning is a separate lossy op, out of scope).
+  Out-of-range index entries and NaN-producing faces are also reported.
+  Non-triangle topologies (lines/points) return an empty `Vec`. Pure;
+  `O(triangle_count)`.
+- `Primitive::edge_manifold_report(&self) -> EdgeManifoldReport` +
+  `EdgeManifoldReport { total_edge_count, boundary_edge_count,
+  manifold_interior_edge_count, non_manifold_edge_count, max_edge_use }`
+  + `is_closed_manifold(&self) -> bool` — classifies every undirected
+  triangle edge by use count: `1` (boundary — hole/crack/open rim),
+  `2` (manifold-interior — clean two-manifold seam), `≥ 3` (non-manifold —
+  T-junction / book-spine / feather). A closed two-manifold mesh has
+  `boundary_edge_count == 0 && non_manifold_edge_count == 0`, which is
+  exactly the STL spec's **vertex-to-vertex rule** ("each triangle must
+  share two vertices with each of its adjacent triangles" — Fabbers /
+  Stratasys 1989) and the classical solid-printable condition. Triangles
+  with a duplicate corner index or an out-of-range entry are excluded
+  whole (their bogus edges don't pollute neighbour counts). Topology
+  comparison is by **vertex index**, not by 3D position — run
+  `weld_vertices` first if positional duplicates should merge before
+  counting. Pure; `O(triangle_count)`.
+
 Round 118 lands coincident-vertex welding / index de-duplication
 (`tests/weld_vertices.rs`, 29 tests):
 
