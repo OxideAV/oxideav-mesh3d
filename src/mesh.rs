@@ -791,6 +791,161 @@ impl Primitive {
         total
     }
 
+    /// Signed volume enclosed by this primitive's triangle tessellation,
+    /// in the unit-cubed of [`Primitive::positions`] (matching the parent
+    /// [`crate::Scene3D::unit`] — metres³ by default). **The result is
+    /// only physically meaningful for a closed two-manifold surface**
+    /// (i.e. one for which [`Primitive::is_closed_manifold`] returns
+    /// `true`); for an open/non-manifold mesh the sum is still well-
+    /// defined arithmetically but no longer corresponds to a true
+    /// enclosed volume.
+    ///
+    /// Sign follows the winding convention: CCW-viewed-from-outside
+    /// (the crate's right-handed, glTF-aligned convention,
+    /// `Triangles` / `TriangleStrip` / `TriangleFan` all matching
+    /// [`Primitive::triangle_indices`]) produces a **positive** value
+    /// for an outward-facing closed surface; a uniformly inside-out
+    /// (clockwise-from-outside) mesh produces the same magnitude with
+    /// the opposite sign. The unsigned [`Primitive::volume`] always
+    /// returns the absolute value.
+    ///
+    /// Non-triangle topologies (lines/points) contribute 0.0.
+    ///
+    /// # Derivation (clean-room, first-principles)
+    ///
+    /// The divergence theorem (Gauss; Marsden & Tromba, *Vector
+    /// Calculus*) states that for a vector field `F` on a closed
+    /// region `V` bounded by `S`,
+    ///
+    /// ```text
+    /// ∫∫∫_V (∇ · F) dV = ∫∫_S F · dS.
+    /// ```
+    ///
+    /// Picking the radial field `F(x) = x / 3` gives `∇ · F = 1`, so
+    /// the left side reduces to the enclosed volume `V`. The right side
+    /// becomes the sum of `(x / 3) · n_face * area_face` over every
+    /// triangle face. For a flat triangle with corners
+    /// `(P_a, P_b, P_c)`, the centroid is `(P_a + P_b + P_c) / 3` and
+    /// `n_face * area_face` is `(E1 × E2) / 2`. Substituting in and
+    /// expanding the scalar triple product, the contribution of one
+    /// triangle collapses to
+    ///
+    /// ```text
+    /// V_tri = (1 / 6) · (P_a · (P_b × P_c)).
+    /// ```
+    ///
+    /// Summing across every triangle gives the closed-form
+    /// `(1 / 6) · Σ P_a · (P_b × P_c)`. (This is exactly the
+    /// signed-tetrahedron-sum technique — each triangle plus the
+    /// origin forms a tetrahedron of signed volume `P_a · (P_b × P_c)
+    /// / 6`; the origin-coincident faces cancel pairwise for a closed
+    /// mesh, leaving only the boundary contributions. The derivation
+    /// matches the closed-form result in Cha Zhang & Tsuhan Chen,
+    /// "Efficient feature extraction for 2D/3D objects in mesh
+    /// representation", ICIP 2001.)
+    ///
+    /// The cross-product machinery is identical to the one
+    /// [`Primitive::compute_normals`] and [`Primitive::surface_area`]
+    /// already use; `signed_volume` adds one scalar dot per triangle
+    /// (the third factor `P_a · (E1 × E2)`).
+    ///
+    /// # Contract
+    ///
+    /// * Always returns a finite `f64` for a primitive whose positions
+    ///   are all finite. The accumulator is `f64` so a million-triangle
+    ///   mesh doesn't drift under `f32` summation; per-triangle scalar
+    ///   triple product is also `f64`.
+    /// * **Degenerate triangles contribute zero.** A triangle whose
+    ///   edge cross product is the zero vector adds 0.0 to the sum
+    ///   (the dot with any `P_a` is also zero, but the early NaN guard
+    ///   makes that explicit). They neither help nor corrupt the total.
+    /// * **NaN-safe.** A face whose edge differences, cross product, or
+    ///   triple product is non-finite contributes 0.0 instead of
+    ///   poisoning the sum. The whole result stays finite even on a
+    ///   partly-corrupt vertex buffer.
+    /// * **Out-of-range index** entries are skipped, not panicked.
+    /// * Non-triangle topologies return 0.0.
+    /// * **Translation-invariant for a closed surface.** Because the
+    ///   origin-coincident tetrahedron contributions cancel for a
+    ///   closed mesh, the same closed mesh translated by any constant
+    ///   offset gives the same signed volume (modulo float round-off
+    ///   on the `O(n)` summation). An *open* mesh's signed_volume is
+    ///   not translation-invariant (the open boundary leaks).
+    /// * **Does not mutate `self`.** Pure; cost `O(triangle_count)`.
+    ///
+    /// # Use
+    ///
+    /// * STL conformance checks — the Fabbers/Stratasys
+    ///   solid-printability recipe asks for a positive enclosed
+    ///   volume; a closed manifold mesh with negative volume usually
+    ///   means the file was authored inside-out (every facet wound
+    ///   CW-from-outside).
+    /// * 3D-print slicer pre-flight — compute total material volume
+    ///   for cost / time estimates.
+    /// * Importer sanity checks — comparing the volume reported by
+    ///   format A's decoder vs format B's decoder against the same
+    ///   mesh should round-trip to the same number.
+    ///
+    /// See [`Primitive::volume`] for the unsigned magnitude.
+    pub fn signed_volume(&self) -> f64 {
+        let n = self.positions.len();
+        let mut total = 0.0_f64;
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            // Defensive: an index buffer can dereference out of range
+            // for a malformed primitive — skip such a face rather than
+            // panic. validate() catches it ahead of time.
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = self.positions[ia];
+            let pb = self.positions[ib];
+            let pc = self.positions[ic];
+            // f64 from the loaded position values onward so the scalar
+            // triple product (a × b · c) stays stable at scale.
+            let ax = pa[0] as f64;
+            let ay = pa[1] as f64;
+            let az = pa[2] as f64;
+            let bx = pb[0] as f64;
+            let by = pb[1] as f64;
+            let bz = pb[2] as f64;
+            let cx = pc[0] as f64;
+            let cy = pc[1] as f64;
+            let cz = pc[2] as f64;
+            // P_b × P_c
+            let crx = by * cz - bz * cy;
+            let cry = bz * cx - bx * cz;
+            let crz = bx * cy - by * cx;
+            if !crx.is_finite() || !cry.is_finite() || !crz.is_finite() {
+                continue;
+            }
+            // P_a · (P_b × P_c) — the signed volume of the tetrahedron
+            // formed by the origin and the three corners.
+            let tri = ax * crx + ay * cry + az * crz;
+            if !tri.is_finite() {
+                continue;
+            }
+            total += tri;
+        }
+        total / 6.0
+    }
+
+    /// Unsigned volume enclosed by this primitive's triangle
+    /// tessellation — `|signed_volume()|` — in the unit-cubed of
+    /// [`Primitive::positions`].
+    ///
+    /// Like [`Primitive::signed_volume`], the result is only
+    /// physically meaningful for a closed two-manifold surface
+    /// (`is_closed_manifold() == true`). The magnitude is robust to
+    /// inside-out winding: a uniformly CW-from-outside mesh reports
+    /// the same volume as the equivalent CCW-from-outside mesh.
+    ///
+    /// Non-triangle topologies (lines/points) and empty primitives
+    /// return `0.0`.
+    pub fn volume(&self) -> f64 {
+        self.signed_volume().abs()
+    }
+
     /// Recompute per-vertex MikkTSpace-style tangent-space basis
     /// vectors from this primitive's positions, UVs (UV set `uv_set`),
     /// and per-vertex normals, returning one `[f32; 4]` per vertex
@@ -1490,5 +1645,32 @@ impl Mesh {
     /// applied). Non-triangle primitives contribute 0.0.
     pub fn surface_area(&self) -> f64 {
         self.primitives.iter().map(|p| p.surface_area()).sum()
+    }
+
+    /// Sum of [`Primitive::signed_volume`] across every contained
+    /// primitive (mesh-local, no transforms / skin pose / morph deltas
+    /// applied). Non-triangle primitives contribute 0.0.
+    ///
+    /// **Only physically meaningful when every contained primitive is
+    /// a closed two-manifold surface** (see
+    /// [`Primitive::is_closed_manifold`]). A mesh that bundles, say, a
+    /// closed cube with a non-closed UV strip will report the cube's
+    /// signed volume plus an open-mesh leak from the strip; the leak
+    /// is well-defined arithmetically but doesn't correspond to a
+    /// physical volume. Sign follows the per-primitive convention
+    /// (CCW-from-outside = positive).
+    pub fn signed_volume(&self) -> f64 {
+        self.primitives.iter().map(|p| p.signed_volume()).sum()
+    }
+
+    /// Unsigned `|signed_volume()|` aggregated over every contained
+    /// primitive. **Note: this is `|Σ signed|`, not `Σ |signed|`** — two
+    /// primitives whose signed volumes cancel will report a smaller
+    /// magnitude than either one alone. For a typical single-shell mesh
+    /// (every primitive part of one closed surface) the distinction
+    /// doesn't matter; for a multi-shell mesh, prefer summing each
+    /// primitive's [`Primitive::volume`] separately.
+    pub fn volume(&self) -> f64 {
+        self.signed_volume().abs()
     }
 }

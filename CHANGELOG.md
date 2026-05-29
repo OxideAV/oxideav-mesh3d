@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 182 (signed-volume reduction)
+
+- `Primitive::signed_volume(&self) -> f64` — divergence-theorem
+  reduction `V = (1/6) Σ (P_a · (P_b × P_c))` over the primitive's
+  triangle tessellation, in the unit-cubed of `Primitive::positions`
+  (matching the parent `Scene3D::unit`). The derivation: substituting
+  the radial field `F = x/3` (for which `∇ · F = 1`) into the
+  divergence theorem `∫∫∫_V (∇·F) dV = ∫∫_S F · dS` collapses the
+  per-triangle contribution to `(P_a · (P_b × P_c)) / 6` — each
+  triangle plus the origin forms a tetrahedron whose signed volume
+  is that scalar triple product, and for a closed mesh the
+  origin-coincident faces cancel pairwise, leaving only the boundary
+  shells (Cha & Chen, "Efficient feature extraction for 2D/3D
+  objects in mesh representation", ICIP 2001). The cross-product
+  machinery is identical to the one `compute_normals` /
+  `surface_area` already share — `signed_volume` adds one scalar
+  dot per triangle. Sign follows the winding convention:
+  CCW-from-outside (right-handed, glTF-aligned) is positive; an
+  inside-out (CW-from-outside) mesh produces the same magnitude
+  with opposite sign. Topology integration goes through
+  `triangle_indices`, so `Triangles` / `TriangleStrip` (alternating
+  winding honoured) / `TriangleFan` all feed in. Non-triangle
+  topologies (lines/points) contribute 0.0. Accumulator is `f64`;
+  per-triangle math is also `f64`. Degenerate triangles
+  (collinear/coincident corners), NaN- or Inf-producing faces, and
+  out-of-range index entries all contribute 0.0 — the result is
+  always finite. **Translation-invariant for a closed surface**
+  (origin-coincident tetra contributions cancel). Only physically
+  meaningful for a closed two-manifold (see `is_closed_manifold`);
+  arithmetically well-defined regardless. Pure; cost
+  `O(triangle_count)`.
+- `Primitive::volume(&self) -> f64` — unsigned `|signed_volume()|`,
+  robust to inside-out winding.
+- `Mesh::signed_volume(&self) -> f64` + `Mesh::volume(&self) -> f64`
+  — sum across every contained primitive (mesh-local, no transforms
+  / skin pose / morph deltas applied). `Mesh::volume` returns
+  `|Σ signed|`, not `Σ |signed|` (single-shell assumption); for a
+  multi-shell mesh whose primitives differ in sign, sum each
+  primitive's `volume()` separately.
+- `Scene3D::signed_volume(&self) -> f64` +
+  `Scene3D::volume(&self) -> f64` — sum across every mesh in the
+  scene. Walks meshes once, not node instances (instanced meshes
+  contribute once per mesh, not once per node). For a transform-
+  aware total, walk `world_node_transforms` and apply each node's
+  scale's signed determinant per primitive instance (a negative
+  scale flips winding and thus flips the sign).
+- `tests/volume.rs` (30 tests): unit cube = 1.0 (CCW) / -1.0 (CW),
+  unit tetrahedron = 1/6, axis-aligned 2×3×4 box = 24.0,
+  inside-out-winding sign flip, translation-invariance for closed
+  surface, scaling-cubes-the-volume dimensional check,
+  to_triangle_list and weld_vertices are volume-preserving,
+  indexed-cube matches soup, empty primitive / Mesh / Scene = 0.0,
+  incomplete trailing vertices dropped, degenerate triangles
+  contribute 0 (including one-among-valid), NaN- / Inf-bearing
+  faces skipped, out-of-range index skipped, TriangleStrip +
+  TriangleFan match the equivalent list, non-triangle topologies
+  = 0, single-triangle arithmetic pin (V_tri = 1/6), million-
+  triangle stress (`f64` no-drift), morph targets ignored
+  (base-only), `Mesh::volume` sum + lines-only / empty zero +
+  opposite-winding-cancels documented contract,
+  `Scene3D::volume` sum + empty zero + instanced-mesh
+  counted-once contract.
+
 ### Added — Round 175 (surface-area reduction)
 
 - `Primitive::surface_area(&self) -> f64` — total area of the

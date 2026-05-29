@@ -741,6 +741,34 @@ impl Scene3D {
         self.meshes.iter().map(|m| m.surface_area()).sum()
     }
 
+    /// Sum of every mesh primitive's
+    /// [`crate::Primitive::signed_volume`] in the scene's local
+    /// unit-cubed (matching [`Scene3D::unit`]). This does *not* apply
+    /// node transforms — primitives instanced by multiple nodes
+    /// contribute their unscaled volume once per mesh, not once per
+    /// node. For a transform-aware total, walk
+    /// [`Scene3D::world_node_transforms`] and apply the per-node
+    /// scale's signed determinant per primitive instance (a negative
+    /// scale flips winding and so flips the sign of the enclosed
+    /// volume).
+    ///
+    /// **Only physically meaningful when each contained mesh is a
+    /// closed two-manifold surface.** See
+    /// [`crate::Primitive::is_closed_manifold`] /
+    /// [`crate::Primitive::edge_manifold_report`].
+    pub fn signed_volume(&self) -> f64 {
+        self.meshes.iter().map(|m| m.signed_volume()).sum()
+    }
+
+    /// Unsigned `|signed_volume()|` across the scene. Same
+    /// shell-cancellation caveat as [`crate::Mesh::volume`]: this is
+    /// `|Σ signed|`, not `Σ |signed|`. For a multi-shell scene where
+    /// individual shells may differ in sign, prefer summing each mesh's
+    /// [`crate::Mesh::volume`] separately.
+    pub fn volume(&self) -> f64 {
+        self.signed_volume().abs()
+    }
+
     /// Walk every cross-collection reference and report dangling
     /// indices + inconsistent buffer lengths. Returns `Ok(())` when
     /// the scene is internally consistent, or `Err` carrying every
