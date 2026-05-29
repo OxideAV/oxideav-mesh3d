@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 175 (surface-area reduction)
+
+- `Primitive::surface_area(&self) -> f64` — total area of the
+  primitive's triangle tessellation, in the unit-squared of
+  `Primitive::positions` (matching the parent `Scene3D::unit`). Each
+  triangle's area is the half cross-product magnitude
+  `|E1 × E2| / 2` (Marsden & Tromba, *Vector Calculus* — the
+  cross-product magnitude is the parallelogram-area definition; a
+  triangle occupies half of that parallelogram). The same `E1 × E2`
+  cross product already drives `compute_normals` (its magnitude is
+  twice the triangle area, which is why summing the un-normalised
+  face normal into each vertex automatically area-weights smooth
+  shading); `surface_area` reuses the edge-cross machinery and
+  divides by two. Topology integration goes through
+  `triangle_indices`, so `Triangles` / `TriangleStrip` (alternating
+  winding honoured) / `TriangleFan` all feed in. Non-triangle
+  topologies (lines/points) contribute 0.0. Accumulator is `f64` so
+  million-triangle meshes don't drift under `f32` summation; per-
+  triangle math is also `f64`. Degenerate triangles
+  (collinear/coincident corners, same set `degenerate_triangles`
+  reports), NaN- or Inf-producing faces, and out-of-range index
+  entries all contribute 0.0 — the result is always finite. Pure;
+  cost `O(triangle_count)`.
+- `Mesh::surface_area(&self) -> f64` — sum across every contained
+  primitive in mesh-local space (no transforms / skin pose / morph
+  deltas applied).
+- `Scene3D::surface_area(&self) -> f64` — sum across every mesh in
+  the scene, in the scene's local unit-squared (matching
+  `Scene3D::unit`). Walks meshes once, not node instances — a mesh
+  instanced by two nodes contributes its area once. For a
+  transform-aware total, walk `world_node_transforms` and apply the
+  per-node scale's determinant per primitive instance.
+- `tests/surface_area.rs` (30 tests): unit right-triangle = 0.5,
+  unit square (list + indexed) = 1.0, unit cube = 6.0, equilateral
+  side-1 = √3/4, winding-invariance (unsigned), scaling-squares-the-
+  area dimensional check, rotation / translation isometry preserves
+  area, `to_triangle_list` and `weld_vertices` are area-preserving,
+  empty primitive / Mesh / Scene = 0.0, incomplete trailing
+  vertices dropped, degenerate triangles contribute 0 (including
+  one-among-valid), NaN- / Inf-bearing faces skipped, out-of-range
+  index skipped, TriangleStrip + TriangleFan match the equivalent
+  list, non-triangle topologies = 0, million-triangle stress
+  (`f64` no-drift), morph targets ignored (`surface_area` is base-
+  only), `Mesh::surface_area` sum + lines-only / empty zero,
+  `Scene3D::surface_area` sum + empty zero + instanced-mesh
+  counted-once contract.
+
 ### Added — Round 155 (mesh-validity invariants: degenerate-triangle detection + edge-manifold classification)
 
 - `Primitive::degenerate_triangles(&self) -> Vec<usize>` — returns the

@@ -730,6 +730,17 @@ impl Scene3D {
             .sum()
     }
 
+    /// Sum of every mesh primitive's [`Primitive::surface_area`] in the
+    /// scene's local unit-squared (matching [`Scene3D::unit`]). This
+    /// does *not* apply node transforms — primitives instanced by
+    /// multiple nodes contribute their unscaled area once per mesh,
+    /// not once per node. For a transform-aware total, walk
+    /// [`Scene3D::world_node_transforms`] and apply the per-node
+    /// scale's determinant per primitive instance.
+    pub fn surface_area(&self) -> f64 {
+        self.meshes.iter().map(|m| m.surface_area()).sum()
+    }
+
     /// Walk every cross-collection reference and report dangling
     /// indices + inconsistent buffer lengths. Returns `Ok(())` when
     /// the scene is internally consistent, or `Err` carrying every

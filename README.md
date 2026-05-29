@@ -333,6 +333,36 @@ Round 118 lands coincident-vertex welding / index de-duplication
   Pure (no `self` mutation). A position-only cube soup welds 36 → 8
   corners; a flat-shaded cube (normal in the identity) welds 36 → 24.
 
+Round 175 lands the surface-area reduction (`tests/surface_area.rs`,
+30 tests):
+
+- `Primitive::surface_area(&self) -> f64` — total area of the
+  primitive's triangle tessellation in the unit-squared of
+  `Primitive::positions` (matching the parent `Scene3D::unit`). Each
+  triangle's area is the half cross-product magnitude `|E1 × E2| / 2`
+  (Marsden & Tromba, *Vector Calculus* — the cross-product magnitude
+  is the parallelogram-area definition; a triangle occupies half of
+  that parallelogram). The same `E1 × E2` already drives
+  `compute_normals` (its magnitude is twice the triangle area, which
+  is exactly why summing the un-normalised face normal into each
+  vertex automatically area-weights smooth shading);
+  `surface_area` reuses the edge-cross machinery and divides by two.
+  Topology integration goes through `triangle_indices`, so
+  `Triangles` / `TriangleStrip` (alternating winding) / `TriangleFan`
+  all feed in correctly; non-triangle topologies (lines/points)
+  contribute 0.0. Accumulator is `f64` so million-triangle meshes
+  don't drift under `f32` summation. Degenerate (collinear/coincident
+  corners), NaN- or Inf-producing faces, and out-of-range index
+  entries all contribute 0.0 — the result is always finite. Pure;
+  cost `O(triangle_count)`.
+- `Mesh::surface_area(&self) -> f64` — sum across every contained
+  primitive (mesh-local, no transforms / skin pose / morph deltas).
+- `Scene3D::surface_area(&self) -> f64` — sum across every mesh in the
+  scene. Walks meshes once, not node instances — a mesh instanced by
+  two nodes contributes its area once. For a transform-aware total,
+  walk `world_node_transforms` and apply the per-node scale
+  determinant per primitive instance.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

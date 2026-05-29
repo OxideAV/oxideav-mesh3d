@@ -689,6 +689,108 @@ impl Primitive {
         acc
     }
 
+    /// Total surface area of this primitive's triangle tessellation, in
+    /// the unit-squared of [`Primitive::positions`] (matching the
+    /// parent [`crate::Scene3D::unit`] — metres² by default).
+    ///
+    /// Topology handling matches [`Primitive::triangle_indices`]: the
+    /// de-stripped triangle list is summed, so `Triangles` /
+    /// `TriangleStrip` (alternating winding honoured) / `TriangleFan`
+    /// all feed in correctly. Non-triangle topologies (lines/points)
+    /// contribute 0.0 — they have no surface.
+    ///
+    /// # Derivation (clean-room, first-principles)
+    ///
+    /// For a triangle with corners `(P_a, P_b, P_c)` and edge vectors
+    /// `E1 = P_b - P_a`, `E2 = P_c - P_a`, the parallelogram spanned
+    /// by `E1` and `E2` has area `|E1 × E2|` (the cross-product
+    /// magnitude is the definition of the parallelogram's signed area
+    /// magnitude — any introductory vector calculus reference, e.g.
+    /// Marsden & Tromba, *Vector Calculus*). A triangle occupies
+    /// exactly half of that parallelogram, so
+    ///
+    /// ```text
+    /// area = |E1 × E2| / 2
+    /// ```
+    ///
+    /// Note the same `E1 × E2` cross product already drives
+    /// [`Primitive::compute_normals`] (its magnitude is twice the
+    /// triangle area, which is why summing the un-normalised face
+    /// normal into each vertex automatically area-weights smooth
+    /// shading). `surface_area` reuses the identical edge-cross
+    /// machinery and divides by two; the two methods are sibling
+    /// reductions of the same triangle walk.
+    ///
+    /// # Contract
+    ///
+    /// * Always returns a finite, non-negative `f64` for a primitive
+    ///   whose positions are all finite. The accumulator is `f64` so
+    ///   a million-triangle mesh doesn't drift under `f32` summation;
+    ///   the per-triangle cross-product math is also done in `f64`.
+    /// * **Degenerate triangles contribute zero.** A triangle whose
+    ///   edge cross product is the zero vector (collinear/coincident
+    ///   corners — the same set [`Primitive::degenerate_triangles`]
+    ///   reports) adds 0.0 to the sum. They neither help nor corrupt
+    ///   the total.
+    /// * **NaN-safe.** A face whose edge differences or cross product
+    ///   produces a non-finite component contributes 0.0 instead of
+    ///   poisoning the sum with NaN/Inf. The whole result therefore
+    ///   stays finite even on a partly-corrupt vertex buffer.
+    /// * **Out-of-range index** entries (a malformed primitive whose
+    ///   index buffer dereferences past `positions.len()`) are
+    ///   skipped, not panicked.
+    /// * Non-triangle topologies return 0.0.
+    /// * **Does not mutate `self`.** Pure; cost is `O(triangle_count)`.
+    ///
+    /// # Use
+    ///
+    /// * STL validators: the Fabbers/Stratasys conformance recipe
+    ///   asks for a total enclosed-volume check, of which surface
+    ///   area is the cheap precursor.
+    /// * Importers comparing two formats' tessellation densities for
+    ///   LOD/decimation heuristics.
+    /// * Texel-density readouts (texture pixels per square metre)
+    ///   when combined with the UV-chart area returned by a future
+    ///   `uv_area` helper.
+    pub fn surface_area(&self) -> f64 {
+        let n = self.positions.len();
+        let mut total = 0.0_f64;
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            // Defensive: an index buffer can dereference out of range
+            // for a malformed primitive — skip such a face rather than
+            // panic. validate() catches it ahead of time.
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = self.positions[ia];
+            let pb = self.positions[ib];
+            let pc = self.positions[ic];
+            // f64 from the edge differences onward so accumulation
+            // stays stable across large meshes.
+            let ux = pb[0] as f64 - pa[0] as f64;
+            let uy = pb[1] as f64 - pa[1] as f64;
+            let uz = pb[2] as f64 - pa[2] as f64;
+            let vx = pc[0] as f64 - pa[0] as f64;
+            let vy = pc[1] as f64 - pa[1] as f64;
+            let vz = pc[2] as f64 - pa[2] as f64;
+            // Cross product u × v; its magnitude is twice the
+            // triangle area.
+            let cx = uy * vz - uz * vy;
+            let cy = uz * vx - ux * vz;
+            let cz = ux * vy - uy * vx;
+            if !cx.is_finite() || !cy.is_finite() || !cz.is_finite() {
+                continue;
+            }
+            let m2 = cx * cx + cy * cy + cz * cz;
+            if !m2.is_finite() {
+                continue;
+            }
+            total += m2.sqrt() * 0.5;
+        }
+        total
+    }
+
     /// Recompute per-vertex MikkTSpace-style tangent-space basis
     /// vectors from this primitive's positions, UVs (UV set `uv_set`),
     /// and per-vertex normals, returning one `[f32; 4]` per vertex
@@ -1381,5 +1483,12 @@ impl Mesh {
             .iter()
             .filter_map(|p| p.bounding_box())
             .reduce(BoundingBox::union)
+    }
+
+    /// Sum of [`Primitive::surface_area`] across every contained
+    /// primitive (mesh-local, no transforms / skin pose / morph deltas
+    /// applied). Non-triangle primitives contribute 0.0.
+    pub fn surface_area(&self) -> f64 {
+        self.primitives.iter().map(|p| p.surface_area()).sum()
     }
 }
