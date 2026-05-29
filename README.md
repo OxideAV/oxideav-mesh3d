@@ -411,6 +411,38 @@ Round 175 lands the surface-area reduction (`tests/surface_area.rs`,
   walk `world_node_transforms` and apply the per-node scale
   determinant per primitive instance.
 
+Round 189 lands the scene-graph world-transform snapshot
+(`tests/world_transforms.rs`, 21 tests):
+
+- `Scene3D::world_node_transforms(&self) -> Vec<Option<[[f32; 4]; 4]>>`
+  — depth-first walk over the [`Scene3D::roots`] forest, returning the
+  composed world-space 4x4 matrix for every reachable node (and `None`
+  for detached nodes). The output vector is indexed by `NodeId.0` so a
+  caller can look up a node's world matrix in O(1) without re-walking
+  the ancestor chain. Each slot is a row-major column-vector matrix
+  taking a position in the node's local frame to world space —
+  matching the convention used by `Transform::to_matrix`,
+  `BoundingBox::transform`, and the rest of the crate. The traversal
+  mirrors the iterative DFS in [`Scene3D::bounding_box`]: roots are
+  visited in `roots`-order, children in source order, cycles are
+  guarded (a node revisited via a back-edge keeps its first-encountered
+  matrix), and a shared child node (listed under two parents) resolves
+  to the first parent's chain (a deterministic single-resolution
+  policy; per-instance world matrices need a separate
+  instance-list side-channel). Out-of-range `NodeId` entries in
+  `roots` / `children` are silently skipped — the walk is total. Cost
+  is `O(nodes.len() + total_children)`; allocates one
+  `Vec<Option<...>>` of length `nodes.len()` plus the DFS stack. The
+  `Scene3D::{surface_area, signed_volume, volume}` docs already
+  referenced this helper as the entry point for transform-aware
+  aggregate metrics — multiply each primitive's local
+  `surface_area` by `|det(R · diag(s))|` of the upper-left 3x3 or
+  its `signed_volume` by `sign(det) · |det|` to obtain the
+  transform-folded total. Static scene-graph only — skin pose
+  deformation, animation channels, camera matrices, and unit-axis
+  conversion are not folded in (those are layered above this
+  primitive).
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

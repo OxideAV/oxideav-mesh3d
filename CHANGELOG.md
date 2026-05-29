@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 189 (scene-graph world-transform snapshot)
+
+- `Scene3D::world_node_transforms(&self) -> Vec<Option<[[f32; 4]; 4]>>`
+  — depth-first walk over the `Scene3D::roots` forest returning the
+  composed world-space 4x4 matrix for every reachable node, with `None`
+  in the slot for detached nodes. The output vector is indexed by
+  `NodeId.0` so a caller can look up a node's world matrix in O(1)
+  without re-walking the ancestor chain — the same per-node side-table
+  the existing `Scene3D::{surface_area, signed_volume, volume}` doc
+  comments already pointed at as the entry point for transform-aware
+  aggregate metrics. Each matrix is row-major column-vector, taking a
+  position in the node's local frame to world space — matching
+  `Transform::to_matrix`, `BoundingBox::transform`, and the rest of
+  the crate's conventions. The traversal mirrors the iterative DFS in
+  `Scene3D::bounding_box`: roots are visited in `roots`-order,
+  children in source order, cycles are guarded (a node revisited via a
+  back-edge keeps its first-encountered matrix), and a shared child
+  node (listed under two parents) resolves to the first parent's
+  chain — a deterministic single-resolution policy; per-instance
+  world matrices need a separate instance-list side-channel. Out-of-
+  range `NodeId` entries in `roots` / `children` are silently skipped,
+  so the walk is total even on partially-built / fuzzer-generated
+  scenes. Cost `O(nodes.len() + total_children)`; allocates one
+  `Vec<Option<...>>` of length `nodes.len()` plus the DFS stack.
+  Static scene-graph only — skin pose deformation, animation
+  channels, camera matrices, and unit-axis conversion are layered
+  above this primitive.
+- `tests/world_transforms.rs` — 21 tests: empty / no-roots / single-
+  root identity-or-translation, ancestor-chain composition
+  (parent-child, grandchild, nested scale, parent-scale × child-
+  translation), `Transform::Matrix` variant passthrough, multi-root
+  forest with detached subtree (`None` slot), cycle / shared-instance
+  / self-cycle guard, out-of-range root + child, vec-length matches
+  `nodes.len()`, deterministic across repeated calls, depth-3 binary
+  tree end-to-end, mixed `Matrix` parent + `Trs` child composition,
+  plus the cross-check that `world_node_transforms()[node.0]` applied
+  to a mesh's local bounding box matches what `Scene3D::bounding_box`
+  returns.
+
 ### Added — Round 182 (signed-volume reduction)
 
 - `Primitive::signed_volume(&self) -> f64` — divergence-theorem

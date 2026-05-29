@@ -640,6 +640,96 @@ impl Scene3D {
         self.meshes.get(id.0 as usize)
     }
 
+    /// World-space 4x4 transform per scene node, indexed by `NodeId.0`.
+    ///
+    /// Walks every root in [`Scene3D::roots`] in order, composing each
+    /// node's local [`Transform`] (via [`Transform::to_matrix`]) onto
+    /// its parent's already-composed world transform. The returned
+    /// vector has length `nodes.len()`; each slot holds:
+    ///
+    /// * `Some([[f32; 4]; 4])` — the row-major column-vector world
+    ///   transform of that node, i.e. the matrix that takes a position
+    ///   in the node's local frame to world space (`p_world = M *
+    ///   p_local`, treating `p_local` as `[x, y, z, 1]ᵀ`).
+    /// * `None` — the node is not reachable from any root in
+    ///   [`Scene3D::roots`] (detached). Detached nodes are common
+    ///   during incremental scene construction; the caller can detect
+    ///   them without a separate reachability pass.
+    ///
+    /// The walk is depth-first iterative on an explicit stack, matching
+    /// [`Scene3D::bounding_box`]'s traversal. Re-entry through a cycle
+    /// (a node listed as its own descendant) is guarded against — each
+    /// node receives **exactly one** world transform, the first one
+    /// encountered on the depth-first walk. Out-of-range `NodeId`
+    /// entries in `roots` / `children` are silently skipped.
+    ///
+    /// A node referenced by two parents (shared-instance pattern) is
+    /// visited only once, so `world_node_transforms()[id.0 as usize]`
+    /// resolves to a single matrix — the one obtained via the first
+    /// parent on the DFS path. Decoders that need per-instance world
+    /// transforms (mesh-instancing) should keep an explicit
+    /// instance-list side-channel rather than relying on this helper.
+    ///
+    /// **What this does NOT include:**
+    ///
+    /// * Skin pose deformation — the static scene-graph transform is
+    ///   reported, not the skinned-pose transform at any particular
+    ///   animation time. Apply animation channels separately to obtain
+    ///   pose-time transforms.
+    /// * Camera / projection transforms.
+    /// * Up-axis or unit conversion. [`Scene3D::up_axis`] and
+    ///   [`Scene3D::unit`] are metadata; the returned matrices live in
+    ///   whatever coordinate system the scene stored.
+    ///
+    /// ## Use cases
+    ///
+    /// * Transform-aware aggregate metrics (multiply each primitive's
+    ///   `surface_area` by `|det(scale_part)|` or its `signed_volume`
+    ///   by `sign(det) * |det|` to obtain a transform-folded total —
+    ///   the per-component scales fall out of the upper-left 3x3 of
+    ///   the world matrix).
+    /// * Renderer-side world-matrix prep (one DFS pass at scene load,
+    ///   then constant-time lookup per node when issuing draw calls).
+    /// * Authoring-tool node inspection ("show me the world position
+    ///   of `nodes[7]`" without re-walking the ancestor chain).
+    ///
+    /// Cost: `O(nodes.len() + total_children)`; allocates one
+    /// `Vec<Option<...>>` of length `nodes.len()` plus the DFS stack.
+    pub fn world_node_transforms(&self) -> Vec<Option<[[f32; 4]; 4]>> {
+        let n_nodes = self.nodes.len();
+        let mut out: Vec<Option<[[f32; 4]; 4]>> = vec![None; n_nodes];
+        if n_nodes == 0 {
+            return out;
+        }
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        // Iterative depth-first walk; stack carries (node_id, ancestor_matrix).
+        // Roots are pushed in order so that, after the LIFO pop order,
+        // the leftmost root is visited first — matching `bounding_box`'s
+        // determinism contract.
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || out[idx].is_some() {
+                continue;
+            }
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            out[idx] = Some(world);
+            // Walk children in reverse so leftmost child is popped first
+            // (deterministic ordering for snapshot consumers).
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        out
+    }
+
     /// Axis-aligned bounding box over every mesh referenced by a node
     /// reachable from [`Scene3D::roots`], with each mesh's vertices
     /// projected through its node's full ancestor transform chain.
