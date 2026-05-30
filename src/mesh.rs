@@ -791,6 +791,87 @@ impl Primitive {
         total
     }
 
+    /// Transform-aware surface area: same triangle reduction as
+    /// [`Primitive::surface_area`], but every corner is first mapped
+    /// through the row-major column-vector affine 4x4 `world` matrix
+    /// (same convention as [`crate::Transform::Matrix`] /
+    /// [`crate::BoundingBox::transform`]) before the per-triangle area
+    /// is accumulated. The translation column cancels in the edge
+    /// differences, so only the upper-left 3x3 of `world` enters the
+    /// per-triangle contribution.
+    ///
+    /// Used by [`crate::Scene3D::world_surface_area`] to fold each
+    /// node's ancestor-chain transform into a per-instance area total
+    /// without applying a single scalar scale to the local area (which
+    /// would be wrong under non-uniform scale, since the
+    /// post-transform area of a triangle depends on its orientation
+    /// relative to the scale axes).
+    ///
+    /// Contract matches [`Primitive::surface_area`]:
+    ///
+    /// * `Triangles` / `TriangleStrip` / `TriangleFan` contribute their
+    ///   transformed triangle area; other topologies contribute 0.0.
+    /// * Degenerate triangles (after transform), out-of-range indices,
+    ///   and NaN-/Inf-producing intermediates contribute 0.0.
+    /// * Result is finite and non-negative; accumulator is `f64`.
+    /// * Pure; cost `O(triangle_count)`.
+    pub fn world_surface_area(&self, world: [[f32; 4]; 4]) -> f64 {
+        let n = self.positions.len();
+        let mut total = 0.0_f64;
+        // Promote the 3x3 + translation to f64 once so the per-triangle
+        // edge-mapping is a small fixed cost rather than a per-vertex
+        // f32-cast cascade.
+        let m00 = world[0][0] as f64;
+        let m01 = world[0][1] as f64;
+        let m02 = world[0][2] as f64;
+        let m03 = world[0][3] as f64;
+        let m10 = world[1][0] as f64;
+        let m11 = world[1][1] as f64;
+        let m12 = world[1][2] as f64;
+        let m13 = world[1][3] as f64;
+        let m20 = world[2][0] as f64;
+        let m21 = world[2][1] as f64;
+        let m22 = world[2][2] as f64;
+        let m23 = world[2][3] as f64;
+        let xform = |p: [f32; 3]| {
+            let x = p[0] as f64;
+            let y = p[1] as f64;
+            let z = p[2] as f64;
+            [
+                m00 * x + m01 * y + m02 * z + m03,
+                m10 * x + m11 * y + m12 * z + m13,
+                m20 * x + m21 * y + m22 * z + m23,
+            ]
+        };
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = xform(self.positions[ia]);
+            let pb = xform(self.positions[ib]);
+            let pc = xform(self.positions[ic]);
+            let ux = pb[0] - pa[0];
+            let uy = pb[1] - pa[1];
+            let uz = pb[2] - pa[2];
+            let vx = pc[0] - pa[0];
+            let vy = pc[1] - pa[1];
+            let vz = pc[2] - pa[2];
+            let cx = uy * vz - uz * vy;
+            let cy = uz * vx - ux * vz;
+            let cz = ux * vy - uy * vx;
+            if !cx.is_finite() || !cy.is_finite() || !cz.is_finite() {
+                continue;
+            }
+            let m2 = cx * cx + cy * cy + cz * cz;
+            if !m2.is_finite() {
+                continue;
+            }
+            total += m2.sqrt() * 0.5;
+        }
+        total
+    }
+
     /// Signed volume enclosed by this primitive's triangle tessellation,
     /// in the unit-cubed of [`Primitive::positions`] (matching the parent
     /// [`crate::Scene3D::unit`] — metres³ by default). **The result is

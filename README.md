@@ -443,6 +443,42 @@ Round 189 lands the scene-graph world-transform snapshot
   conversion are not folded in (those are layered above this
   primitive).
 
+Round 192 lands the transform-aware sibling reductions to
+`world_node_transforms` (`tests/world_metrics.rs`, 35 tests):
+
+- `Scene3D::world_surface_area(&self) -> f64` — same depth-first
+  walk as `world_node_transforms` (and the same first-parent
+  shared-instance resolution), accumulating each reachable
+  instance's post-transform triangle area. Mesh resources not
+  reachable from any root contribute 0; a mesh instanced under N
+  reachable nodes contributes N times. Per-triangle math: under
+  the upper-left 3x3 of the world matrix, a triangle's area
+  scales by `|(M_3·E1) × (M_3·E2)| / |E1 × E2|`, which collapses
+  to `s²` under uniform scale `s` but is orientation-sensitive
+  under a non-uniform diagonal scale — hence the per-triangle
+  walk rather than a single det-based scale. Pure;
+  `O(reachable_nodes + Σ triangle_count_per_reachable_mesh)`.
+- `Scene3D::world_signed_volume(&self) -> f64` — same walk,
+  collapses to `Σ det(M_3x3) · V_local` for closed two-manifold
+  meshes (the open-mesh boundary terms vanish under the same
+  origin-cancellation argument that makes
+  `Primitive::signed_volume` translation-invariant for a closed
+  surface). A uniform scale `s` produces factor `s³`; a
+  single-axis mirror produces `-1`, correctly flipping the
+  enclosed-volume sign because the triangle winding flips with
+  the mirror. Mesh resources not reachable contribute 0;
+  per-instance contributions sum signed.
+- `Scene3D::world_volume(&self) -> f64` — unsigned
+  `|world_signed_volume()|`. Same `|Σ signed|` (not
+  `Σ |signed|`) caveat as `Scene3D::volume` / `Mesh::volume`: a
+  scene combining a mirrored and an unmirrored instance of the
+  same closed mesh cancels to ~0 in the unsigned sum.
+- `Primitive::world_surface_area(&self, world: [[f32; 4]; 4]) -> f64`
+  — per-primitive helper underlying the scene-level walk; matches
+  `Primitive::surface_area`'s topology / degenerate-triangle /
+  out-of-range / NaN-skipping contract and is finite for any
+  finite input.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

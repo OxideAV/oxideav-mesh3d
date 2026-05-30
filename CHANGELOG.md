@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 192 (transform-aware scene-level area/volume)
+
+- `Scene3D::world_surface_area(&self) -> f64` — depth-first walk over
+  `Scene3D::roots` (same reachability + cycle-guard + first-parent
+  shared-instance resolution as `Scene3D::world_node_transforms`)
+  applying each reachable node's full ancestor-chain world matrix to
+  its referenced primitive's triangle vertices, summing the
+  per-instance post-transform area. Whereas `Scene3D::surface_area`
+  reports the resource-level total (each mesh once regardless of
+  instance count), this helper is per-instance and folds in
+  world-space scaling — including non-uniform diagonal scales where
+  the area factor depends on triangle orientation and cannot be
+  captured by a single determinant.
+- `Scene3D::world_signed_volume(&self) -> f64` — same DFS walk,
+  using the affine-volume identity `V_world = det(M_3x3) · V_local`
+  for closed two-manifold meshes (the open-mesh boundary terms
+  vanish under the same origin-cancellation argument that makes the
+  local signed volume translation-invariant). Single-axis mirror
+  scales flip the sign correctly; uniform scale `s` gives factor
+  `s³`; pure translation leaves a closed-mesh volume unchanged.
+- `Scene3D::world_volume(&self) -> f64` — unsigned
+  `|world_signed_volume()|`; same `|Σ signed|` (not `Σ |signed|`)
+  caveat as `Scene3D::volume` / `Mesh::volume`, so a scene mixing
+  mirrored and unmirrored instances of the same mesh can cancel.
+- `Primitive::world_surface_area(&self, world: [[f32; 4]; 4]) -> f64`
+  — per-primitive helper used by the scene-level walk: edge
+  differences cancel the translation column, so only the upper-left
+  3x3 enters the per-triangle math. Identical topology / degenerate-
+  triangle / out-of-range-index / NaN-skipping semantics as
+  `Primitive::surface_area`. Pure; `O(triangle_count)`.
+- `tests/world_metrics.rs` — 35 tests covering the new helpers:
+  identity-passthrough, pure-translation invariance (area and
+  closed-mesh volume), uniform scale `s²`/`s³`, non-uniform scale
+  (`2·(ab+bc+ac)` for the 2×3×4 box, det product for volume),
+  mirror sign flip + double-mirror cancellation, two-instance
+  doubling vs the resource-level baseline, ancestor scale chain
+  multiplication, cycle and self-cycle single-visit, detached node
+  skip, out-of-range mesh and root skip, shared-instance
+  first-parent resolution, `Transform::Matrix` variant passthrough,
+  NaN-guard finiteness, and bit-exact determinism across repeated
+  calls.
+
 ### Added — Round 189 (scene-graph world-transform snapshot)
 
 - `Scene3D::world_node_transforms(&self) -> Vec<Option<[[f32; 4]; 4]>>`

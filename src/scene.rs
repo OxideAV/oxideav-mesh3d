@@ -343,6 +343,22 @@ fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
     out
 }
 
+/// Signed determinant of the upper-left 3x3 of a row-major
+/// column-vector 4x4 matrix, returned as `f64` for accumulator-safe
+/// volume scaling. The translation column does not enter the result.
+fn mat3_det_of_world(m: [[f32; 4]; 4]) -> f64 {
+    let a = m[0][0] as f64;
+    let b = m[0][1] as f64;
+    let c = m[0][2] as f64;
+    let d = m[1][0] as f64;
+    let e = m[1][1] as f64;
+    let f = m[1][2] as f64;
+    let g = m[2][0] as f64;
+    let h = m[2][1] as f64;
+    let i = m[2][2] as f64;
+    a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+}
+
 fn trs_to_matrix(t: [f32; 3], r: [f32; 4], s: [f32; 3]) -> [[f32; 4]; 4] {
     // Quaternion (x, y, z, w) → 3x3 rotation matrix (Shoemake).
     let (x, y, z, w) = (r[0], r[1], r[2], r[3]);
@@ -857,6 +873,226 @@ impl Scene3D {
     /// [`crate::Mesh::volume`] separately.
     pub fn volume(&self) -> f64 {
         self.signed_volume().abs()
+    }
+
+    /// Transform-aware total surface area across every node-instantiated
+    /// mesh in the scene, in world units squared (matching
+    /// [`Scene3D::unit`]² when the scene's root has identity transform).
+    ///
+    /// Whereas [`Scene3D::surface_area`] sums each *mesh resource* once
+    /// regardless of how many nodes carry it (the geometric-content
+    /// total), `world_surface_area` walks the [`Scene3D::roots`] forest
+    /// the same way [`Scene3D::bounding_box`] does, applies each
+    /// reachable node's full ancestor-chain world matrix to its
+    /// primitive's triangle vertices, and sums the post-transform
+    /// triangle areas. A mesh instanced under two nodes therefore
+    /// contributes twice (once per instance), and each instance's
+    /// contribution reflects the world-space scale (and any
+    /// non-uniform skew) on the path to that node.
+    ///
+    /// # Derivation
+    ///
+    /// For a triangle `(P_a, P_b, P_c)` mapped through the affine world
+    /// matrix `M`, the post-transform edge vectors are
+    /// `M_3·(P_b - P_a)` and `M_3·(P_c - P_a)` (the translation row
+    /// cancels in the difference; `M_3` is the upper-left 3x3). The
+    /// transformed triangle's area is
+    ///
+    /// ```text
+    /// A_world = |(M_3·E1) × (M_3·E2)| / 2.
+    /// ```
+    ///
+    /// Under a uniform scale `s` the factor collapses to `s²`. Under a
+    /// non-uniform diagonal scale `(sx, sy, sz)` the factor depends on
+    /// the triangle's facing axis, so per-triangle evaluation — rather
+    /// than a single det-based scale — is required for correctness.
+    /// The translation column of `M` does not enter the area
+    /// computation, so the result is translation-invariant per
+    /// triangle (as expected for an intrinsic area metric).
+    ///
+    /// # Contract
+    ///
+    /// * Topology handling, degenerate-triangle skipping, NaN-guarding,
+    ///   and out-of-range-index skipping all mirror
+    ///   [`crate::Primitive::surface_area`]. Non-triangle topologies
+    ///   contribute 0.0. Result is finite and non-negative for any
+    ///   finite input.
+    /// * Mesh resources not reachable from any [`Scene3D::roots`] node
+    ///   contribute 0.0 — the count is per-instance over the
+    ///   scene-graph, not per-resource. For a resource-level total see
+    ///   [`Scene3D::surface_area`].
+    /// * Cycles in the scene-graph are guarded the same way as
+    ///   [`Scene3D::bounding_box`] / [`Scene3D::world_node_transforms`]:
+    ///   each node is visited at most once. A node instanced under two
+    ///   parents resolves to one world matrix (the first parent on the
+    ///   DFS path); use an explicit instance side-table if your decoder
+    ///   needs both.
+    /// * Skin pose deformation, morph targets, and unit-axis conversion
+    ///   are *not* applied — the static scene-graph transform is the
+    ///   only thing folded in. For a pose-time area, apply the
+    ///   animation pose before calling.
+    /// * Cost `O(reachable_nodes + Σ triangle_count_per_reachable_mesh)`.
+    ///   Allocates the DFS stack only; the per-triangle math is in
+    ///   `f64` to avoid `f32` drift on dense meshes.
+    pub fn world_surface_area(&self) -> f64 {
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        if n_nodes == 0 || n_meshes == 0 {
+            return 0.0;
+        }
+        let mut visited = vec![false; n_nodes];
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut total = 0.0_f64;
+        // Push roots in reverse so the LIFO pop visits the leftmost
+        // root first — matching `world_node_transforms`'s documented
+        // single-resolution policy (a shared instance reachable from
+        // two parents resolves via the first parent on the DFS path).
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                    for prim in &mesh.primitives {
+                        total += prim.world_surface_area(world);
+                    }
+                }
+            }
+            // Walk children in reverse so leftmost child is popped first.
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        total
+    }
+
+    /// Transform-aware total signed volume across every
+    /// node-instantiated mesh, in world units cubed.
+    ///
+    /// Whereas [`Scene3D::signed_volume`] sums each *mesh resource* once
+    /// in its local frame, `world_signed_volume` walks the
+    /// [`Scene3D::roots`] forest, applies each reachable node's
+    /// world-space transform to the underlying primitives, and
+    /// accumulates the per-instance signed enclosed volume.
+    ///
+    /// # Derivation
+    ///
+    /// For a primitive with local signed volume
+    /// `V_local = (1/6) Σ P_a · (P_b × P_c)` and an affine world
+    /// transform `M` whose upper-left 3x3 is `M_3` with translation
+    /// column `t`, every transformed corner is `M_3·P + t`. Expanding
+    /// the per-triangle scalar triple product:
+    ///
+    /// ```text
+    /// (M_3·P_a + t) · ((M_3·P_b + t) × (M_3·P_c + t))
+    ///   = det(M_3) · (P_a · (P_b × P_c)) + boundary_terms(t).
+    /// ```
+    ///
+    /// The `boundary_terms(t)` involve only the open-mesh boundary and
+    /// vanish for a closed two-manifold (the same origin-cancellation
+    /// that makes the local signed volume translation-invariant). For
+    /// such a mesh the world signed volume reduces to
+    ///
+    /// ```text
+    /// V_world = det(M_3) · V_local.
+    /// ```
+    ///
+    /// `det(M_3)` is the *signed* 3x3 determinant: a uniform scale of
+    /// `s` gives `s³`; a single-axis mirror (`-1` on one axis) gives
+    /// `-1`, correctly flipping the enclosed-volume sign because the
+    /// triangle winding flips with the mirror. For an open mesh, the
+    /// translation-dependent boundary term means this scaling identity
+    /// is only an approximation; the helper still returns the
+    /// closed-form `det(M_3) · V_local` because that is the
+    /// physically-meaningful summand whenever the per-instance mesh is
+    /// itself a closed surface (the usual case for which the
+    /// volume reduction is defined).
+    ///
+    /// # Contract
+    ///
+    /// * Reachability, cycle-guarding, and per-instance accumulation
+    ///   match [`Scene3D::world_surface_area`].
+    /// * Each node's world matrix is reduced to its upper-left 3x3
+    ///   determinant; non-finite determinants (matrix corruption,
+    ///   inf/NaN entries) skip the contribution.
+    /// * Each mesh resource contributes once per reachable node that
+    ///   references it. A two-node instance with mirrored scale
+    ///   `[-1, 1, 1]` and an unmirrored sibling cancel each other in
+    ///   the signed sum — that is the geometric truth.
+    /// * Skin pose, morph targets, and unit-axis conversion are not
+    ///   applied.
+    /// * Returns `0.0` for an empty scene or one with no
+    ///   reachable meshes.
+    /// * Result is finite for any finite input; the accumulator is
+    ///   `f64`.
+    /// * Cost `O(reachable_nodes + Σ triangle_count_per_reachable_mesh)`.
+    pub fn world_signed_volume(&self) -> f64 {
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        if n_nodes == 0 || n_meshes == 0 {
+            return 0.0;
+        }
+        let mut visited = vec![false; n_nodes];
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut total = 0.0_f64;
+        // Push roots in reverse so the LIFO pop visits the leftmost
+        // root first — matching `world_node_transforms`'s
+        // single-resolution policy.
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                    let det = mat3_det_of_world(world);
+                    if det.is_finite() {
+                        let local = mesh.signed_volume();
+                        let scaled = det * local;
+                        if scaled.is_finite() {
+                            total += scaled;
+                        }
+                    }
+                }
+            }
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        total
+    }
+
+    /// Unsigned `|world_signed_volume()|` across the scene.
+    ///
+    /// Same shell-cancellation caveat as
+    /// [`Scene3D::volume`] / [`crate::Mesh::volume`]: this is
+    /// `|Σ signed_world|`, not `Σ |signed_world|`. For a scene where
+    /// instances may carry mirrored scales (producing per-instance
+    /// negative signed volumes), prefer summing each instance's
+    /// `|det(M_3) · signed_volume|` separately.
+    pub fn world_volume(&self) -> f64 {
+        self.world_signed_volume().abs()
     }
 
     /// Walk every cross-collection reference and report dangling
