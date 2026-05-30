@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.2...v0.0.3) - 2026-05-30
+
+### Added
+
+- *(mesh)* add Primitive::weld_vertices coincident-vertex de-duplication
+
+### Other
+
+- Round 192: Scene3D::world_surface_area + world_signed_volume + world_volume — transform-aware reductions
+- Round 189: Scene3D::world_node_transforms — per-node world matrices
+- Round 182: Primitive/Mesh/Scene3D::signed_volume + volume reduction
+- Round 175: Primitive/Mesh/Scene3D::surface_area reduction
+- Round 155: mesh-validity invariants — degenerate-triangle + edge-manifold
+- Round 105: Primitive::compute_tangents — per-vertex MikkTSpace tangent basis from UVs
+- Round 101: Primitive::compute_normals — area-weighted smooth normals
+- Round 97: Primitive de-stripping (triangle_indices + to_triangle_list)
+- Round 10: Primitive::apply_morph_weights — typed morph-blend evaluator
+- Round 9: AnimationSampler::sample + IBM affine-row validation
+- Round 8: extend Scene3D::validate; add BoundingBox + scene/mesh/primitive bounding_box
+- Round 7: mark Primitive + Mesh #[non_exhaustive], add Scene3D::validate
+
 ### Added — Round 192 (transform-aware scene-level area/volume)
 
 - `Scene3D::world_surface_area(&self) -> f64` — depth-first walk over
