@@ -68,6 +68,7 @@ pub mod error;
 pub mod light;
 pub mod material;
 pub mod mesh;
+pub mod ray;
 pub mod registry;
 pub mod scene;
 pub mod skin;
@@ -91,6 +92,7 @@ pub use material::{AlphaMode, Material, TextureRef};
 pub use mesh::{
     EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, Primitive, Topology,
 };
+pub use ray::{Ray, RayHit};
 pub use registry::Mesh3DRegistry;
 pub use scene::{
     Axis, BoundingBox, CameraId, LightId, MaterialId, MeshId, Node, NodeId, Scene3D, SkeletonId,

@@ -1572,6 +1572,93 @@ impl Primitive {
             max_edge_use: max_use,
         }
     }
+
+    /// Closest-hit ray query against this primitive's triangle
+    /// tessellation.
+    ///
+    /// Walks every triangle returned by [`Primitive::triangle_indices`]
+    /// (so `Triangles` / `TriangleStrip` / `TriangleFan` all feed in,
+    /// with the strip alternating-winding rule honoured) and runs the
+    /// Möller-Trumbore ray-triangle intersection (see
+    /// [`crate::ray::intersect_triangle`]). Returns the [`RayHit`]
+    /// with the smallest `t ≥ 0` (closest along the ray), or `None`
+    /// when nothing within `t_max` is struck.
+    ///
+    /// The returned `triangle_index` indexes the
+    /// `Vec<[u32; 3]>` from `triangle_indices()` — callers needing
+    /// the per-vertex indices look them up there. `barycentric` is
+    /// `[w, u, v]` with `w = 1 - u - v` so the hit point reconstructs
+    /// as `w * P0 + u * P1 + v * P2`; `front_face` follows the
+    /// CCW-from-outside convention used everywhere else in the crate.
+    ///
+    /// Out-of-range index entries, NaN-producing math, and degenerate
+    /// (zero-area / ray-parallel-to-plane) faces are silently skipped
+    /// — same robustness contract as
+    /// [`Primitive::compute_normals`] / [`Primitive::surface_area`].
+    /// A degenerate ray (`direction == [0, 0, 0]`) misses everything.
+    /// Non-triangle topologies (lines/points) return `None`.
+    ///
+    /// This is the brute-force O(triangle_count) query — adequate for
+    /// small primitives and as the inner loop of a BVH leaf. Spatial
+    /// acceleration (BVH/kd-tree) is a separate higher-level concern
+    /// the caller layers on top by calling
+    /// [`crate::BoundingBox::intersect_ray`] for early-out and
+    /// recursing into per-primitive `intersect_ray` only on the leaves
+    /// whose AABB the ray actually enters.
+    pub fn intersect_ray(&self, ray: crate::ray::Ray, t_max: f32) -> Option<crate::ray::RayHit> {
+        let n = self.positions.len();
+        let mut closest: Option<crate::ray::RayHit> = None;
+        let mut best_t = t_max;
+        for (tri_idx, [ia, ib, ic]) in self.triangle_indices().into_iter().enumerate() {
+            if (ia as usize) >= n || (ib as usize) >= n || (ic as usize) >= n {
+                continue;
+            }
+            let p0 = self.positions[ia as usize];
+            let p1 = self.positions[ib as usize];
+            let p2 = self.positions[ic as usize];
+            if let Some((t, u, v, front)) = crate::ray::intersect_triangle(ray, p0, p1, p2, best_t)
+            {
+                let w = 1.0 - u - v;
+                closest = Some(crate::ray::RayHit {
+                    t,
+                    triangle_index: tri_idx,
+                    barycentric: [w, u, v],
+                    front_face: front,
+                });
+                best_t = t;
+            }
+        }
+        closest
+    }
+
+    /// Shadow-ray early-exit query: `true` if **any** triangle in this
+    /// primitive is hit at a parameter `t ∈ (epsilon, t_max]`.
+    ///
+    /// A small `epsilon` (`1e-4`) is subtracted from the starting
+    /// parameter to avoid self-shadowing artefacts when the ray origin
+    /// is itself a surface hit. For a ray whose origin is genuinely
+    /// inside or behind the geometry, prefer
+    /// [`Primitive::intersect_ray`] and inspect the returned `t`.
+    ///
+    /// Stops on the first hit found — does **not** return the closest
+    /// hit. Same out-of-range / degenerate-face skipping as
+    /// [`Primitive::intersect_ray`]; non-triangle topologies return
+    /// `false`.
+    pub fn any_ray_intersection(&self, ray: crate::ray::Ray, t_max: f32) -> bool {
+        let n = self.positions.len();
+        for [ia, ib, ic] in self.triangle_indices() {
+            if (ia as usize) >= n || (ib as usize) >= n || (ic as usize) >= n {
+                continue;
+            }
+            let p0 = self.positions[ia as usize];
+            let p1 = self.positions[ib as usize];
+            let p2 = self.positions[ic as usize];
+            if crate::ray::intersect_triangle(ray, p0, p1, p2, t_max).is_some() {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// Summary of the undirected-edge topology of a [`Primitive`], produced
@@ -1753,5 +1840,35 @@ impl Mesh {
     /// primitive's [`Primitive::volume`] separately.
     pub fn volume(&self) -> f64 {
         self.signed_volume().abs()
+    }
+
+    /// Closest-hit ray query across every contained primitive.
+    ///
+    /// Calls [`Primitive::intersect_ray`] on each primitive in turn,
+    /// shrinking the search bound as hits land so each call only
+    /// considers triangles in front of the current best `t`. Returns
+    /// `(primitive_index, RayHit)` of the closest hit, or `None` when
+    /// nothing within `t_max` is struck.
+    ///
+    /// Mesh-local space — parent node transforms, skin pose, and morph
+    /// deltas are **not** applied. Transform the ray into mesh-local
+    /// space by multiplying its origin + direction by the inverse of
+    /// the node's world matrix before calling, or use this as the
+    /// inner loop of a per-instance walk over
+    /// [`crate::Scene3D::world_node_transforms`].
+    pub fn intersect_ray(
+        &self,
+        ray: crate::ray::Ray,
+        t_max: f32,
+    ) -> Option<(usize, crate::ray::RayHit)> {
+        let mut best: Option<(usize, crate::ray::RayHit)> = None;
+        let mut best_t = t_max;
+        for (idx, prim) in self.primitives.iter().enumerate() {
+            if let Some(hit) = prim.intersect_ray(ray, best_t) {
+                best_t = hit.t;
+                best = Some((idx, hit));
+            }
+        }
+        best
     }
 }

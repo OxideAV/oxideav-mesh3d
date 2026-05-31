@@ -479,6 +479,68 @@ Round 192 lands the transform-aware sibling reductions to
   out-of-range / NaN-skipping contract and is finite for any
   finite input.
 
+Round 199 lands ray-mesh / ray-AABB intersection primitives
+(`tests/ray_intersect.rs`, 46 tests):
+
+- `Ray { origin, direction }` value type + `Ray::point_at(t)` —
+  directed half-line with non-unit-required `direction`. Re-exported
+  from the crate root.
+- `RayHit { t, triangle_index, barycentric, front_face }` — closest-
+  hit record. `triangle_index` indexes
+  [`Primitive::triangle_indices`]; `barycentric` is `[w, u, v]` with
+  `w = 1 - u - v` so the hit point reconstructs as
+  `w * P0 + u * P1 + v * P2`; `front_face` is the CCW-from-outside
+  front (right-handed, glTF-aligned), i.e. `D · N < 0` for the
+  triangle's outward normal `N = E1 × E2`.
+- `ray::intersect_triangle(ray, p0, p1, p2, t_max)` — the
+  **Möller-Trumbore** closed form (Möller & Trumbore, "Fast, Minimum
+  Storage Ray-Triangle Intersection", Journal of Graphics Tools 2(1),
+  1997). For edges `E1 = P1 - P0`, `E2 = P2 - P0` and
+  `P = D × E2`, the determinant `det = E1 · P` is the Cramer's-rule
+  denominator; barycentric `(u, v)` and ray parameter `t` fall out
+  as `u = (S · P) / det`, `v = (D · Q) / det`, `t = (E2 · Q) / det`
+  with `S = O - P0`, `Q = S × E1`. Sign of `det` carries the
+  front/back side (since `det = -D · N`). The same cross-product
+  machinery already drives `compute_normals` / `surface_area` /
+  `signed_volume`. Degenerate triangles (`|det| < 1e-8`, ray parallel
+  to plane or zero-area face), NaN/Inf math, behind-origin hits, and
+  out-of-triangle barycentrics all return `None` — matching the
+  silent-skip robustness contract of the existing reductions.
+- `ray::intersect_aabb(ray, min, max, t_max)` — slab method (Kay &
+  Kajiya, "Ray Tracing Complex Scenes", SIGGRAPH 1986). Per-axis
+  entry/exit distances `(min − O) / D`, `(max − O) / D` are
+  intersected across all three axes; an axis-parallel ray
+  (`|D[axis]| < 1e-30`) passes through that axis's test when origin
+  is inside the slab and immediately misses when outside. Returns
+  `(t_enter, t_exit)` clamped to `[0, t_max]`; origin-inside-box
+  reports `t_enter = 0`. NaN/Inf inputs miss.
+- `BoundingBox::intersect_ray(ray, t_max)` — thin wrapper around
+  `intersect_aabb` so a BVH traverser calls one method per box on
+  the existing AABB value type. Cheap O(1) early-out before
+  recursing into per-primitive `intersect_ray`.
+- `Primitive::intersect_ray(&self, ray, t_max) -> Option<RayHit>` —
+  brute-force walk over `triangle_indices()` calling
+  `intersect_triangle`, keeping the smallest `t`. Topology integration
+  goes through the existing de-stripping helper, so `Triangles` /
+  `TriangleStrip` (alternating winding honoured) / `TriangleFan` all
+  feed in; non-triangle topologies (lines/points) return `None`.
+  Out-of-range index entries / degenerate faces / NaN positions are
+  silently skipped (same robustness contract as
+  `compute_normals`/`surface_area`/`signed_volume`). Pure;
+  `O(triangle_count)`. Designed as the BVH-leaf inner loop —
+  spatial acceleration is the caller's concern, layered by checking
+  `BoundingBox::intersect_ray` before recursing.
+- `Primitive::any_ray_intersection(&self, ray, t_max) -> bool` —
+  shadow-ray early-exit; returns on the first hit found without
+  tracking the closest one. Same topology / robustness contract.
+- `Mesh::intersect_ray(&self, ray, t_max) -> Option<(usize, RayHit)>`
+  — closest-hit across every contained primitive, shrinking the
+  `t_max` bound as hits land. Returns the primitive index alongside
+  the hit record. Mesh-local space — node-graph world transforms
+  are not folded in (transform the ray into mesh-local space by
+  inverse-multiplying via `Scene3D::world_node_transforms` before
+  calling, or iterate one mesh instance at a time).
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

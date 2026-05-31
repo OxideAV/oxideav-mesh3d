@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 199 (ray-mesh / ray-AABB intersection primitives)
+
+- `Ray { origin, direction }` value type with `Ray::point_at(t)` helper
+  — directed half-line; `direction` is **not required to be unit
+  length** (the returned `t` is measured along `direction`). Re-exported
+  from the crate root.
+- `RayHit { t, triangle_index, barycentric, front_face }` closest-hit
+  record. `triangle_index` indexes `Primitive::triangle_indices()`;
+  `barycentric` is `[w, u, v]` with `w = 1 − u − v` so the hit point
+  reconstructs as `w * P0 + u * P1 + v * P2`; `front_face` is the
+  CCW-from-outside front (right-handed, glTF-aligned) — `true` when
+  the ray opposes the outward normal `N = E1 × E2` (`D · N < 0`,
+  equivalent to `det > 0` since `det = -D · N`).
+- `ray::intersect_triangle(ray, p0, p1, p2, t_max) -> Option<(t, u, v, front_face)>`
+  — the **Möller-Trumbore** closed form (Möller & Trumbore, "Fast,
+  Minimum Storage Ray-Triangle Intersection", Journal of Graphics
+  Tools 2(1), 1997). Cramer's-rule denominator `det = E1 · (D × E2)`;
+  barycentric `(u, v)` from `(S · P) / det`, `(D · Q) / det` with
+  `S = O − P0`, `P = D × E2`, `Q = S × E1`; `t = (E2 · Q) / det`.
+  The same cross-product machinery already drives `compute_normals` /
+  `surface_area` / `signed_volume`. Degenerate triangles
+  (`|det| < 1e-8`, ray parallel to plane or zero-area), NaN/Inf math,
+  behind-origin hits, and out-of-triangle barycentrics return `None`
+  — matching the silent-skip robustness contract of the existing
+  reductions.
+- `ray::intersect_aabb(ray, min, max, t_max) -> Option<(t_enter, t_exit)>`
+  — slab method (Kay & Kajiya, "Ray Tracing Complex Scenes",
+  SIGGRAPH 1986). Per-axis entry/exit `(min − O) / D`, `(max − O) / D`
+  intersected across all three axes; an axis-parallel ray
+  (`|D[axis]| < 1e-30`) passes through that axis's test when origin
+  is inside the slab and immediately misses when outside. Interval
+  clamped to `[0, t_max]`; origin-inside-box reports `t_enter = 0`.
+  NaN/Inf inputs return `None`.
+- `BoundingBox::intersect_ray(self, ray, t_max) -> Option<(f32, f32)>`
+  — thin wrapper around `ray::intersect_aabb` so a BVH traverser
+  calls one method per box. Cheap O(1) early-out before recursing
+  into per-primitive `intersect_ray`.
+- `Primitive::intersect_ray(&self, ray, t_max) -> Option<RayHit>` —
+  brute-force walk over `triangle_indices()` calling
+  `intersect_triangle`, keeping the closest hit (`t_max` shrunk on
+  each successful hit). Topology integration goes through the
+  existing de-stripping helper, so `Triangles` /
+  `TriangleStrip` (alternating winding honoured) / `TriangleFan` all
+  feed in; non-triangle topologies (`Lines`/`Points`) return `None`.
+  Out-of-range index entries / degenerate faces / NaN positions are
+  silently skipped (same contract as `compute_normals` /
+  `surface_area` / `signed_volume`). Pure; `O(triangle_count)`.
+  Designed as the BVH-leaf inner loop — spatial acceleration is
+  the caller's concern, layered by checking
+  `BoundingBox::intersect_ray` first.
+- `Primitive::any_ray_intersection(&self, ray, t_max) -> bool` —
+  shadow-ray early-exit; returns on the first hit found without
+  tracking the closest one. Same topology / robustness contract.
+- `Mesh::intersect_ray(&self, ray, t_max) -> Option<(usize, RayHit)>`
+  — closest-hit across every contained primitive, shrinking the
+  search bound as hits land. Returns the primitive index alongside
+  the hit record. Mesh-local space — node-graph world transforms
+  are not folded in (transform the ray into mesh-local space by
+  inverse-multiplying via `Scene3D::world_node_transforms` before
+  calling, or iterate one mesh instance at a time).
+- `tests/ray_intersect.rs` (46 tests): `Ray::point_at` at t=0/1/-1;
+  triangle centre hit (back-face from below), front-face hit (from
+  above), parallel-miss, outside-simplex miss, behind-origin miss,
+  `t_max` cull; closest-hit picking among two parallel triangles
+  (both orderings); 12-triangle cube hit through -X face (front
+  face) + diagonal corner hit; indexed U16 + U32 deref; out-of-range
+  index silently skipped; degenerate (collinear) triangle skipped;
+  NaN-position face skipped; zero-length ray misses; `Lines` /
+  `Points` topology returns `None`; `TriangleStrip` + `TriangleFan`
+  match the equivalent list; barycentric `[w, u, v]` sums to ~1.0
+  and reconstructs the hit point; empty primitive returns `None`;
+  `any_ray_intersection` true on hit / false on miss /
+  `t_max`-respecting / lines-false; `Mesh::intersect_ray` routes to
+  the primitive, picks the closest across primitives, returns `None`
+  on empty / all-miss; `BoundingBox::intersect_ray` through-centre
+  axis-aligned + diagonal + origin-inside-box (`t_enter = 0`) +
+  miss-to-the-side + `t_max`-cull + axis-parallel inside-slab pass +
+  axis-parallel outside-slab miss; combined pattern (AABB-cull
+  before primitive walk + AABB-pass-then-primitive-hits ordering);
+  `Ray` / `RayHit` `Clone + Copy + PartialEq`; deterministic
+  repeat-call invariance.
+
 ## [0.0.3](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.2...v0.0.3) - 2026-05-30
 
 ### Added

@@ -201,6 +201,22 @@ impl BoundingBox {
         });
         Self::from_points(xf).expect("eight corners always yield a finite AABB")
     }
+
+    /// Slab-method ray-AABB intersection — returns the entry / exit
+    /// parametric distances along the ray clamped to `[0, t_max]`, or
+    /// `None` if the ray misses.
+    ///
+    /// `t_enter == 0.0` indicates the ray's origin lies inside the
+    /// box; `t_exit` is the parameter at which the ray leaves through
+    /// the far face. Both values are along the (not-necessarily-unit)
+    /// `ray.direction`, so the actual world-space point at the
+    /// intersection is `ray.point_at(t)`.
+    ///
+    /// Delegates to [`crate::ray::intersect_aabb`]; see its docs for
+    /// the axis-parallel-ray + NaN / Inf handling.
+    pub fn intersect_ray(self, ray: crate::ray::Ray, t_max: f32) -> Option<(f32, f32)> {
+        crate::ray::intersect_aabb(ray, self.min, self.max, t_max)
+    }
 }
 
 /// Coordinate-system principal axis. Stored on [`Scene3D`] so a
