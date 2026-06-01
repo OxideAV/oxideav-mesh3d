@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.3...v0.0.4) - 2026-06-01
+
+### Other
+
+- Round 204: Bvh ray acceleration structure — median-split + iterative-stack traversal
+
 ### Added — Round 204 (BVH ray acceleration structure)
 
 - `Bvh { nodes, triangle_indices }` + `BvhNode { bounds,
