@@ -541,6 +541,56 @@ Round 199 lands ray-mesh / ray-AABB intersection primitives
   inverse-multiplying via `Scene3D::world_node_transforms` before
   calling, or iterate one mesh instance at a time).
 
+Round 204 lands a bounding-volume hierarchy on top of the round-199
+ray primitives (`tests/bvh.rs`, 12 tests + 16 in-tree unit tests):
+
+- `bvh::Bvh { nodes, triangles }` — flat-array binary AABB tree
+  built top-down from a `Primitive`'s triangle tessellation. The
+  classical object-median AABB-tree construction (Goldsmith &
+  Salmon, "Automatic Creation of Object Hierarchies for Ray
+  Tracing", IEEE CG&A 7(5), 1987): at every node, pick the
+  largest-extent axis of the centroid bound and partition the
+  triangles against the midpoint coordinate on that axis. Leaves
+  stop at `Bvh::LEAF_THRESHOLD = 4` triangles. Re-exported from
+  the crate root.
+- `bvh::BvhNode { bounds, left_or_first, right_child, tri_count }`
+  — one struct covers both flavours: a leaf has `tri_count > 0` and
+  holds a contiguous range `[left_or_first, left_or_first + tri_count)`
+  into the permuted `Bvh::triangles` array; an interior node has
+  `tri_count == 0` and `left_or_first` / `right_child` index into
+  `Bvh::nodes`. `BvhNode::is_leaf()` is the boolean accessor.
+- `Bvh::build(&Primitive) -> Option<Self>` — builds in
+  `O(triangle_count · log triangle_count)`. Pure: the source
+  primitive is not mutated. Returns `None` when the primitive has
+  no usable triangles (non-triangle topology, all-NaN vertices, or
+  every triangle is out-of-range — same robustness contract as
+  `compute_normals` / `surface_area` / `intersect_ray`).
+- `Primitive::build_bvh(&self) -> Option<Bvh>` — convenience
+  wrapper for the common case.
+- `Bvh::intersect_ray(&self, &Primitive, ray, t_max) -> Option<RayHit>`
+  — closest-hit walk with an **explicit LIFO stack** (release-mode
+  TCO is not guaranteed; deeply-built trees would risk the host
+  stack). Children are pushed in **near-child-first order** so the
+  closest-hit query can shrink `best_t` before descending into the
+  farther subtree — Kay & Kajiya's 1986 slab test on the root + on
+  every interior child gives the entry parameters that drive the
+  ordering. Cross-validates with `Primitive::intersect_ray` on `t`
+  + barycentrics + `front_face` across a 16×16 ray grid; the
+  `triangle_index` can tie-break differently on shared edges
+  because visit order differs, but the hit point is identical.
+- `Bvh::any_ray_intersection(&self, &Primitive, ray, t_max) -> bool`
+  — shadow-ray early-exit; same answer as
+  `Primitive::any_ray_intersection`.
+- `Bvh::{node_count, leaf_count, triangle_count, bounds}` —
+  inspection accessors so a renderer can report tree shape /
+  capacity in profiling output.
+- Robustness: out-of-range index entries and triangles with NaN
+  coordinates are silently skipped during build; the BVH's
+  internal slab test handles NaN/Inf rays identically to the
+  underlying `ray::intersect_aabb`. Coincident-centroid
+  primitives (all triangles overlaid) fall back to a midpoint
+  partition that still terminates at the leaf threshold.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

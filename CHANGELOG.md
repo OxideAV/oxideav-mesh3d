@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 204 (Bvh ray-acceleration structure on top of round 199)
+
+- `bvh` module + `Bvh { nodes, triangles }` + `BvhNode { bounds,
+  left_or_first, right_child, tri_count }` value types. Flat-array
+  binary AABB tree built top-down by **object-median split on the
+  largest-extent axis of the centroid bound** (Goldsmith & Salmon,
+  "Automatic Creation of Object Hierarchies for Ray Tracing", IEEE
+  CG&A 7(5), 1987). Leaves stop at `Bvh::LEAF_THRESHOLD = 4`
+  triangles (Wald, Boulos & Shirley, "Ray Tracing Deformable Scenes
+  Using Dynamic Bounding Volume Hierarchies", ACM TOG 26(1), 2007).
+  Re-exported from the crate root.
+- `Bvh::build(&Primitive) -> Option<Self>` — pure, non-mutating
+  build. Returns `None` for non-triangle topologies / all-NaN /
+  all-out-of-range primitives (same robustness contract as
+  `Primitive::compute_normals` / `surface_area` /
+  `intersect_ray`).
+- `Primitive::build_bvh(&self) -> Option<Bvh>` — convenience
+  wrapper.
+- `Bvh::intersect_ray(&self, &Primitive, ray, t_max) -> Option<RayHit>`
+  — closest-hit walk with an **explicit LIFO stack** + near-child-
+  first traversal. The slab test (Kay & Kajiya 1986) on every
+  interior child gives the entry parameter that drives the
+  ordering, so the closest-hit query can shrink `best_t` before
+  descending into the farther subtree. Cross-validates with
+  `Primitive::intersect_ray` on `t` + barycentrics + `front_face`
+  across a 16×16 ray grid in `tests/bvh.rs`.
+- `Bvh::any_ray_intersection(&self, &Primitive, ray, t_max) -> bool`
+  — shadow-ray early-exit; matches `Primitive::any_ray_intersection`
+  on the boolean answer.
+- `BvhNode::is_leaf()` + `Bvh::{node_count, leaf_count,
+  triangle_count, bounds}` inspection accessors.
+- `tests/bvh.rs` (12 integration tests) — `Primitive::build_bvh`
+  Some/None branches; per-ray cross-validation against
+  `Primitive::intersect_ray` and `any_ray_intersection` on an 8×8
+  grid (128 triangles, 256 rays); `t_max` culling; miss-outside-
+  extent; root bounds == primitive bounds; triangle-strip
+  topology; binary-tree node-count invariant
+  (`total == 2*leaves - 1`); deterministic repeat queries;
+  `LEAF_THRESHOLD`-respecting leaf compression.
+- 16 in-tree unit tests — build of single triangle / empty / lines
+  topology / all-NaN / out-of-range index; intersect cross-checks
+  with brute-force on two parallel triangles + cube + 7×7 fuzz
+  grid; `any_ray_intersection` true/false/`t_max`; coincident-
+  centroid degenerate-split termination; tight root bounds.
+
 ### Added — Round 199 (ray-mesh / ray-AABB intersection primitives)
 
 - `Ray { origin, direction }` value type with `Ray::point_at(t)` helper

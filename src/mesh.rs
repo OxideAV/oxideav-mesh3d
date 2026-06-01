@@ -1631,6 +1631,26 @@ impl Primitive {
         closest
     }
 
+    /// Build a [`crate::Bvh`] over this primitive's triangle
+    /// tessellation.
+    ///
+    /// Convenience wrapper around [`crate::Bvh::build`]. Returns
+    /// `None` when the primitive has no usable triangles
+    /// (non-triangle topology, all-NaN positions, or all out-of-range
+    /// index entries — see [`crate::Bvh::build`] for the robustness
+    /// contract).
+    ///
+    /// Many-ray workloads against the same primitive should build the
+    /// BVH once and call [`crate::Bvh::intersect_ray`] for every ray,
+    /// turning the per-query cost from `O(triangle_count)` (the
+    /// brute-force [`Primitive::intersect_ray`] path) to roughly
+    /// `O(log triangle_count)`. The returned `Bvh` carries a copy of
+    /// the permuted triangle indices; the source primitive is not
+    /// mutated.
+    pub fn build_bvh(&self) -> Option<crate::Bvh> {
+        crate::Bvh::build(self)
+    }
+
     /// Shadow-ray early-exit query: `true` if **any** triangle in this
     /// primitive is hit at a parameter `t ∈ (epsilon, t_max]`.
     ///
