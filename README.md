@@ -541,6 +541,68 @@ Round 199 lands ray-mesh / ray-AABB intersection primitives
   inverse-multiplying via `Scene3D::world_node_transforms` before
   calling, or iterate one mesh instance at a time).
 
+Round 204 lands a Bounding-Volume Hierarchy ray acceleration
+structure (`tests/bvh.rs`, 47 tests):
+
+- `Bvh { nodes, triangle_indices }` + `BvhNode { bounds,
+  first_triangle, triangle_count, left_child, right_child }` — a
+  flattened binary tree of axis-aligned bounding boxes built once
+  over a [`Primitive`]'s triangle tessellation, queried many times
+  for ray intersections. Decoupled from the source primitive (the
+  BVH stores only AABBs + a triangle-index permutation; the
+  primitive's positions + indices remain the source of truth) so
+  it can be cached / serialised independently. `Clone + Debug`. Re-
+  exported from the crate root.
+- `Bvh::build(&primitive)` + `Bvh::build_with_leaf_threshold(
+  &primitive, leaf_threshold)` — construction. **Median-split on the
+  longest axis of each node's centroid bound** (MacDonald & Booth,
+  "Heuristics for ray tracing using space subdivision," *Visual
+  Computer* 6 (1990); Goldsmith & Salmon, "Automatic creation of
+  object hierarchies for ray tracing," *IEEE CG&A* 7(5) (1987) —
+  the standard non-SAH baseline). Each internal node sorts its
+  triangle slice by centroid coordinate on the chosen axis (the
+  AABB's longest dimension), splits at the median, and recurses;
+  recursion bottoms out at `leaf_threshold` triangles
+  (`DEFAULT_LEAF_THRESHOLD = 4`, per Wald 2007 §4.1) or when the
+  centroid bound has zero extent (no meaningful split axis ⇒
+  single multi-triangle leaf). Cost `O(T log T)` build time,
+  `O(T)` storage. Degenerate triangles (collinear / coincident
+  corners, NaN positions, out-of-range index entries) are silently
+  skipped at build time — they never enter the tree — matching the
+  silent-skip contract on
+  [`Primitive::intersect_ray`]/`compute_normals`/`surface_area`/
+  `signed_volume`. Threshold `0` is silently raised to `1`.
+- `Bvh::intersect_ray(&self, &primitive, ray, t_max) -> Option<RayHit>`
+  — closest-hit traversal using an iterative explicit stack
+  (Wald, Boulos & Shirley, "Ray Tracing Deformable Scenes Using
+  Dynamic Bounding Volume Hierarchies," *ACM TOG* 26(1) (2007),
+  §3). For each visited node: run
+  [`ray::intersect_aabb`], skip if missed or `t_enter > best_t`;
+  if leaf, run [`ray::intersect_triangle`] against each indexed
+  triangle and shrink `best_t` on hits; otherwise push both
+  children with the **closer child last** so the stack pops it
+  first (lets the near subtree shrink `best_t` before the far
+  subtree is even visited). Result agrees bit-for-bit with
+  brute-force [`Primitive::intersect_ray`] on the same input —
+  same closest `t`, `triangle_index`, `barycentric`, and
+  `front_face`; pinned across single-triangle / cube-soup /
+  cube-six-faces / triangle-row(32) / two-plane closest-pick /
+  strip / fan / U16-indexed / Mesh-walk cases. The BVH only changes
+  how we get there (`O(log T)` traversal vs `O(T)` sweep).
+- `Bvh::any_intersection(&self, &primitive, ray, t_max) -> bool`
+  — shadow-ray early-exit; same traversal pattern but returns on
+  the first hit found without tracking the closest.
+- `Bvh::bounds() -> Option<BoundingBox>`, `Bvh::is_empty()`,
+  `Bvh::node_count()`, `Bvh::triangle_count()` — accessors. Root
+  bounds match [`Primitive::bounding_box`] over the same data.
+- **Not yet:** SAH (Surface Area Heuristic) binned construction
+  (Wald 2007), spatial split / SBVH (Stich, Friedrich & Dietrich
+  2009), stackless / wide-BVH traversal (Aila & Karras 2009), and
+  a top-level BVH (TLAS) over [`Scene3D`] with per-instance
+  transforms. The median-split baseline is already orders of
+  magnitude faster than the brute-force walk for any non-tiny
+  mesh; the named optimisations are quality follow-ups.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

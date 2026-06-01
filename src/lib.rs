@@ -61,6 +61,7 @@
 pub mod animation;
 pub mod asset;
 pub mod audio;
+pub mod bvh;
 pub mod camera;
 pub mod decoder;
 pub mod encoder;
@@ -83,6 +84,7 @@ pub use audio::{
     AudioData, AudioEmitter, AudioEmitterId, AudioSource, AudioSourceId, AuralMode, DistanceModel,
     SpatialAudio,
 };
+pub use bvh::{Bvh, BvhNode, DEFAULT_LEAF_THRESHOLD};
 pub use camera::Camera;
 pub use decoder::Mesh3DDecoder;
 pub use encoder::Mesh3DEncoder;

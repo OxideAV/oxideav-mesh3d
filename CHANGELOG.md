@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 204 (BVH ray acceleration structure)
+
+- `Bvh { nodes, triangle_indices }` + `BvhNode { bounds,
+  first_triangle, triangle_count, left_child, right_child }` —
+  flattened binary tree of axis-aligned bounding boxes built once
+  over a `Primitive`'s triangle tessellation, queried many times
+  for ray intersections in `O(log T)` instead of the brute-force
+  `O(T)` sweep. `BvhNode::is_leaf()` distinguishes leaves
+  (`triangle_count > 0`) from internal nodes (`left_child` /
+  `right_child` populated, `triangle_count == 0`). Decoupled from
+  the source primitive — the BVH stores AABBs + a triangle-index
+  permutation; the primitive's positions + indices remain the
+  source of truth. `Clone + Debug`; `BvhNode` also `Copy +
+  PartialEq`. Re-exported from the crate root.
+- `Bvh::build(&primitive) -> Bvh` + `Bvh::build_with_leaf_threshold(
+  &primitive, leaf_threshold) -> Bvh` — median-split-on-longest-axis
+  construction (MacDonald & Booth, "Heuristics for ray tracing
+  using space subdivision," *Visual Computer* 6 (1990) §3.2;
+  Goldsmith & Salmon, "Automatic creation of object hierarchies
+  for ray tracing," *IEEE CG&A* 7(5) (1987) — both
+  open-published baseline algorithms). Each internal node sorts
+  its triangle slice by centroid coordinate on the chosen axis
+  (the AABB's longest dimension), splits at the median, and
+  recurses; recursion bottoms out at `leaf_threshold` triangles or
+  when the centroid bound has zero extent (degenerate cluster of
+  coincident-centroid triangles collapses to a single
+  multi-triangle leaf). `DEFAULT_LEAF_THRESHOLD = 4` (Wald 2007
+  §4.1). Cost `O(T log T)` build, `O(T)` storage. Degenerate
+  triangles (collinear / coincident corners, NaN positions,
+  out-of-range index entries) are silently skipped at build time
+  so they never enter the tree — matching the silent-skip contract
+  on `Primitive::intersect_ray` / `compute_normals` /
+  `surface_area` / `signed_volume`. `leaf_threshold == 0` is
+  silently raised to `1`.
+- `Bvh::intersect_ray(&self, &primitive, ray, t_max) -> Option<RayHit>`
+  — closest-hit traversal with an iterative explicit stack (Wald,
+  Boulos & Shirley, "Ray Tracing Deformable Scenes Using Dynamic
+  Bounding Volume Hierarchies," *ACM TOG* 26(1) (2007) §3 — the
+  published-algorithm reference). For each popped node: run
+  `ray::intersect_aabb`, skip if missed or `t_enter > best_t`; if
+  leaf, run `ray::intersect_triangle` against each indexed triangle
+  and shrink `best_t` on hits; otherwise push both children with
+  the **closer child last** (so the near subtree pops first and
+  shrinks `best_t` before the far subtree is visited). Result
+  agrees bit-for-bit with `Primitive::intersect_ray` on the same
+  input.
+- `Bvh::any_intersection(&self, &primitive, ray, t_max) -> bool` —
+  shadow-ray early-exit; same traversal but returns on the first
+  hit found without tracking the closest.
+- `Bvh::bounds() -> Option<BoundingBox>` + `Bvh::is_empty()` +
+  `Bvh::node_count()` + `Bvh::triangle_count()` — accessors. Root
+  bounds match `Primitive::bounding_box` over the same data.
+- `tests/bvh.rs` (47 tests): empty / lines / points topologies
+  yield empty BVH; single triangle is a one-leaf tree; cube root
+  bounds = unit cube; cube triangle count = 12; default-threshold
+  cube produces internal nodes; large threshold collapses to single
+  leaf; threshold `0` raised to `1`; collinear / coincident-corner
+  / NaN-position / out-of-range-index triangles dropped at build;
+  deterministic build (pointwise node equality across runs); row of
+  16 triangles balances to exactly 4 leaves at threshold 4;
+  `DEFAULT_LEAF_THRESHOLD == 4`; leaves carry no children pointers,
+  internals carry no triangles; bit-exact `RayHit` equivalence with
+  `Primitive::intersect_ray` on single triangle, cube-through-origin,
+  cube-diagonal-offset, six-face cube sweep, triangle row of 32, two
+  parallel planes (both buffer orderings), `TriangleStrip` /
+  `TriangleFan` topology, U16-indexed primitive; `t_max` cull
+  respected (closest hit hidden / exposed across threshold);
+  deterministic query (3-call equality); `any_intersection` hit /
+  miss / `t_max` / empty / lines; structural invariants — leaf
+  slice in range, internal-node bounds contain children's bounds,
+  triangle-index permutation is a complete cover of valid source
+  triangles, root bounds = `Primitive::bounding_box`; degenerate
+  coincident-centroid cluster collapses to a leaf; threshold 2 over
+  9 triangles produces ≥ 3 nodes; `Bvh` / `BvhNode` `Clone + Debug
+  + Copy + PartialEq` exercises; per-primitive BVH walk picks the
+  same closest hit as `Mesh::intersect_ray` over a two-primitive
+  mesh.
+- **Not yet:** SAH (Surface Area Heuristic) binned construction
+  (Wald 2007), spatial split / SBVH (Stich, Friedrich & Dietrich
+  2009), stackless / wide-BVH traversal (Aila & Karras 2009;
+  Áfra & Szirmay-Kalos 2014), and a top-level BVH (TLAS) over
+  `Scene3D` with per-instance transforms. Median-split is already
+  orders of magnitude faster than the brute-force walk for any
+  non-tiny mesh; these are quality-optimisation follow-ups.
+
 ### Added — Round 199 (ray-mesh / ray-AABB intersection primitives)
 
 - `Ray { origin, direction }` value type with `Ray::point_at(t)` helper
