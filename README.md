@@ -591,6 +591,63 @@ ray primitives (`tests/bvh.rs`, 12 tests + 16 in-tree unit tests):
   primitives (all triangles overlaid) fall back to a midpoint
   partition that still terminates at the leaf threshold.
 
+Round 210 promotes the round-199 / round-204 ray surface to
+**world space** by walking the scene graph and reusing each
+node's world matrix (`tests/scene_ray.rs`, 27 tests):
+
+- `Scene3D::intersect_ray(&self, Ray, t_max) -> Option<SceneRayHit>`
+  — closest-hit world-space ray query across every reachable
+  node-mesh instance. The walk reuses the iterative DFS shape of
+  `Scene3D::world_node_transforms` / `Scene3D::world_surface_area`
+  (LIFO with leftmost-first ordering). At each reachable node
+  carrying a mesh, the world ray is transformed into the mesh's
+  local frame via the inverse of the node's world matrix,
+  `Mesh::intersect_ray` runs there, and the ray-parameter `t` is
+  returned verbatim — affine change-of-frame leaves the scalar
+  `t` invariant (`P_world = M · P_local` ⇒ `O_world + t · D_world =
+  M · (O_local + t · D_local)`). The returned `t` therefore
+  reconstructs the world hit point via `ray.point_at(t)`
+  directly, without re-transforming through the node's matrix.
+  Per-instance hits shrink `t_max` deterministically — a later
+  instance whose hit ties exactly with the current best (`hit.t
+  == best_t`) does **not** override the earlier-visited winner,
+  so the answer is independent of insertion order on coincident
+  hits.
+- `Scene3D::any_ray_intersection(&self, Ray, t_max) -> bool` —
+  shadow-ray short-circuit over the same reachable
+  node-mesh instances; returns `true` as soon as any instance
+  reports a hit. Reachability, cycle-guarding,
+  singular-transform skipping, and degenerate-ray handling match
+  `Scene3D::intersect_ray`.
+- `scene::SceneRayHit { node: NodeId, primitive_index: usize,
+  hit: ray::RayHit }` — value type pairing the world-space ray
+  hit with the scene-graph location that produced it. Re-exported
+  from the crate root. The inner `hit.triangle_index` names the
+  triangle inside the named primitive's
+  `Primitive::triangle_indices` enumeration; the inner
+  `hit.barycentric` reconstructs world hit positions via
+  `mesh-local triangle corners · barycentric` then
+  `Scene3D::world_node_transforms[node.0 as usize]`.
+- Singular / non-finite / non-affine instance transforms are
+  silently skipped — a degenerate scale collapsing one axis to
+  zero projects the mesh onto a sub-plane whose ray intersection
+  is undefined without a regularised limit; the surrounding
+  scene still produces hits where it can. The 3x3-adjugate /
+  determinant inverse is computed in `f64` so very-different-
+  scale transform chains (e.g. `1e-3` child of `1e3` parent)
+  survive without precision collapse before casting back to
+  `f32`.
+- Cost: `O(reachable_nodes + Σ instance_triangle_tests)`. The
+  current walk does brute-force per-instance triangle work;
+  pairing each instance with its `Primitive::build_bvh` cache and
+  threading through `Bvh::intersect_ray` brings the per-instance
+  cost down to `O(log triangle_count)`. Scene-level BVH-of-
+  instances + per-instance BVH-cache integration are candidates
+  for a later round.
+- Cycle guard: a node listed as its own descendant is visited
+  once via the `visited` bitmap; the DFS terminates in finite
+  time on any node count.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

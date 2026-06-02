@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 210 (Scene3D world-space ray queries on top of rounds 199 + 204)
+
+- `Scene3D::intersect_ray(&self, Ray, t_max) -> Option<SceneRayHit>` —
+  closest-hit world-space ray query across every reachable
+  node-mesh instance. The walk reuses the DFS shape of
+  `Scene3D::world_node_transforms` /
+  `Scene3D::world_surface_area` (iterative LIFO with
+  leftmost-first ordering); at each reachable node carrying a
+  mesh the world ray is transformed into mesh-local space via the
+  inverse of the node's world matrix, `Mesh::intersect_ray` runs
+  in that frame, and the ray-parameter `t` is reported back
+  verbatim — affine change-of-frame leaves the scalar `t`
+  invariant (`P_world = M · P_local` ⇒ `O_world + t · D_world =
+  M · (O_local + t · D_local)`). Per-instance hits shrink the
+  `t_max` bound deterministically (earlier-visited instances
+  win ties), so a scene with many instances behind the closest
+  hit pays only the per-instance test cost.
+- `Scene3D::any_ray_intersection(&self, Ray, t_max) -> bool` —
+  any-hit (shadow-ray) world-space query with first-blocker
+  short-circuit. Reachability, cycle-guarding, singular-transform
+  skipping, and degenerate-ray handling match
+  `Scene3D::intersect_ray`.
+- `SceneRayHit { node: NodeId, primitive_index: usize, hit:
+  RayHit }` value type re-exported from the crate root —
+  pairs a world-space ray hit with the scene-graph location
+  that produced it.
+- Internal `mat4_affine_inverse` helper — inverts a row-major
+  column-vector affine 4x4 (TRS-derived matrices) via the
+  3x3-adjugate-and-determinant identity. Computed in `f64` to
+  survive very-different-scale child-of-parent transforms
+  (e.g. `1e-3` child of `1e3` parent) before casting back to
+  `f32`. Returns `None` for non-affine bottom row, non-finite
+  entries, or singular linear parts; such instances are
+  silently skipped in the ray walk so the surrounding scene
+  still produces correct hits.
+- `tests/scene_ray.rs` — 27 integration tests covering: empty
+  scene; detached / unrooted nodes; identity / translated /
+  uniform-scaled / non-uniform-scaled / rotated instances;
+  closest-hit selection among multiple instances; deterministic
+  tie-breaking on coincident-instance hits; insertion-order
+  independence; `t_max` boundary; rays missing in `xy` /
+  pointing-away cases; any-hit short-circuit; singular
+  (zero-scale axis) instances skipped; nested parent-child
+  transform composition; multi-primitive-mesh primitive index
+  reporting; world hit-point round-trip through
+  `Ray::point_at(scene_hit.hit.t)`; deep instance stack
+  (eight instances spaced along +Z); zero-direction + NaN-ray
+  no-panic.
+
 ### Added — Round 204 (Bvh ray-acceleration structure on top of round 199)
 
 - `bvh` module + `Bvh { nodes, triangles }` + `BvhNode { bounds,

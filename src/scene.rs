@@ -375,6 +375,118 @@ fn mat3_det_of_world(m: [[f32; 4]; 4]) -> f64 {
     a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 }
 
+/// Inverse of an affine row-major column-vector 4x4 whose bottom row
+/// is `[0, 0, 0, 1]`. Returns `None` when the upper-left 3x3 is
+/// singular (zero or non-finite determinant), when any input entry
+/// is non-finite, or when the bottom row deviates from
+/// `[0, 0, 0, 1]` (the matrix is non-affine and not handled here —
+/// `world_node_transforms` only produces affines from TRS, so a
+/// non-affine input is a malformed user transform).
+///
+/// The inverse uses the classical adjugate / determinant of the
+/// 3x3 linear part, then applies the inverse linear to the negated
+/// translation column. Computed in `f64` so very-different-scale
+/// matrices (e.g. `1e-3` cm-scale child of a `1e3` km-scale parent)
+/// round-trip without precision collapse, then cast back to `f32`.
+fn mat4_affine_inverse(m: [[f32; 4]; 4]) -> Option<[[f32; 4]; 4]> {
+    for row in &m {
+        for v in row {
+            if !v.is_finite() {
+                return None;
+            }
+        }
+    }
+    // Affinity guard: bottom row must be [0, 0, 0, 1] within a tight
+    // tolerance (TRS-derived matrices satisfy this exactly).
+    let bot_eps = 1e-6_f32;
+    if m[3][0].abs() > bot_eps
+        || m[3][1].abs() > bot_eps
+        || m[3][2].abs() > bot_eps
+        || (m[3][3] - 1.0).abs() > bot_eps
+    {
+        return None;
+    }
+    let a = m[0][0] as f64;
+    let b = m[0][1] as f64;
+    let c = m[0][2] as f64;
+    let d = m[1][0] as f64;
+    let e = m[1][1] as f64;
+    let f = m[1][2] as f64;
+    let g = m[2][0] as f64;
+    let h = m[2][1] as f64;
+    let i = m[2][2] as f64;
+    // Cofactors of the 3x3 linear part.
+    let c00 = e * i - f * h;
+    let c01 = -(d * i - f * g);
+    let c02 = d * h - e * g;
+    let c10 = -(b * i - c * h);
+    let c11 = a * i - c * g;
+    let c12 = -(a * h - b * g);
+    let c20 = b * f - c * e;
+    let c21 = -(a * f - c * d);
+    let c22 = a * e - b * d;
+    let det = a * c00 + b * c01 + c * c02;
+    if !det.is_finite() || det == 0.0 {
+        return None;
+    }
+    let inv = 1.0 / det;
+    // Adjugate-transpose: inv_linear[row][col] = cofactor[col][row] / det.
+    let l00 = c00 * inv;
+    let l01 = c10 * inv;
+    let l02 = c20 * inv;
+    let l10 = c01 * inv;
+    let l11 = c11 * inv;
+    let l12 = c21 * inv;
+    let l20 = c02 * inv;
+    let l21 = c12 * inv;
+    let l22 = c22 * inv;
+    // Translation: t_inv = -L^-1 * t.
+    let tx = m[0][3] as f64;
+    let ty = m[1][3] as f64;
+    let tz = m[2][3] as f64;
+    let ix = -(l00 * tx + l01 * ty + l02 * tz);
+    let iy = -(l10 * tx + l11 * ty + l12 * tz);
+    let iz = -(l20 * tx + l21 * ty + l22 * tz);
+    // Finite-check on the assembled inverse — a near-singular det can
+    // produce inf / NaN entries; reject so callers fall through to the
+    // "skip this instance" branch.
+    let out = [
+        [l00 as f32, l01 as f32, l02 as f32, ix as f32],
+        [l10 as f32, l11 as f32, l12 as f32, iy as f32],
+        [l20 as f32, l21 as f32, l22 as f32, iz as f32],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    for row in &out {
+        for v in row {
+            if !v.is_finite() {
+                return None;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Transform an [`crate::ray::Ray`] into mesh-local space by an affine
+/// 4x4 inverse. The translation column moves the origin; the 3x3
+/// linear part rotates / scales the direction (but is not normalised —
+/// the same ray parameter `t` resolves to the same world-space point
+/// before and after the change of frame).
+fn ray_into_local(world_inv: [[f32; 4]; 4], ray: crate::ray::Ray) -> crate::ray::Ray {
+    let o = ray.origin;
+    let d = ray.direction;
+    let lo = [
+        world_inv[0][0] * o[0] + world_inv[0][1] * o[1] + world_inv[0][2] * o[2] + world_inv[0][3],
+        world_inv[1][0] * o[0] + world_inv[1][1] * o[1] + world_inv[1][2] * o[2] + world_inv[1][3],
+        world_inv[2][0] * o[0] + world_inv[2][1] * o[1] + world_inv[2][2] * o[2] + world_inv[2][3],
+    ];
+    let ld = [
+        world_inv[0][0] * d[0] + world_inv[0][1] * d[1] + world_inv[0][2] * d[2],
+        world_inv[1][0] * d[0] + world_inv[1][1] * d[1] + world_inv[1][2] * d[2],
+        world_inv[2][0] * d[0] + world_inv[2][1] * d[1] + world_inv[2][2] * d[2],
+    ];
+    crate::ray::Ray::new(lo, ld)
+}
+
 fn trs_to_matrix(t: [f32; 3], r: [f32; 4], s: [f32; 3]) -> [[f32; 4]; 4] {
     // Quaternion (x, y, z, w) → 3x3 rotation matrix (Shoemake).
     let (x, y, z, w) = (r[0], r[1], r[2], r[3]);
@@ -509,6 +621,35 @@ impl Default for Node {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Closest-hit record produced by [`Scene3D::intersect_ray`].
+///
+/// Pairs a world-space ray query with the scene-graph location of
+/// the hit:
+///
+/// * `node` — the [`NodeId`] of the reachable node whose attached
+///   mesh produced the hit. Look up `nodes[node]` for the node's
+///   transform / parenting; pass the same index into
+///   [`Scene3D::world_node_transforms`]`[node.0 as usize]` for the
+///   world matrix that maps mesh-local coordinates back to world
+///   space.
+/// * `primitive_index` — the index into `nodes[node].mesh`'s
+///   `Mesh::primitives` array identifying which primitive within the
+///   mesh was struck. The inner `hit.triangle_index` then names the
+///   triangle inside *that* primitive's
+///   [`crate::Primitive::triangle_indices`] enumeration.
+/// * `hit` — the underlying [`crate::ray::RayHit`] in mesh-local
+///   coordinates (barycentric, triangle index, front-face flag) but
+///   with `t` already in world-space units: affine change-of-frame
+///   leaves the ray-parameter scalar invariant, so the same `t`
+///   reconstructs the world hit point via
+///   `world_ray.point_at(scene_hit.hit.t)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneRayHit {
+    pub node: NodeId,
+    pub primitive_index: usize,
+    pub hit: crate::ray::RayHit,
 }
 
 /// Top-level container for a 3D scene.
@@ -1109,6 +1250,220 @@ impl Scene3D {
     /// `|det(M_3) · signed_volume|` separately.
     pub fn world_volume(&self) -> f64 {
         self.world_signed_volume().abs()
+    }
+
+    /// Closest-hit ray query across every reachable node-mesh
+    /// instance in world space.
+    ///
+    /// Walks the [`Scene3D::roots`] forest with the same DFS shape as
+    /// [`Scene3D::world_node_transforms`] / [`Scene3D::world_surface_area`].
+    /// At each reachable node carrying a mesh, the world ray is
+    /// transformed into the mesh's local frame via the inverse of the
+    /// node's world matrix, [`crate::Mesh::intersect_ray`] runs in that
+    /// frame, and the returned ray-parameter `t` is reported back
+    /// verbatim — affine change-of-frame leaves the `t` value
+    /// invariant (`P_world = M · P_local = M · (O_local + t · D_local) =
+    /// O_world + t · D_world`).
+    ///
+    /// Each hit shrinks the search bound (`t_max`) before the next
+    /// node is tested, so a scene with many instances pays the
+    /// per-instance test only until the closest hit is fixed; later
+    /// instances behind that hit do triangle-level work only if their
+    /// transformed bound still satisfies the surviving `t_max`. That
+    /// pruning matches the per-primitive shrinking inside
+    /// [`crate::Mesh::intersect_ray`] and the
+    /// per-leaf shrinking inside [`crate::Bvh::intersect_ray`].
+    ///
+    /// Returns `None` when the scene has no reachable mesh node, or
+    /// when no triangle on any reachable mesh is struck within
+    /// `t_max`.
+    ///
+    /// # Returned hit
+    ///
+    /// The [`SceneRayHit`] carries the `NodeId` that produced the hit,
+    /// the primitive index within that node's mesh, and the
+    /// mesh-local [`crate::ray::RayHit`] (barycentric, triangle index,
+    /// front-face flag, and the world-space `t`). The triangle index
+    /// indexes [`crate::Primitive::triangle_indices`] of the named
+    /// primitive — callers needing world-space corner positions
+    /// look up the local positions, then push them through
+    /// [`Scene3D::world_node_transforms`]`[node]`.
+    ///
+    /// # Cycle / reachability contract
+    ///
+    /// Each reachable node is visited at most once; a node listed as
+    /// its own descendant resolves only via the first DFS arrival
+    /// (same convention as [`Scene3D::world_node_transforms`]).
+    /// Detached mesh resources (not referenced from any root-reachable
+    /// node) are not queried; the caller drives those directly through
+    /// [`crate::Mesh::intersect_ray`] if needed.
+    ///
+    /// # Singular instance transforms
+    ///
+    /// If a node's world matrix is non-affine, contains non-finite
+    /// entries, or has a singular linear part (zero determinant —
+    /// e.g. a degenerate scale collapsing one axis to zero), that
+    /// instance is silently skipped. The surrounding scene still
+    /// produces hits where it can. The skip is the geometrically
+    /// honest answer — a degenerate transform projects the mesh onto
+    /// a sub-plane / sub-line whose ray intersection is undefined
+    /// without a regularised limit.
+    ///
+    /// # Cost
+    ///
+    /// `O(reachable_nodes + Σ instance_triangle_tests)`. For ray
+    /// budgets dominated by triangle-level work, pair this with a
+    /// per-primitive [`crate::Bvh`] cached on each instance for the
+    /// `O(log triangle_count)` per ray narrowing — see the
+    /// `Bvh::build` builder. Scene-level BVH-of-instances is a
+    /// candidate for a later round; the current walk is the
+    /// reference brute-force baseline.
+    ///
+    /// # Degenerate ray
+    ///
+    /// A zero-direction or non-finite ray reaches
+    /// [`crate::ray::intersect_triangle`] / [`crate::ray::intersect_aabb`]
+    /// unchanged after the local-frame transform; both helpers reject
+    /// such inputs with `None` (the slab test's `1/0` produces `Inf`,
+    /// the cross-product `det` collapses to zero or `NaN`, and the
+    /// existing finite-check guards short-circuit the test).
+    pub fn intersect_ray(&self, ray: crate::ray::Ray, t_max: f32) -> Option<SceneRayHit> {
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        if n_nodes == 0 || n_meshes == 0 {
+            return None;
+        }
+        let mut visited = vec![false; n_nodes];
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut best: Option<SceneRayHit> = None;
+        let mut best_t = t_max;
+        // Push roots in reverse so the LIFO pop visits the leftmost
+        // root first — matching world_node_transforms's deterministic
+        // ordering. The deterministic walk order matters when two
+        // instances tie on `t` exactly (e.g. two coincident mirrored
+        // copies); the leftmost-first convention picks the same
+        // winner across runs.
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                    if let Some(world_inv) = mat4_affine_inverse(world) {
+                        let local_ray = ray_into_local(world_inv, ray);
+                        if let Some((prim_idx, hit)) = mesh.intersect_ray(local_ray, best_t) {
+                            // hit.t is in the local-frame ray
+                            // parameter, which equals the world-frame
+                            // ray parameter (affine change of frame is
+                            // parameter-preserving). Shrink best_t.
+                            // A later instance whose hit ties exactly
+                            // (`hit.t == best_t`) is not allowed to
+                            // override the existing winner — the
+                            // earlier-visited (leftmost-first DFS)
+                            // instance is the deterministic winner.
+                            if best.is_none() || hit.t < best_t {
+                                best_t = hit.t;
+                                best = Some(SceneRayHit {
+                                    node: nid,
+                                    primitive_index: prim_idx,
+                                    hit,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        best
+    }
+
+    /// Any-hit (shadow-ray) world-space query over the same reachable
+    /// node-mesh instances as [`Scene3D::intersect_ray`].
+    ///
+    /// Returns `true` as soon as **any** reachable node-mesh instance
+    /// reports a hit within `t_max` for the ray, transformed into
+    /// each instance's local frame the same way
+    /// [`Scene3D::intersect_ray`] does. Returns `false` only after
+    /// exhausting every reachable instance without a hit.
+    ///
+    /// Used for shadow rays / occlusion queries: the caller needs to
+    /// know whether *something* blocks the segment from the surface
+    /// hit point to the light, not which thing or where. The
+    /// short-circuit lets the walk skip the rest of the scene as soon
+    /// as the answer is decided.
+    ///
+    /// Reachability, cycle-guarding, singular-transform skipping, and
+    /// degenerate-ray handling match [`Scene3D::intersect_ray`].
+    ///
+    /// # Determinism
+    ///
+    /// The walk visits instances in the same DFS order as
+    /// [`Scene3D::intersect_ray`], but the answer (`true` / `false`)
+    /// does not depend on visit order — the existence of a blocker
+    /// is order-invariant. Visit order only changes which instance
+    /// is the *first* blocker discovered, never the return value.
+    pub fn any_ray_intersection(&self, ray: crate::ray::Ray, t_max: f32) -> bool {
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        if n_nodes == 0 || n_meshes == 0 {
+            return false;
+        }
+        let mut visited = vec![false; n_nodes];
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                    if let Some(world_inv) = mat4_affine_inverse(world) {
+                        let local_ray = ray_into_local(world_inv, ray);
+                        // We reuse the closest-hit primitive walk —
+                        // it has the same finite-time termination
+                        // contract and short-circuits at the first
+                        // primitive hit within `t_max`. A dedicated
+                        // any-hit `Mesh::any_ray_intersection`
+                        // wouldn't change the answer; the closest-hit
+                        // walk still examines every primitive in
+                        // `mesh` because each primitive's hit might
+                        // be closer than the last, but it returns
+                        // `Some(_)` whenever any does.
+                        if mesh.intersect_ray(local_ray, t_max).is_some() {
+                            return true;
+                        }
+                    }
+                }
+            }
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        false
     }
 
     /// Walk every cross-collection reference and report dangling

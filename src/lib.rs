@@ -97,8 +97,8 @@ pub use mesh::{
 pub use ray::{Ray, RayHit};
 pub use registry::Mesh3DRegistry;
 pub use scene::{
-    Axis, BoundingBox, CameraId, LightId, MaterialId, MeshId, Node, NodeId, Scene3D, SkeletonId,
-    SkinId, TextureId, Transform, Unit, ValidationError,
+    Axis, BoundingBox, CameraId, LightId, MaterialId, MeshId, Node, NodeId, Scene3D, SceneRayHit,
+    SkeletonId, SkinId, TextureId, Transform, Unit, ValidationError,
 };
 pub use skin::{Skeleton, Skin};
 pub use texture::{ImageData, MagFilter, MinFilter, Sampler, Texture, WrapMode};
