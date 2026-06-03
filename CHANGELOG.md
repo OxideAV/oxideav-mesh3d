@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 220 (Scene-level BVH-of-instances on top of `world_node_bounds`)
+
+- `instance_bvh` module — flat-array binary AABB tree over the
+  per-instance world AABBs of a `Scene3D`. The seed previously
+  flagged in round 216's docs as "the next acceleration layer above
+  `Bvh::intersect_ray`" now ships.
+- `InstanceBvh::build(&Scene3D) -> Option<Self>` and the
+  `Scene3D::build_instance_bvh()` convenience wrapper. The build
+  gathers every reachable node-mesh instance with a finite local
+  AABB and a non-singular world matrix (same skip conditions as
+  `Scene3D::intersect_ray`'s per-instance affine-inverse guard),
+  then median-splits on the largest centroid-extent axis with
+  `InstanceBvh::LEAF_THRESHOLD = 4` (matches `Bvh::LEAF_THRESHOLD`).
+  Returns `None` for a scene whose every reachable instance is
+  skipped.
+- `Instance { node, mesh, bounds, world, world_inv }` — per-leaf
+  descriptor pairing the world AABB with the `(NodeId, MeshId)`
+  re-dispatch keys + the cached affine inverse so ray queries don't
+  re-invert the same matrix per ray per instance.
+- `InstanceBvhNode { bounds, left_or_first, right_child, instance_count }`
+  + `is_leaf()` — same flat-array shape as `BvhNode`.
+- `InstanceBvh::intersect_ray(&Scene3D, Ray, t_max) -> Option<SceneRayHit>`
+  — closest-hit walk with explicit LIFO stack + near-child-first
+  ordering (slab-method entry parameter from Kay & Kajiya 1986).
+  Cross-validated against `Scene3D::intersect_ray` on a 16x16 ray
+  grid through a 16-cube scene; `t` + `front_face` agree exactly
+  (the `NodeId` can tie-break differently on strict ties since the
+  walk orders by AABB distance rather than DFS order).
+- `InstanceBvh::any_ray_intersection(&Scene3D, Ray, t_max) -> bool`
+  — shadow-ray short-circuit with the same answer as
+  `Scene3D::any_ray_intersection`.
+- `InstanceBvh::{node_count, leaf_count, instance_count, bounds}`
+  — inspection accessors symmetric with `Bvh`'s.
+- Robustness: empty scenes, scenes whose every reachable node lacks
+  a mesh, every reachable mesh has no AABB, every world matrix is
+  singular, and shared-children / cycle nodes all map to the
+  documented `None` / single-instance behaviour. Determinism: same
+  leftmost-first DFS gather as `world_node_bounds`; the build's
+  median-split partition is deterministic from the gather order +
+  centroid bound.
+- 18 `instance_bvh::tests` in-tree + 29 integration tests in
+  `tests/instance_bvh.rs` covering single-instance, 4-instance
+  single-leaf, 16/20/64-instance balanced trees, the rotated /
+  translated / detached / singular / cycle / shared-child cases,
+  cross-validation against `Scene3D::intersect_ray` on x/z/oblique
+  ray sweeps, `t_max` culling, `cached_world_inv * world ≈ I`,
+  root-bounds containment, and the strict-binary-tree node-count
+  invariant.
+
 ### Added — Round 216 (Scene3D per-instance world AABB snapshot, complement to `world_node_transforms`)
 
 - `Scene3D::world_node_bounds(&self) -> Vec<Option<BoundingBox>>` —

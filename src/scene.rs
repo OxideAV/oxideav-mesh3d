@@ -349,7 +349,7 @@ fn vec3_len(v: [f32; 3]) -> f32 {
 }
 
 /// Row-major column-vector 4x4 matrix multiply `a * b`.
-fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+pub(crate) fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
     let mut out = [[0.0f32; 4]; 4];
     for (i, row) in out.iter_mut().enumerate() {
         for (j, slot) in row.iter_mut().enumerate() {
@@ -388,7 +388,7 @@ fn mat3_det_of_world(m: [[f32; 4]; 4]) -> f64 {
 /// translation column. Computed in `f64` so very-different-scale
 /// matrices (e.g. `1e-3` cm-scale child of a `1e3` km-scale parent)
 /// round-trip without precision collapse, then cast back to `f32`.
-fn mat4_affine_inverse(m: [[f32; 4]; 4]) -> Option<[[f32; 4]; 4]> {
+pub(crate) fn mat4_affine_inverse(m: [[f32; 4]; 4]) -> Option<[[f32; 4]; 4]> {
     for row in &m {
         for v in row {
             if !v.is_finite() {
@@ -471,7 +471,7 @@ fn mat4_affine_inverse(m: [[f32; 4]; 4]) -> Option<[[f32; 4]; 4]> {
 /// linear part rotates / scales the direction (but is not normalised —
 /// the same ray parameter `t` resolves to the same world-space point
 /// before and after the change of frame).
-fn ray_into_local(world_inv: [[f32; 4]; 4], ray: crate::ray::Ray) -> crate::ray::Ray {
+pub(crate) fn ray_into_local(world_inv: [[f32; 4]; 4], ray: crate::ray::Ray) -> crate::ray::Ray {
     let o = ray.origin;
     let d = ray.direction;
     let lo = [
@@ -1029,6 +1029,20 @@ impl Scene3D {
             }
         }
         out
+    }
+
+    /// Convenience wrapper around [`crate::InstanceBvh::build`].
+    ///
+    /// Builds a scene-level bounding-volume hierarchy over every
+    /// reachable node-mesh instance — the next acceleration layer
+    /// above [`crate::Bvh::intersect_ray`] / per-instance
+    /// [`Mesh::intersect_ray`]. The same per-instance walk
+    /// [`Scene3D::intersect_ray`] performs becomes a
+    /// `O(log reachable_instance_count)` median-split traversal once
+    /// the tree is built. Cache the build alongside the scene; rebuild
+    /// when any node transform or mesh AABB changes.
+    pub fn build_instance_bvh(&self) -> Option<crate::InstanceBvh> {
+        crate::InstanceBvh::build(self)
     }
 
     /// Axis-aligned bounding box over every mesh referenced by a node

@@ -683,6 +683,76 @@ Round 216 lands the per-instance world-AABB snapshot
   `O(nodes + total_children + Σ mesh_vertex_count_for_reachable_nodes)`
   — the per-mesh cost is the one `Mesh::bounding_box` iteration.
 
+Round 220 lands the scene-level BVH-of-instances on top of the
+round-216 per-instance world-AABB snapshot (`tests/instance_bvh.rs`,
+29 integration tests + 18 in-tree unit tests):
+
+- `instance_bvh::InstanceBvh { nodes, instances }` — flat-array
+  binary AABB tree built top-down from the per-instance world AABBs
+  of a [`Scene3D`]. The seed previously flagged in round 216's
+  prose as "the next acceleration layer above [`Bvh::intersect_ray`]"
+  now ships. The construction is the same object-median AABB-tree
+  reviewed by Goldsmith & Salmon ("Automatic Creation of Object
+  Hierarchies for Ray Tracing", IEEE CG&A 7(5), 1987) that
+  [`Bvh::build`] already uses for the per-primitive layer; the
+  only difference is the leaf payload (one [`Instance`] per slot
+  vs one triangle index). Leaves stop at
+  `InstanceBvh::LEAF_THRESHOLD = 4` instances (matches
+  [`Bvh::LEAF_THRESHOLD`] so the two acceleration layers stay
+  symmetrical).
+- `instance_bvh::Instance { node, mesh, bounds, world, world_inv }`
+  — per-leaf descriptor pairing the world AABB with the
+  `(NodeId, MeshId)` re-dispatch keys plus the cached affine inverse
+  so per-ray queries don't repeatedly invert the same matrix once
+  per ray per instance. Re-exported from the crate root.
+- `instance_bvh::InstanceBvhNode { bounds, left_or_first,
+  right_child, instance_count }` + `is_leaf()` — one struct covers
+  both flavours, mirroring [`BvhNode`].
+- `InstanceBvh::build(&Scene3D) -> Option<Self>` and the
+  `Scene3D::build_instance_bvh()` convenience wrapper. The build
+  gathers every reachable node-mesh instance with a finite local
+  AABB and a non-singular world matrix (same skip conditions as
+  [`Scene3D::intersect_ray`]'s per-instance affine-inverse guard).
+  Returns `None` for a scene whose every reachable instance is
+  skipped (empty arenas, no reachable mesh-carrying nodes, every
+  reachable matrix singular, every reachable mesh empty). Pure: the
+  source scene is not mutated.
+- `InstanceBvh::intersect_ray(&Scene3D, Ray, t_max) -> Option<SceneRayHit>`
+  — closest-hit world-space query with an **explicit LIFO stack** and
+  **near-child-first ordering**. The slab method (Kay & Kajiya,
+  "Ray Tracing Complex Scenes", SIGGRAPH 1986) at each interior
+  node returns the entry parameter for both children; the child
+  with the smaller entry parameter is visited first so the
+  closest-hit query can shrink its `t_max` bound before descending
+  into the farther subtree. At each leaf, a cheap per-instance
+  AABB cull runs before the (expensive) world→local ray transform +
+  [`Mesh::intersect_ray`] dispatch. Affine change-of-frame leaves
+  the scalar ray parameter `t` invariant, so the world hit point is
+  recoverable via `ray.point_at(t)` directly. Cross-validates
+  against [`Scene3D::intersect_ray`] on a 16x16 ray grid through
+  a 16-cube scene; `hit.t` + `front_face` agree exactly. The
+  `NodeId` can tie-break differently on strict ties because the
+  walk orders by AABB distance rather than DFS order, but the hit
+  point is identical.
+- `InstanceBvh::any_ray_intersection(&Scene3D, Ray, t_max) -> bool`
+  — shadow-ray short-circuit; the boolean answer matches
+  [`Scene3D::any_ray_intersection`] on every ray (order-invariant).
+- `InstanceBvh::{node_count, leaf_count, instance_count, bounds}`
+  — inspection accessors so a renderer can report tree shape /
+  capacity in profiling output. Symmetric with [`Bvh`]'s.
+- Robustness: empty scenes, scenes whose every reachable node lacks
+  a mesh, every reachable mesh has no AABB, every world matrix is
+  singular, and shared-children / cycle nodes all map to the
+  documented `None` / single-instance behaviour — same gather-time
+  contract as [`Scene3D::world_node_bounds`]. Determinism: same
+  leftmost-first DFS gather; the median-split partition is
+  deterministic from the gather order + centroid bound, so two
+  builds of the same scene produce identical trees.
+- Per-instance BVH-cache layering on top — pairing each
+  `Instance.mesh` with its own `Primitive::build_bvh` cache and
+  threading [`Bvh::intersect_ray`] through the per-leaf inner
+  loop — is the next acceleration step.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to
@@ -704,12 +774,15 @@ Round 216 lands the per-instance world-AABB snapshot
 - Per-face material binding via `UsdGeomSubset` (USDZ decoder
   side) + glTF KHR_materials_variants for per-LOD or per-instance
   swapping.
-- Scene-level BVH-of-instances built on top of the round-216
-  `world_node_bounds` snapshot — feeds the per-instance AABBs into
-  the same median-split AABB-tree construction that
-  `Bvh::build(&Primitive)` already runs, exposing
-  `Scene3D::build_instance_bvh()` for the next acceleration layer
-  above `Scene3D::intersect_ray`.
+- Per-instance per-primitive BVH cache layered into
+  [`InstanceBvh::intersect_ray`] (round 220 ships the instance
+  layer; the leaf inner loop still calls brute-force
+  `Mesh::intersect_ray`). Pairing each `Instance.mesh` with its
+  own `Primitive::build_bvh` cache and threading
+  `Bvh::intersect_ray` through the per-leaf dispatch brings the
+  per-instance cost down to `O(log triangle_count)`. The cache
+  invalidation contract (when does the scene change such that the
+  per-primitive BVH must be rebuilt?) is the next design question.
 
 ## Standalone build
 
