@@ -1146,6 +1146,48 @@ impl Scene3D {
         self.meshes.iter().map(|m| m.surface_area()).sum()
     }
 
+    /// Area-weighted surface centroid across every mesh in the scene
+    /// — the area-weighted combination of every mesh's own
+    /// [`crate::Mesh::surface_centroid`]. This walks meshes once, not
+    /// node instances: a mesh instanced by multiple reachable nodes
+    /// contributes its centroid (with its area as the weight) once,
+    /// not once per node. For a transform-aware, per-instance
+    /// centroid total, walk [`Scene3D::world_node_transforms`]
+    /// alongside [`crate::Primitive::surface_centroid`] and combine
+    /// the per-instance centroids with their post-transform areas
+    /// (`|(M_3·E1) × (M_3·E2)|/2`) as weights — the local centroid
+    /// transforms by `world * [c, 1]` so each per-instance numerator
+    /// is `(world * centroid) * post_transform_area`.
+    ///
+    /// Returns `None` when every contained mesh returns `None` (or
+    /// the scene holds zero meshes). Coordinates are in the scene's
+    /// local frame ([`Scene3D::unit`]); contract matches
+    /// [`crate::Primitive::surface_centroid`] for finiteness,
+    /// degenerate-skipping, and out-of-range / NaN handling.
+    pub fn surface_centroid(&self) -> Option<[f64; 3]> {
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_area = 0.0_f64;
+        for m in &self.meshes {
+            let area = m.surface_area();
+            if area == 0.0 || !area.is_finite() {
+                continue;
+            }
+            if let Some(c) = m.surface_centroid() {
+                sum_x += c[0] * area;
+                sum_y += c[1] * area;
+                sum_z += c[2] * area;
+                sum_area += area;
+            }
+        }
+        if sum_area == 0.0 || !sum_area.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_area;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
     /// Sum of every mesh primitive's
     /// [`crate::Primitive::signed_volume`] in the scene's local
     /// unit-cubed (matching [`Scene3D::unit`]). This does *not* apply

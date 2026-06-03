@@ -753,6 +753,57 @@ round-216 per-instance world-AABB snapshot (`tests/instance_bvh.rs`,
   threading [`Bvh::intersect_ray`] through the per-leaf inner
   loop — is the next acceleration step.
 
+Round 227 lands the area-weighted surface centroid
+(`tests/surface_centroid.rs`, 34 tests):
+
+- `Primitive::surface_centroid(&self) -> Option<[f64; 3]>` —
+  area-weighted geometric centroid of the primitive's triangle
+  tessellation in the unit of [`Primitive::positions`]. The
+  derivation is the textbook continuous identity
+  `C = ∫∫_S x dS / ∫∫_S dS` (Marsden & Tromba, *Vector
+  Calculus*, chapter on triangle integrals — a linear function
+  integrated over a triangle equals `area * value_at_centroid`);
+  the per-triangle integral of `x` over a flat triangle with
+  corners `(P_a, P_b, P_c)` collapses to `area_i * (P_a + P_b +
+  P_c) / 3`, so the closed form is
+  `(Σ area_i · centroid_i) / Σ area_i`. The `|E1 × E2| / 2`
+  per-triangle area is the same cross-product machinery
+  [`Primitive::surface_area`] / [`Primitive::compute_normals`]
+  already share; `surface_centroid` reuses it and adds one
+  three-corner sum + one scalar multiply per triangle.
+  Topology integration goes through `triangle_indices`, so
+  `Triangles` / `TriangleStrip` (alternating winding) /
+  `TriangleFan` all feed in; non-triangle topologies
+  (lines/points) return `None`. Accumulators are `f64` so
+  million-triangle meshes don't drift under `f32` summation;
+  degenerate triangles, NaN/Inf intermediates, and out-of-range
+  index entries are skipped (matching the silent-skip robustness
+  contract of every other reduction). Returns `None` only when no
+  positive-area triangle survives the skip filters — there is no
+  centre to report for an empty surface. **Translation-equivariant**
+  by construction: shifting every vertex by `Δ` shifts the centroid
+  by the same `Δ`. **Invariant under retriangulation of the same
+  patch**: barycentrically subdividing a triangle into three sub-
+  triangles produces the same centroid as the original. Pure;
+  cost `O(triangle_count)`.
+- `Mesh::surface_centroid(&self) -> Option<[f64; 3]>` —
+  area-weighted recombination of every contained primitive's own
+  centroid (additivity of the surface integral over a union of
+  patches: `Σ area_i · primitive_centroid_i / Σ area_i`).
+  Mesh-local, no transforms / skin pose / morph deltas; non-triangle
+  primitives and degenerate primitives contribute nothing and
+  don't pull the result toward `[0, 0, 0]`. Returns `None` when
+  every contained primitive returns `None`.
+- `Scene3D::surface_centroid(&self) -> Option<[f64; 3]>` —
+  area-weighted recombination of every mesh's centroid in the
+  scene's local frame ([`Scene3D::unit`]). **Walks meshes once,
+  not node instances** — a mesh instanced under multiple reachable
+  nodes contributes its centroid once. For a transform-aware,
+  per-instance centroid, walk
+  [`Scene3D::world_node_transforms`] alongside
+  `Primitive::surface_centroid` and combine the per-instance
+  centroids with their post-transform areas as weights.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

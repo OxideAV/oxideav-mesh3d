@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 227 (Area-weighted surface centroid: `Primitive` / `Mesh` / `Scene3D`)
+
+- `Primitive::surface_centroid(&self) -> Option<[f64; 3]>` —
+  area-weighted geometric centroid of the primitive's triangle
+  tessellation. The closed form is
+  `(Σ area_i · centroid_i) / Σ area_i` from the textbook continuous
+  identity `C = ∫∫_S x dS / ∫∫_S dS` (Marsden & Tromba, *Vector
+  Calculus*); the per-triangle centroid is the corner average
+  `(P_a + P_b + P_c) / 3` and per-triangle area is the same
+  `|E1 × E2| / 2` already shared with `surface_area` and
+  `compute_normals`. Topology integration via `triangle_indices`,
+  so `Triangles` / `TriangleStrip` (alternating winding) /
+  `TriangleFan` all feed in correctly; non-triangle topologies
+  return `None`. Accumulators are `f64`; degenerate / NaN-/Inf-
+  producing / out-of-range triangles are skipped (matching the
+  silent-skip contract of every other reduction). Returns `None`
+  only when no positive-area triangle survives. Translation-
+  equivariant by construction; invariant under retriangulation of
+  the same patch. Pure; `O(triangle_count)`.
+- `Mesh::surface_centroid(&self) -> Option<[f64; 3]>` —
+  area-weighted recombination of every contained primitive's
+  centroid; additivity of the surface integral over a union of
+  patches. Mesh-local; non-triangle / degenerate primitives
+  contribute nothing.
+- `Scene3D::surface_centroid(&self) -> Option<[f64; 3]>` —
+  area-weighted recombination of every mesh's centroid in the
+  scene's local frame. Walks meshes once, not node instances
+  (same convention as `Scene3D::surface_area` / `signed_volume`);
+  for a transform-aware per-instance total, walk
+  `world_node_transforms` alongside `Primitive::surface_centroid`
+  and combine per-instance centroids with their post-transform
+  areas as weights.
+- `tests/surface_centroid.rs` — 34 tests covering single-triangle
+  corner-mean, translation equivariance, unit square / rectangle
+  / cube centroid, indexed vs unindexed parity, barycentric-
+  subdivision invariance, strip / fan / triangle-list parity,
+  out-of-range-index skipping, NaN / Inf skipping, all-degenerate
+  → `None`, empty / non-triangle topology → `None`, mesh-level
+  passthrough + equal/unequal area weighting + degenerate-mesh
+  skipping, scene-level passthrough + multi-mesh combinations +
+  the "walks meshes once, not node instances" contract.
+
 ### Added — Round 220 (Scene-level BVH-of-instances on top of `world_node_bounds`)
 
 - `instance_bvh` module — flat-array binary AABB tree over the

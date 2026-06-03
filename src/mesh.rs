@@ -791,6 +791,148 @@ impl Primitive {
         total
     }
 
+    /// Area-weighted surface centroid: the geometric centre of the
+    /// primitive's triangle tessellation, treating the surface as a
+    /// uniformly-dense flat shell. Returns `None` when no triangle
+    /// contributes positive area (non-triangle topology, every face
+    /// degenerate, all positions non-finite, every index out of range,
+    /// or empty primitive).
+    ///
+    /// # Derivation (clean-room, first-principles)
+    ///
+    /// The continuous surface centroid of a body `S` under uniform
+    /// surface density is
+    ///
+    /// ```text
+    /// C = (∫∫_S x dS) / (∫∫_S dS).
+    /// ```
+    ///
+    /// For a triangle tessellation, each triangle is a flat patch
+    /// over which `x` varies linearly between the three corners; the
+    /// well-known closed form for the integral of a linear function
+    /// over a triangle is `area * value_at_centroid`, where the
+    /// triangle centroid is the average of its three corners
+    /// `(P_a + P_b + P_c) / 3` (Marsden & Tromba, *Vector Calculus*,
+    /// chapter on triangle and parallelogram integrals — the
+    /// barycentric weights average to 1/3 each). Summing over every
+    /// triangle gives
+    ///
+    /// ```text
+    /// C = (Σ area_i · centroid_i) / (Σ area_i)
+    ///   = (Σ |E1 × E2|/2 · (P_a + P_b + P_c)/3) / surface_area.
+    /// ```
+    ///
+    /// The same `|E1 × E2|/2` per-triangle area already drives
+    /// [`Primitive::surface_area`]; `surface_centroid` reuses the
+    /// identical edge-cross machinery and adds one three-corner sum +
+    /// one scalar multiply per triangle, divided by the running area
+    /// total at the end.
+    ///
+    /// # Contract
+    ///
+    /// * Returns `Some([f64; 3])` for any primitive with at least one
+    ///   non-degenerate triangle whose corners are finite. Each
+    ///   component is finite (NaN/Inf-producing triangles are skipped
+    ///   the same way [`Primitive::surface_area`] skips them).
+    /// * Returns `None` when the surface-area accumulator stays at
+    ///   `0.0` — there is no positive-area surface to centre. This
+    ///   matches the `None` policy on [`Primitive::bounding_box`] for
+    ///   an empty positions buffer.
+    /// * Coordinates are in the local frame of [`Primitive::positions`]
+    ///   (matching the parent [`crate::Scene3D::unit`]). The centroid
+    ///   is a position, not an offset; translation of the primitive
+    ///   moves the centroid by the same vector.
+    /// * **Degenerate triangles contribute nothing.** Same set as the
+    ///   one [`Primitive::degenerate_triangles`] reports — a zero-area
+    ///   triangle adds `0 * anything = 0` to both numerator and
+    ///   denominator.
+    /// * **Out-of-range index** entries are skipped, not panicked.
+    /// * Non-triangle topologies return `None`.
+    /// * Accumulators are `f64` so a million-triangle mesh doesn't
+    ///   drift under `f32` summation; the per-triangle cross-product
+    ///   math is also `f64`.
+    /// * **Does not mutate `self`.** Pure; cost `O(triangle_count)`.
+    ///
+    /// # Use
+    ///
+    /// * Pivot-point heuristic for a "rotate around centre" gesture —
+    ///   the area-weighted centroid sits inside the visible shell for
+    ///   typical closed surfaces and is more stable than the AABB
+    ///   centre under non-symmetric tessellations.
+    /// * Importer round-trip checks — the surface centroid is invariant
+    ///   under triangle subdivision (a single triangle and its
+    ///   barycentric-subdivided version produce the same centroid),
+    ///   making it a useful equivalence-class fingerprint.
+    /// * Initial guess for a per-mesh local origin shift before a
+    ///   `weld_vertices` / dedup pass; centring positions around the
+    ///   centroid keeps the `f32` representable range balanced.
+    ///
+    /// See [`Mesh::surface_centroid`] for the per-mesh roll-up and
+    /// [`crate::Scene3D::surface_centroid`] for the scene-level
+    /// aggregate.
+    pub fn surface_centroid(&self) -> Option<[f64; 3]> {
+        let n = self.positions.len();
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_area = 0.0_f64;
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = self.positions[ia];
+            let pb = self.positions[ib];
+            let pc = self.positions[ic];
+            // f64 from the loaded position values onward so the
+            // per-triangle area + centroid math stays stable at scale.
+            let ax = pa[0] as f64;
+            let ay = pa[1] as f64;
+            let az = pa[2] as f64;
+            let bx = pb[0] as f64;
+            let by = pb[1] as f64;
+            let bz = pb[2] as f64;
+            let cx = pc[0] as f64;
+            let cy = pc[1] as f64;
+            let cz = pc[2] as f64;
+            let ux = bx - ax;
+            let uy = by - ay;
+            let uz = bz - az;
+            let vx = cx - ax;
+            let vy = cy - ay;
+            let vz = cz - az;
+            // Cross product u × v; its magnitude is twice the
+            // triangle area — same as `surface_area`.
+            let crx = uy * vz - uz * vy;
+            let cry = uz * vx - ux * vz;
+            let crz = ux * vy - uy * vx;
+            if !crx.is_finite() || !cry.is_finite() || !crz.is_finite() {
+                continue;
+            }
+            let m2 = crx * crx + cry * cry + crz * crz;
+            if !m2.is_finite() {
+                continue;
+            }
+            let area = m2.sqrt() * 0.5;
+            if !area.is_finite() || area == 0.0 {
+                continue;
+            }
+            // Per-triangle centroid is the barycentre of its corners;
+            // the contribution to the numerator is `area * centroid`,
+            // i.e. `(area / 3) * (Pa + Pb + Pc)`.
+            let w = area / 3.0;
+            sum_x += w * (ax + bx + cx);
+            sum_y += w * (ay + by + cy);
+            sum_z += w * (az + bz + cz);
+            sum_area += area;
+        }
+        if sum_area == 0.0 || !sum_area.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_area;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
     /// Transform-aware surface area: same triangle reduction as
     /// [`Primitive::surface_area`], but every corner is first mapped
     /// through the row-major column-vector affine 4x4 `world` matrix
@@ -1833,6 +1975,53 @@ impl Mesh {
     /// applied). Non-triangle primitives contribute 0.0.
     pub fn surface_area(&self) -> f64 {
         self.primitives.iter().map(|p| p.surface_area()).sum()
+    }
+
+    /// Area-weighted surface centroid across every contained primitive
+    /// — the area-weighted combination of every primitive's own
+    /// [`Primitive::surface_centroid`].
+    ///
+    /// # Derivation
+    ///
+    /// The continuous identity
+    /// `C = (Σ area_i · centroid_i) / Σ area_i` from
+    /// [`Primitive::surface_centroid`] generalises to a union of
+    /// patches by additivity of the surface integral: integrating `x`
+    /// over the union is the sum of the per-patch integrals
+    /// (`area_i · centroid_i`), and integrating `1` is the sum of the
+    /// per-patch areas. So the mesh-level centroid is the per-primitive
+    /// centroid recombined with the per-primitive areas as weights —
+    /// `Σ area_i · primitive_centroid_i / Σ area_i`. This matches
+    /// [`Mesh::surface_area`]'s additive roll-up.
+    ///
+    /// Mesh-local — no transforms, skin pose, or morph deltas are
+    /// applied. Primitives with `None` from
+    /// [`Primitive::surface_centroid`] (no positive-area triangles)
+    /// contribute nothing and don't pull the result toward
+    /// `[0, 0, 0]`. Returns `None` when every contained primitive
+    /// returns `None` (or the mesh holds zero primitives).
+    pub fn surface_centroid(&self) -> Option<[f64; 3]> {
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_area = 0.0_f64;
+        for p in &self.primitives {
+            let area = p.surface_area();
+            if area == 0.0 || !area.is_finite() {
+                continue;
+            }
+            if let Some(c) = p.surface_centroid() {
+                sum_x += c[0] * area;
+                sum_y += c[1] * area;
+                sum_z += c[2] * area;
+                sum_area += area;
+            }
+        }
+        if sum_area == 0.0 || !sum_area.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_area;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
     }
 
     /// Sum of [`Primitive::signed_volume`] across every contained
