@@ -903,6 +903,134 @@ impl Scene3D {
         out
     }
 
+    /// World-space axis-aligned bounding box per scene node, indexed by
+    /// `NodeId.0`.
+    ///
+    /// Walks the [`Scene3D::roots`] forest with the same depth-first
+    /// shape as [`Scene3D::world_node_transforms`] / [`Scene3D::bounding_box`].
+    /// For every reachable node that carries a mesh (`Node::mesh ==
+    /// Some(id)`), the contained mesh's local AABB
+    /// ([`crate::Mesh::bounding_box`]) is transformed through the
+    /// node's full ancestor-chain world matrix via
+    /// [`BoundingBox::transform`] (eight-corner refit). The returned
+    /// vector has length `nodes.len()`; each slot holds:
+    ///
+    /// * `Some(BoundingBox)` — the world-space tight AABB of the
+    ///   node's attached mesh, transformed by the node's world matrix.
+    /// * `None` — the node is not reachable from any root, the node
+    ///   carries no mesh, the referenced mesh is empty, or the mesh
+    ///   reference is out of range. The four `None` reasons are not
+    ///   distinguished; callers needing the distinction can pair this
+    ///   with [`Scene3D::world_node_transforms`] (whose `None` slots
+    ///   are reachability-only).
+    ///
+    /// The output is the per-instance complement to
+    /// [`Scene3D::bounding_box`], which collapses every reachable
+    /// instance into a single scene-wide union. Each slot here is the
+    /// tight bound of one instance, fit around the eight transformed
+    /// corners of its mesh's local AABB — orientation-aware (an
+    /// arbitrary rotation widens the AABB to wrap the rotated content)
+    /// the same way [`BoundingBox::transform`] documents.
+    ///
+    /// ## Use cases
+    ///
+    /// * **Per-instance frustum / view-volume culling.** A renderer
+    ///   tests each slot's AABB against the view frustum before
+    ///   issuing the instance's draw call.
+    /// * **Scene-level ray AABB pre-pass.** A ray query walks the
+    ///   slots once and only descends into
+    ///   [`crate::Mesh::intersect_ray`] for instances whose AABB the
+    ///   ray actually pierces (via [`BoundingBox::intersect_ray`]).
+    ///   For triangle-budget-dominated scenes this reduces the ray
+    ///   walk from `Σ triangle_count` to `Σ triangle_count over hit instances` —
+    ///   the same kind of pruning [`crate::Bvh::intersect_ray`] applies
+    ///   at the leaf level, lifted to the per-instance level.
+    /// * **BVH-of-instances seed.** A future scene-level BVH builder
+    ///   feeds each slot's AABB + the slot index (a `NodeId`) into
+    ///   the same median-split AABB-tree construction
+    ///   [`crate::Bvh::build`] already runs per primitive — see
+    ///   the round-210 docs gesture toward this layered acceleration.
+    ///
+    /// ## What this does NOT include
+    ///
+    /// * Skin pose deformation — the rest-pose vertices are used
+    ///   verbatim. A rigged mesh reports the rest-pose extent, not
+    ///   the skinned-pose extent at any particular animation time.
+    /// * Morph targets — only base
+    ///   [`crate::Primitive::positions`] are folded into each mesh's
+    ///   local AABB.
+    /// * Animation channels — the static scene-graph transform is
+    ///   reported, not the post-animation transform.
+    /// * Up-axis or unit conversion. [`Scene3D::up_axis`] and
+    ///   [`Scene3D::unit`] are metadata; the returned boxes live in
+    ///   whatever coordinate system the scene stored.
+    ///
+    /// ## Determinism + cycle contract
+    ///
+    /// The walk is depth-first iterative on an explicit stack, with
+    /// roots visited in `roots`-order and children in source order —
+    /// identical to [`Scene3D::world_node_transforms`]. A node listed
+    /// as its own descendant (cycle) is visited once via the
+    /// first-arrival DFS path; out-of-range `NodeId` entries in
+    /// `roots` / `children` are silently skipped. A node referenced
+    /// by two parents (shared-instance) resolves to the first
+    /// parent's chain — per-instance world AABBs for the
+    /// shared-instance pattern need an explicit instance-list
+    /// side-channel.
+    ///
+    /// Cost: `O(nodes.len() + total_children + Σ mesh_vertex_count_for_reachable_nodes)`,
+    /// where the per-mesh cost is the one
+    /// [`crate::Mesh::bounding_box`] iteration. Allocates one
+    /// `Vec<Option<BoundingBox>>` of length `nodes.len()` plus the
+    /// DFS stack.
+    pub fn world_node_bounds(&self) -> Vec<Option<BoundingBox>> {
+        let n_nodes = self.nodes.len();
+        let mut out: Vec<Option<BoundingBox>> = vec![None; n_nodes];
+        if n_nodes == 0 {
+            return out;
+        }
+        let n_meshes = self.meshes.len();
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        // `visited` is keyed on reachability so a node-with-no-mesh
+        // (returning `None` in `out`) is still detected as visited and
+        // not re-walked through a cycle.
+        let mut visited = vec![false; n_nodes];
+        // Iterative depth-first walk; stack carries (node_id, ancestor_matrix).
+        // Roots pushed in reverse so the LIFO pop visits the leftmost
+        // root first — matching `world_node_transforms`'s ordering.
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if n_meshes > 0 {
+                    if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                        if let Some(local) = mesh.bounding_box() {
+                            out[idx] = Some(local.transform(world));
+                        }
+                    }
+                }
+            }
+            // Walk children in reverse so leftmost child is popped first
+            // (deterministic ordering for snapshot consumers).
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        out
+    }
+
     /// Axis-aligned bounding box over every mesh referenced by a node
     /// reachable from [`Scene3D::roots`], with each mesh's vertices
     /// projected through its node's full ancestor transform chain.

@@ -648,6 +648,41 @@ node's world matrix (`tests/scene_ray.rs`, 27 tests):
   once via the `visited` bitmap; the DFS terminates in finite
   time on any node count.
 
+Round 216 lands the per-instance world-AABB snapshot
+(`tests/world_node_bounds.rs`, 29 tests):
+
+- `Scene3D::world_node_bounds(&self) -> Vec<Option<BoundingBox>>` —
+  per-node world-space axis-aligned bounding box, indexed by
+  `NodeId.0`. Walks the [`Scene3D::roots`] forest with the same
+  depth-first shape as [`Scene3D::world_node_transforms`] /
+  [`Scene3D::bounding_box`]; for every reachable node carrying a
+  mesh, the mesh's local AABB is transformed through the node's full
+  ancestor-chain world matrix via [`BoundingBox::transform`]
+  (eight-corner refit, orientation-aware). Unreachable nodes, nodes
+  without a mesh, empty meshes, and out-of-range mesh references all
+  resolve to `None` — the four `None` reasons are not distinguished
+  (callers wanting reachability-only `None` slots pair this with
+  `world_node_transforms`). The output is the per-instance
+  complement to [`Scene3D::bounding_box`]: the latter reduces every
+  reachable instance into a single scene-wide union, the former
+  exposes each instance's tight bound individually. Headline use
+  cases — per-instance frustum / view-volume culling, a ray-AABB
+  pre-pass before the existing per-instance triangle walk inside
+  [`Scene3D::intersect_ray`] (only the slots whose AABB the ray
+  actually pierces need the descent into `Mesh::intersect_ray`), and
+  the future scene-level BVH-of-instances seed that round 210's
+  prose gestured toward as the next acceleration layer above
+  [`Bvh::intersect_ray`] (median-split the per-instance AABBs into
+  the same flat-array binary AABB tree the round-204 BVH builder
+  already constructs per primitive). The walk visits roots and
+  children in the same deterministic LIFO order as
+  `world_node_transforms`; cycle nodes are visited once at first
+  arrival; a shared child resolves via the first-parent chain
+  (per-instance world AABBs for the shared-instance pattern need an
+  explicit instance-list side-channel). Cost
+  `O(nodes + total_children + Σ mesh_vertex_count_for_reachable_nodes)`
+  — the per-mesh cost is the one `Mesh::bounding_box` iteration.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to
@@ -669,6 +704,12 @@ node's world matrix (`tests/scene_ray.rs`, 27 tests):
 - Per-face material binding via `UsdGeomSubset` (USDZ decoder
   side) + glTF KHR_materials_variants for per-LOD or per-instance
   swapping.
+- Scene-level BVH-of-instances built on top of the round-216
+  `world_node_bounds` snapshot — feeds the per-instance AABBs into
+  the same median-split AABB-tree construction that
+  `Bvh::build(&Primitive)` already runs, exposing
+  `Scene3D::build_instance_bvh()` for the next acceleration layer
+  above `Scene3D::intersect_ray`.
 
 ## Standalone build
 

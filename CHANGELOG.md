@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 216 (Scene3D per-instance world AABB snapshot, complement to `world_node_transforms`)
+
+- `Scene3D::world_node_bounds(&self) -> Vec<Option<BoundingBox>>` —
+  per-node world-space axis-aligned bounding box, indexed by
+  `NodeId.0`. Walks the [`Scene3D::roots`] forest with the same
+  depth-first shape as `Scene3D::world_node_transforms` /
+  `Scene3D::bounding_box`; for each reachable node carrying a mesh,
+  the mesh's local AABB is transformed through the node's full
+  ancestor-chain world matrix via `BoundingBox::transform` (eight-corner
+  refit, orientation-aware). Unreachable nodes, nodes without a mesh,
+  empty meshes, and out-of-range mesh references resolve to `None`.
+  The output complements `Scene3D::bounding_box` (which reduces the
+  same reachable instances into a single scene-wide union) by exposing
+  the per-instance bound — feeding per-instance frustum culling, a
+  ray-AABB pre-pass before the existing per-instance triangle walk
+  inside `Scene3D::intersect_ray`, and the future scene-level
+  BVH-of-instances seed that round 210's docs gestured toward as the
+  next acceleration layer above `Bvh::intersect_ray`.
+- Cycle, shared-instance (first-parent), determinism, and
+  out-of-range-NodeId handling match the existing
+  `world_node_transforms` contract exactly. Cost
+  `O(nodes + total_children + Σ mesh_vertex_count_for_reachable_nodes)`.
+
 ### Added — Round 210 (Scene3D world-space ray queries on top of rounds 199 + 204)
 
 - `Scene3D::intersect_ray(&self, Ray, t_max) -> Option<SceneRayHit>` —
