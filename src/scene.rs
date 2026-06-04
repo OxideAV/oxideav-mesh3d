@@ -1436,6 +1436,120 @@ impl Scene3D {
         self.world_signed_volume().abs()
     }
 
+    /// Transform-aware area-weighted surface centroid across every
+    /// node-instantiated mesh in the scene, in world units.
+    ///
+    /// Whereas [`Scene3D::surface_centroid`] recombines each *mesh
+    /// resource* once regardless of how many nodes carry it,
+    /// `world_surface_centroid` walks the [`Scene3D::roots`] forest
+    /// the same way [`Scene3D::world_surface_area`] does, applies each
+    /// reachable node's full ancestor-chain world matrix to its
+    /// primitive's triangle vertices, and recombines the post-
+    /// transform per-instance centroids weighted by the per-instance
+    /// post-transform surface area. A mesh instanced under two nodes
+    /// therefore contributes twice (once per instance), and each
+    /// instance's contribution reflects the world-space scale and skew
+    /// on the path to that node.
+    ///
+    /// # Derivation
+    ///
+    /// Picking up where [`Scene3D::world_surface_area`] leaves off:
+    /// for a triangle `(P_a, P_b, P_c)` mapped through the affine
+    /// world matrix `M`, the post-transform centroid is `(M·P_a +
+    /// M·P_b + M·P_c) / 3` and the post-transform area is
+    /// `|(M_3·E1) × (M_3·E2)| / 2`. Substituting into the continuous
+    /// identity `C = (Σ area_i · centroid_i) / Σ area_i` and
+    /// accumulating across every reachable node's every primitive
+    /// gives the world-frame centroid. The recombination across
+    /// primitives (and across instances) is additivity of the surface
+    /// integral over a union of patches — the same reasoning that
+    /// makes [`Mesh::surface_centroid`] / [`Scene3D::surface_centroid`]
+    /// well-defined.
+    ///
+    /// # Contract
+    ///
+    /// * Topology handling, degenerate-triangle skipping, NaN guards,
+    ///   and out-of-range-index skipping all mirror
+    ///   [`crate::Primitive::world_surface_centroid`].
+    /// * Mesh resources not reachable from any [`Scene3D::roots`] node
+    ///   contribute nothing — the count is per-instance over the
+    ///   scene-graph, not per-resource. For a resource-level total see
+    ///   [`Scene3D::surface_centroid`].
+    /// * Cycles in the scene-graph are guarded the same way as
+    ///   [`Scene3D::bounding_box`] / [`Scene3D::world_node_transforms`]
+    ///   / [`Scene3D::world_surface_area`]: each node is visited at
+    ///   most once. A node instanced under two parents resolves to one
+    ///   world matrix (the first parent on the DFS path).
+    /// * Returns `None` when no reachable triangle survives — empty
+    ///   scene, no reachable mesh, every reachable mesh degenerate, or
+    ///   every world transform collapsing the surface to zero area
+    ///   under the transform.
+    /// * Skin pose deformation, morph targets, and unit-axis conversion
+    ///   are *not* applied — the static scene-graph transform is the
+    ///   only thing folded in. For a pose-time centroid, apply the
+    ///   animation pose before calling.
+    /// * Cost `O(reachable_nodes + Σ triangle_count_per_reachable_mesh)`.
+    ///   Allocates the DFS stack only; per-triangle math is in `f64` to
+    ///   avoid `f32` drift on dense meshes.
+    pub fn world_surface_centroid(&self) -> Option<[f64; 3]> {
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        if n_nodes == 0 || n_meshes == 0 {
+            return None;
+        }
+        let mut visited = vec![false; n_nodes];
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_area = 0.0_f64;
+        // Push roots in reverse so the LIFO pop visits the leftmost
+        // root first — matching `world_node_transforms`'s documented
+        // single-resolution policy (a shared instance reachable from
+        // two parents resolves via the first parent on the DFS path).
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                    for prim in &mesh.primitives {
+                        let area = prim.world_surface_area(world);
+                        if area == 0.0 || !area.is_finite() {
+                            continue;
+                        }
+                        if let Some(c) = prim.world_surface_centroid(world) {
+                            sum_x += c[0] * area;
+                            sum_y += c[1] * area;
+                            sum_z += c[2] * area;
+                            sum_area += area;
+                        }
+                    }
+                }
+            }
+            // Walk children in reverse so leftmost child is popped first.
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        if sum_area == 0.0 || !sum_area.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_area;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
     /// Closest-hit ray query across every reachable node-mesh
     /// instance in world space.
     ///

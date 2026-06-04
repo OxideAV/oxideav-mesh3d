@@ -804,6 +804,53 @@ Round 227 lands the area-weighted surface centroid
   `Primitive::surface_centroid` and combine the per-instance
   centroids with their post-transform areas as weights.
 
+Round 234 closes the per-instance gap that round 227 flagged
+(`tests/world_surface_centroid.rs`, 33 tests):
+
+- `Primitive::world_surface_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`
+  — area-weighted surface centroid after every corner is mapped
+  through the row-major column-vector affine 4x4 `world` matrix
+  (same convention as [`Transform::Matrix`] /
+  [`BoundingBox::transform`] / [`Primitive::world_surface_area`]).
+  The post-transform centroid is `(M·P_a + M·P_b + M·P_c) / 3` and
+  the post-transform area weight is `|(M_3·E1) × (M_3·E2)| / 2`;
+  both bend with the transform in ways that don't factor through
+  the local centroid alone, so a per-triangle accumulator (rather
+  than `world * local_centroid` × det) is the only faithful answer
+  under non-uniform scale. Translation equivariant (under a pure
+  translation `t` every centroid gains `t`); uniform scale `s`
+  scales the result from the origin by `s`; mirror scales flip the
+  mirrored axis. Topology + NaN-/Inf-/degenerate-/out-of-range-
+  skipping mirror [`Primitive::surface_centroid`]. Returns `None`
+  when the post-transform area accumulator stays at `0.0`. Pure;
+  `O(triangle_count)`.
+- `Mesh::world_surface_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`
+  — area-weighted recombination of every contained primitive's
+  per-primitive world centroid weighted by the per-primitive world
+  surface area (recovered via [`Primitive::world_surface_area`] so
+  the per-primitive helper can keep its natural ratio shape).
+  Skips primitives that contribute nothing.
+- `Scene3D::world_surface_centroid(&self) -> Option<[f64; 3]>` —
+  transform-aware per-instance world centroid across every reachable
+  node-mesh instance. Walks the [`Scene3D::roots`] forest with the
+  same DFS shape (cycle-guarded, single-resolution for shared
+  instances, leftmost-first ordering) used by
+  [`Scene3D::world_surface_area`] / [`Scene3D::world_signed_volume`]
+  / [`Scene3D::world_node_transforms`]; a mesh instanced under
+  multiple nodes contributes once per reachable instance. The
+  per-instance recombination is the same area-weighted average as
+  the primitive- and mesh-level helpers. Returns `None` when no
+  reachable triangle survives. The 33 tests cover identity-passthrough,
+  pure-translation equivariance, uniform / non-uniform / mirror
+  scale, rotation, indexed vs unindexed parity, strip vs list parity,
+  out-of-range index + NaN matrix + degenerate-transform skipping,
+  mesh-level passthrough + equal/unequal weighting + degenerate
+  primitive + lines-primitive skipping, scene-level identity
+  passthrough, detached-mesh skipping, two-instance translation,
+  ancestor-chain composition, cycle-guarding, per-node scale
+  weighting, three-instance equal-weight average, and a cross-check
+  against [`Scene3D::surface_centroid`] for the identity-rooted case.
+
 ## Round 11 candidates
 
 - USDZ row of the cross-format matrix — needs `oxideav-usdz` to

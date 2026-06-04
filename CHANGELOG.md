@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 234 (Transform-aware world surface centroid: `Primitive` / `Mesh` / `Scene3D`)
+
+- `Primitive::world_surface_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`
+  — area-weighted surface centroid after every corner is mapped
+  through the row-major column-vector affine 4x4 `world` matrix
+  (same convention as `Transform::Matrix` / `BoundingBox::transform`
+  / `Primitive::world_surface_area`). The post-transform centroid is
+  `(M·P_a + M·P_b + M·P_c) / 3` and the per-triangle area weight is
+  `|(M_3·E1) × (M_3·E2)| / 2`; both bend with the transform in ways
+  that don't factor through the local centroid alone, so a per-
+  triangle accumulator (not `world * local_centroid` scaled by a
+  single area factor) is the only faithful answer under non-uniform
+  scale. Translation equivariant (under a pure translation `t` every
+  centroid gains `t`); uniform scale `s` scales the result from the
+  origin by `s`; mirror scales flip the mirrored axis. Topology
+  handling, NaN/Inf guards, degenerate-triangle skipping, and out-of-
+  range-index skipping mirror `Primitive::surface_centroid`. Returns
+  `None` when the post-transform area accumulator stays at `0.0`
+  (every triangle degenerate / non-triangle topology / transform
+  flattens every triangle to zero area). `f64` accumulators; pure;
+  cost `O(triangle_count)`.
+- `Mesh::world_surface_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`
+  — area-weighted recombination of every contained primitive's
+  per-primitive world centroid weighted by the per-primitive world
+  surface area (recovered via `Primitive::world_surface_area` so the
+  per-primitive helper can keep its natural ratio shape rather than
+  forcing callers through a numerator-denominator contract). Skips
+  primitives whose `world_surface_area` is `0.0` / non-finite or
+  whose `world_surface_centroid` returns `None`. Returns `None` when
+  every primitive contributes nothing under `world`.
+- `Scene3D::world_surface_centroid(&self) -> Option<[f64; 3]>` —
+  transform-aware per-instance world centroid across every reachable
+  node-mesh instance in the scene. Whereas `Scene3D::surface_centroid`
+  walks meshes once regardless of how many nodes carry them,
+  `world_surface_centroid` walks the `Scene3D::roots` forest the
+  same way as `world_surface_area` / `world_signed_volume` /
+  `world_node_transforms`, applies each reachable node's full
+  ancestor-chain world matrix to its primitive's triangle vertices,
+  and recombines the post-transform per-instance centroids weighted
+  by their per-instance post-transform surface area. A mesh
+  instanced under two nodes contributes twice (once per instance);
+  cycles are guarded the same way as the sibling world helpers
+  (each node is visited at most once; shared instances resolve via
+  the first DFS arrival). Returns `None` when no reachable triangle
+  survives.
+- `tests/world_surface_centroid.rs` — 33 tests covering
+  identity-passthrough (= local centroid bit-for-bit), pure-
+  translation equivariance, uniform scale, non-uniform single-
+  triangle scale, single-axis mirror, 90° rotation around +X,
+  non-triangle topology → `None`, empty positions → `None`,
+  degenerate scale collapse → `None`, out-of-range indices skip,
+  NaN matrix → `None`, indexed vs unindexed parity, strip vs list
+  parity, mesh-level single-primitive passthrough, mesh-level two-
+  equal-area under scale, mesh-level all-degenerate → `None`, mesh-
+  level degenerate primitive skip, mesh-level lines-primitive skip,
+  scene-level empty / no-nodes / detached-mesh skip, identity-root
+  passthrough, two instances translated apart, per-node scale
+  weighting (small mesh + scaled big mesh closed-form sum),
+  ancestor-chain composition (parent × child translation), cycle-
+  guard (mutual `children` reference resolves once), per-instance
+  degenerate-transform skip, out-of-range mesh-id skip, three
+  identity-instanced meshes equal-weight average, finite-output
+  guarantee, cross-check against `Scene3D::surface_centroid` for
+  the identity-rooted case, and two identity-coincident instances.
+
 ### Added — Round 227 (Area-weighted surface centroid: `Primitive` / `Mesh` / `Scene3D`)
 
 - `Primitive::surface_centroid(&self) -> Option<[f64; 3]>` —

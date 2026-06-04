@@ -1014,6 +1014,147 @@ impl Primitive {
         total
     }
 
+    /// Transform-aware area-weighted surface centroid: the same
+    /// area-weighted recombination as [`Primitive::surface_centroid`],
+    /// but every corner is first mapped through the row-major
+    /// column-vector affine 4x4 `world` matrix (same convention as
+    /// [`crate::Transform::Matrix`] / [`crate::BoundingBox::transform`])
+    /// before each per-triangle area and centroid is accumulated. The
+    /// translation column enters the per-corner position (and so the
+    /// per-triangle centroid contribution), but cancels in the edge
+    /// differences that drive the per-triangle area weight — the upper-
+    /// left 3x3 alone fixes the area weighting; the full 4x4 fixes the
+    /// position the weight multiplies.
+    ///
+    /// Used by [`crate::Scene3D::world_surface_centroid`] to fold each
+    /// reachable node's ancestor-chain transform into a per-instance
+    /// area-weighted centroid total. Returning the contribution
+    /// numerator + denominator separately (instead of `world *
+    /// local_centroid` scaled by a single area factor) is the only
+    /// faithful answer under non-uniform scale, since both the per-
+    /// triangle area weight *and* the per-triangle centroid bend with
+    /// the transform in ways that don't factor through the local
+    /// centroid alone.
+    ///
+    /// # Derivation
+    ///
+    /// For a triangle `(P_a, P_b, P_c)` mapped through the affine world
+    /// matrix `M`, the post-transform corners are `M·P_*`, the post-
+    /// transform centroid is `(M·P_a + M·P_b + M·P_c) / 3`, and the
+    /// post-transform area is `|(M_3·E1) × (M_3·E2)| / 2` (the
+    /// translation row cancels in the edge differences; `M_3` is the
+    /// upper-left 3x3). Substituting in the continuous identity
+    /// `C = (Σ area_i · centroid_i) / Σ area_i` and accumulating gives
+    /// the closed form. Under a pure translation `t` (`M_3 = I`), every
+    /// per-triangle area is unchanged and every per-triangle centroid
+    /// gains `t`, so the area-weighted recombination gains `t` exactly
+    /// — translation equivariance.
+    ///
+    /// # Contract
+    ///
+    /// * Topology handling, degenerate-triangle skipping, NaN guarding,
+    ///   and out-of-range-index skipping all mirror
+    ///   [`Primitive::surface_centroid`] / [`Primitive::world_surface_area`].
+    ///   Non-triangle topologies return `None`. Result components are
+    ///   finite for any finite input.
+    /// * Returns `None` when the post-transform area accumulator stays
+    ///   at `0.0` — either every triangle was degenerate, the
+    ///   topology was non-triangular, or the transform collapsed every
+    ///   triangle to zero area (e.g. a `[0, 1, 1]` scale flattens a
+    ///   `Z=const` mesh's effective Y-Z extent only — but a `[0, 0, 1]`
+    ///   scale on every axis is `None`).
+    /// * Coordinates are in the **world** frame defined by the supplied
+    ///   matrix — translation of `world` translates the result by the
+    ///   same vector; rotation rotates it; uniform scale `s` around the
+    ///   origin scales it from the origin by `s`.
+    /// * Accumulators are `f64`; per-triangle math is `f64`.
+    /// * **Does not mutate `self`.** Pure; cost `O(triangle_count)`.
+    pub fn world_surface_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]> {
+        let n = self.positions.len();
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_area = 0.0_f64;
+        // Promote the 4x4 to f64 once so the per-corner mapping is a
+        // small fixed cost rather than a per-vertex f32-cast cascade.
+        let m00 = world[0][0] as f64;
+        let m01 = world[0][1] as f64;
+        let m02 = world[0][2] as f64;
+        let m03 = world[0][3] as f64;
+        let m10 = world[1][0] as f64;
+        let m11 = world[1][1] as f64;
+        let m12 = world[1][2] as f64;
+        let m13 = world[1][3] as f64;
+        let m20 = world[2][0] as f64;
+        let m21 = world[2][1] as f64;
+        let m22 = world[2][2] as f64;
+        let m23 = world[2][3] as f64;
+        let xform = |p: [f32; 3]| {
+            let x = p[0] as f64;
+            let y = p[1] as f64;
+            let z = p[2] as f64;
+            [
+                m00 * x + m01 * y + m02 * z + m03,
+                m10 * x + m11 * y + m12 * z + m13,
+                m20 * x + m21 * y + m22 * z + m23,
+            ]
+        };
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = xform(self.positions[ia]);
+            let pb = xform(self.positions[ib]);
+            let pc = xform(self.positions[ic]);
+            if !pa[0].is_finite()
+                || !pa[1].is_finite()
+                || !pa[2].is_finite()
+                || !pb[0].is_finite()
+                || !pb[1].is_finite()
+                || !pb[2].is_finite()
+                || !pc[0].is_finite()
+                || !pc[1].is_finite()
+                || !pc[2].is_finite()
+            {
+                continue;
+            }
+            let ux = pb[0] - pa[0];
+            let uy = pb[1] - pa[1];
+            let uz = pb[2] - pa[2];
+            let vx = pc[0] - pa[0];
+            let vy = pc[1] - pa[1];
+            let vz = pc[2] - pa[2];
+            let crx = uy * vz - uz * vy;
+            let cry = uz * vx - ux * vz;
+            let crz = ux * vy - uy * vx;
+            if !crx.is_finite() || !cry.is_finite() || !crz.is_finite() {
+                continue;
+            }
+            let m2 = crx * crx + cry * cry + crz * crz;
+            if !m2.is_finite() {
+                continue;
+            }
+            let area = m2.sqrt() * 0.5;
+            if !area.is_finite() || area == 0.0 {
+                continue;
+            }
+            // Per-triangle contribution to the numerator is
+            // `area * centroid` = `(area / 3) * (P_a + P_b + P_c)`,
+            // same shape as `surface_centroid` in the local frame.
+            let w = area / 3.0;
+            sum_x += w * (pa[0] + pb[0] + pc[0]);
+            sum_y += w * (pa[1] + pb[1] + pc[1]);
+            sum_z += w * (pa[2] + pb[2] + pc[2]);
+            sum_area += area;
+        }
+        if sum_area == 0.0 || !sum_area.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_area;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
     /// Signed volume enclosed by this primitive's triangle tessellation,
     /// in the unit-cubed of [`Primitive::positions`] (matching the parent
     /// [`crate::Scene3D::unit`] — metres³ by default). **The result is
@@ -2011,6 +2152,60 @@ impl Mesh {
                 continue;
             }
             if let Some(c) = p.surface_centroid() {
+                sum_x += c[0] * area;
+                sum_y += c[1] * area;
+                sum_z += c[2] * area;
+                sum_area += area;
+            }
+        }
+        if sum_area == 0.0 || !sum_area.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_area;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
+    /// Transform-aware area-weighted surface centroid across every
+    /// contained primitive: every primitive's
+    /// [`Primitive::world_surface_centroid`] (numerator + denominator)
+    /// is combined into a single mesh-level numerator + denominator
+    /// before the final division.
+    ///
+    /// # Derivation
+    ///
+    /// The per-primitive helper supplies a closed-form ratio
+    /// `(Σ area_world · centroid_world) / Σ area_world`. To recombine
+    /// across primitives correctly, recover each primitive's numerator
+    /// (centroid scaled by world surface area) and add it to a running
+    /// total, then divide once at the end. Because
+    /// [`Primitive::world_surface_centroid`] returns the post-divide
+    /// ratio rather than the raw numerator, the mesh helper recovers
+    /// each per-primitive area from [`Primitive::world_surface_area`]
+    /// (a single fixed-cost extra triangle pass) and multiplies. The
+    /// extra pass is intentional: keeping the per-primitive helper at
+    /// its natural ratio shape gives callers a direct answer without
+    /// teaching them about the recombination contract.
+    ///
+    /// # Contract
+    ///
+    /// * Skips primitives whose [`Primitive::world_surface_centroid`]
+    ///   returns `None` or whose [`Primitive::world_surface_area`] is
+    ///   `0.0` / non-finite. Returns `None` when every primitive
+    ///   contributes nothing under `world`.
+    /// * Mirrors [`Mesh::surface_centroid`]'s `f64` accumulator and
+    ///   silent-skip policy for partly-corrupt buffers.
+    /// * Pure; cost `O(Σ triangle_count_per_primitive)`.
+    pub fn world_surface_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]> {
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_area = 0.0_f64;
+        for p in &self.primitives {
+            let area = p.world_surface_area(world);
+            if area == 0.0 || !area.is_finite() {
+                continue;
+            }
+            if let Some(c) = p.world_surface_centroid(world) {
                 sum_x += c[0] * area;
                 sum_y += c[1] * area;
                 sum_z += c[2] * area;
