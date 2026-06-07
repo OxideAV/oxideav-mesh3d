@@ -1216,6 +1216,59 @@ impl Scene3D {
         self.signed_volume().abs()
     }
 
+    /// Volume-weighted centroid (centre of mass) across every mesh in
+    /// the scene — the signed-volume-weighted combination of every
+    /// mesh's own [`crate::Mesh::volume_centroid`]. This walks meshes
+    /// once, not node instances: a mesh instanced by multiple reachable
+    /// nodes contributes its centroid (with its signed volume as the
+    /// weight) once, not once per node. For a transform-aware
+    /// per-instance centroid total, walk
+    /// [`Scene3D::world_node_transforms`] alongside
+    /// [`crate::Primitive::volume_centroid`] and combine the
+    /// per-instance centroids with their post-transform signed volumes
+    /// (`det(M_3x3) · V_local` for each closed-mesh instance) as
+    /// weights.
+    ///
+    /// **Only physically meaningful when each contained mesh is a
+    /// closed two-manifold surface.** See
+    /// [`crate::Primitive::is_closed_manifold`] /
+    /// [`crate::Primitive::edge_manifold_report`]. An open patch (a
+    /// hemisphere, a plane) gives an answer that depends on where the
+    /// origin sits because the surface-cancellation argument no longer
+    /// applies; for those callers should use
+    /// [`Scene3D::surface_centroid`].
+    ///
+    /// Returns `None` when every contained mesh returns `None` (or the
+    /// scene holds zero meshes), or when the accumulated signed volume
+    /// is `0.0` / non-finite (a flat sheet, or perfectly cancelling
+    /// inside-out shells). Coordinates are in the scene's local frame
+    /// ([`Scene3D::unit`]); contract matches
+    /// [`crate::Primitive::volume_centroid`] for finiteness,
+    /// degenerate-skipping, and out-of-range / NaN handling.
+    pub fn volume_centroid(&self) -> Option<[f64; 3]> {
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_v = 0.0_f64;
+        for m in &self.meshes {
+            let v = m.signed_volume();
+            if v == 0.0 || !v.is_finite() {
+                continue;
+            }
+            if let Some(c) = m.volume_centroid() {
+                sum_x += c[0] * v;
+                sum_y += c[1] * v;
+                sum_z += c[2] * v;
+                sum_v += v;
+            }
+        }
+        if sum_v == 0.0 || !sum_v.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_v;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
     /// Transform-aware total surface area across every node-instantiated
     /// mesh in the scene, in world units squared (matching
     /// [`Scene3D::unit`]² when the scene's root has identity transform).

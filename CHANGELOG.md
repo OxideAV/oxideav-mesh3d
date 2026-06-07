@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 247 (Volume-weighted centroid / centre of mass: `Primitive` / `Mesh` / `Scene3D`)
+
+- `Primitive::volume_centroid(&self) -> Option<[f64; 3]>` — centre of
+  mass of the uniform-density solid enclosed by this primitive's
+  closed triangle tessellation. Derivation: fan the closed surface
+  into origin-anchored tetrahedra (the same decomposition
+  `Primitive::signed_volume` already uses for `∫∫∫ dV` via the
+  divergence theorem); each tetrahedron `(0, P_a, P_b, P_c)` has
+  signed volume `V_i = (P_a · (P_b × P_c)) / 6` and centroid
+  `C_i = (P_a + P_b + P_c) / 4`. The whole-solid centre of mass is
+  `(Σ V_i · C_i) / Σ V_i` — the textbook "Volume Integration"
+  reduction (Mirtich, *Journal of Graphics Tools* 1(2), 1996,
+  equation (1.16); Cha & Chen, ICIP 2001). Cross-product machinery
+  is shared with `signed_volume`; this helper adds one corner-sum
+  plus one scalar multiply per axis per triangle. Topology
+  integration goes through `triangle_indices`, so `Triangles` /
+  `TriangleStrip` / `TriangleFan` all feed in; non-triangle
+  topologies (lines/points) return `None`. `f64` accumulators;
+  degenerate / NaN-/Inf-/out-of-range faces silently skipped.
+  Translation-equivariant for closed surfaces; sign-invariant
+  (CW-from-outside winding produces the same centroid as
+  CCW-from-outside). Returns `None` when `Σ V_i` is `0.0` or
+  non-finite (flat sheet, perfectly cancelling shells). Only
+  physically meaningful for a closed two-manifold; arithmetically
+  well-defined regardless. Pure; `O(triangle_count)`.
+- `Mesh::volume_centroid(&self) -> Option<[f64; 3]>` —
+  signed-volume-weighted recombination of every contained
+  primitive's centroid; the signed weights correctly handle
+  inside-out subshells. Mesh-local; non-triangle / zero-signed-
+  volume primitives skipped.
+- `Scene3D::volume_centroid(&self) -> Option<[f64; 3]>` —
+  signed-volume-weighted recombination of every mesh's centroid
+  in the scene's local frame. Walks meshes once, not node
+  instances (per-instance centroid needs an explicit walk of
+  `world_node_transforms`).
+- `tests/volume_centroid.rs` — 35 tests covering unit-cube centre
+  of mass, CW-vs-CCW sign invariance, translation equivariance,
+  non-uniform scale, axis-tetrahedron corner-mean, indexed vs
+  unindexed parity (with signed-volume cross-check), strip /
+  fan / lines / points / empty topology `None` paths, all-
+  degenerate / collinear-triangle `None` paths, out-of-range
+  index skipping, NaN-coord skipping, centred-cube → origin,
+  distant-cube no-origin-dependence, centroid-inside-bounding-box,
+  cube surface↔volume centroid agreement (uniform-density
+  symmetric), tetrahedron surface↔volume divergence, mesh-level
+  passthrough / empty / degenerate-skip / equal-weight midpoint /
+  unequal-weight 1:8 / cancelling-shells / lines-skip, scene-level
+  empty / passthrough / two-mesh midpoint / mesh-once-not-per-node
+  / degenerate-skip / finite-components / three-mesh average /
+  cube cross-check vs `surface_centroid`.
+
 ### Added — Round 234 (Transform-aware world surface centroid: `Primitive` / `Mesh` / `Scene3D`)
 
 - `Primitive::world_surface_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`

@@ -804,6 +804,66 @@ Round 227 lands the area-weighted surface centroid
   `Primitive::surface_centroid` and combine the per-instance
   centroids with their post-transform areas as weights.
 
+Round 247 lands the volume-weighted centroid (centre of mass)
+reduction (`tests/volume_centroid.rs`, 35 tests):
+
+- `Primitive::volume_centroid(&self) -> Option<[f64; 3]>` —
+  centre of mass of the uniform-density solid enclosed by this
+  primitive's closed triangle tessellation, in the unit of
+  [`Primitive::positions`]. Derivation: fan the closed surface into
+  origin-anchored tetrahedra (the same decomposition
+  [`Primitive::signed_volume`] uses for `∫∫∫ dV` via the divergence
+  theorem); each tetrahedron `(0, P_a, P_b, P_c)` has signed
+  volume `V_i = (P_a · (P_b × P_c)) / 6` and centroid
+  `C_i = (P_a + P_b + P_c) / 4` (the centroid of a tetrahedron is
+  the average of its four vertices). The whole-solid centre of mass
+  is then `(Σ V_i · C_i) / Σ V_i` — the closed form is the textbook
+  "Volume Integration" reduction; e.g. Mirtich, "Fast and Accurate
+  Computation of Polyhedral Mass Properties", *Journal of Graphics
+  Tools* 1(2), 1996, equation (1.16). The cross-product machinery
+  is the same one `signed_volume` already uses; this helper adds
+  three per-triangle corner sums + one scalar multiply per axis.
+  Topology integration goes through `triangle_indices`, so
+  `Triangles` / `TriangleStrip` (alternating winding) /
+  `TriangleFan` all feed in; non-triangle topologies (lines/points)
+  return `None`. `f64` accumulators so million-triangle meshes
+  don't drift under `f32` summation. Degenerate (collinear /
+  coincident corners), NaN-/Inf-producing faces, and out-of-range
+  index entries are silently skipped — matching the silent-skip
+  robustness contract of every other reduction. **Translation-
+  equivariant for a closed surface** (the origin-anchored
+  contributions cancel pairwise for the closed boundary, the same
+  argument that makes `signed_volume` translation-invariant);
+  **sign-invariant** — flipping every triangle's winding flips
+  `signed_volume`'s sign *and* each `V_i`'s sign, so the
+  weighted-average ratio is unchanged. Only physically meaningful
+  for a closed two-manifold (see `is_closed_manifold`);
+  arithmetically well-defined regardless. Returns `None` when
+  `Σ V_i` is `0.0` (degenerate mesh / flat sheet / perfectly
+  cancelling shells) or non-finite. Pure; `O(triangle_count)`.
+- `Mesh::volume_centroid(&self) -> Option<[f64; 3]>` —
+  signed-volume-weighted recombination of every contained
+  primitive's centroid (additivity of the volume integral over a
+  union of bodies: `Σ V_i · C_i / Σ V_i`). The **signed** weights
+  cause an inside-out subshell to subtract correctly. Mesh-local,
+  no transforms / skin pose / morph deltas; non-triangle and
+  zero-signed-volume primitives contribute nothing and don't pull
+  the result toward `[0, 0, 0]`. Returns `None` when every primitive
+  contributes nothing.
+- `Scene3D::volume_centroid(&self) -> Option<[f64; 3]>` —
+  signed-volume-weighted recombination of every mesh's centroid in
+  the scene's local frame ([`Scene3D::unit`]). **Walks meshes once,
+  not node instances** — a mesh instanced under multiple reachable
+  nodes contributes its centroid once. For a transform-aware,
+  per-instance centroid, walk [`Scene3D::world_node_transforms`]
+  alongside `Primitive::volume_centroid` and combine the per-
+  instance centroids with their post-transform signed volumes
+  (`det(M_3x3) · V_local`) as weights. Use cases: rigid-body
+  physics setup (the torque-free axis of rotation passes through
+  this centre), camera-orbit-target picking (closer to the
+  perceptual centre of a solid object than `bounding_box` centre
+  or `surface_centroid`), 3D-print balance pre-flight.
+
 Round 234 closes the per-instance gap that round 227 flagged
 (`tests/world_surface_centroid.rs`, 33 tests):
 

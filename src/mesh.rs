@@ -1310,6 +1310,160 @@ impl Primitive {
         self.signed_volume().abs()
     }
 
+    /// Volume-weighted centroid of the solid enclosed by this primitive's
+    /// closed triangle tessellation — the **centre of mass** of a
+    /// uniform-density body bounded by the surface, in the unit of
+    /// [`Primitive::positions`].
+    ///
+    /// # Derivation
+    ///
+    /// The continuous identity is
+    /// `C = ∫∫∫_V x dV / ∫∫∫_V dV`. The denominator is already the
+    /// [`Primitive::signed_volume`] reduction. For the numerator, the
+    /// same divergence-theorem trick `signed_volume` uses (fan the
+    /// closed surface into origin-anchored tetrahedra, whose
+    /// origin-coincident faces cancel pairwise for a closed mesh)
+    /// applies directly: for each surface triangle `(P_a, P_b, P_c)`
+    /// the corresponding tetrahedron `(0, P_a, P_b, P_c)` has signed
+    /// volume `V_i = (P_a · (P_b × P_c)) / 6` and centroid
+    /// `C_i = (0 + P_a + P_b + P_c) / 4 = (P_a + P_b + P_c) / 4`
+    /// (the centroid of a tetrahedron is the average of its four
+    /// vertices, a standard barycentric result). The
+    /// volume-weighted centroid of the whole solid is then
+    /// `C = (Σ V_i · C_i) / Σ V_i`. The same closed form is the
+    /// "Volume Integration" reduction in any textbook treatment of
+    /// rigid-body mass properties — e.g. Mirtich, "Fast and Accurate
+    /// Computation of Polyhedral Mass Properties", *Journal of
+    /// Graphics Tools* 1(2), 1996, equation (1.16); the closed form
+    /// also appears in Cha & Chen, "Efficient feature extraction for
+    /// 2D/3D objects in mesh representation", ICIP 2001, which we
+    /// already cite for [`Primitive::signed_volume`].
+    ///
+    /// The cross-product machinery is exactly the same as
+    /// [`Primitive::signed_volume`]; this helper adds three
+    /// per-triangle corner sums plus one scalar multiply per axis,
+    /// so the per-triangle cost stays a small constant factor.
+    ///
+    /// # Contract
+    ///
+    /// * Topology integration goes through
+    ///   [`Primitive::triangle_indices`], so `Triangles` /
+    ///   `TriangleStrip` (alternating winding) / `TriangleFan` all
+    ///   feed in correctly; non-triangle topologies (lines/points)
+    ///   return `None`.
+    /// * Accumulators are `f64` so million-triangle meshes don't drift
+    ///   under `f32` summation.
+    /// * Degenerate (collinear/coincident corners), NaN- or
+    ///   Inf-producing faces, and out-of-range index entries contribute
+    ///   nothing — matching the silent-skip robustness contract of
+    ///   every other reduction.
+    /// * **Translation-equivariant for a closed surface** — under a
+    ///   uniform translation `Δ` every corner shifts by `Δ`, every
+    ///   per-tet centroid by `Δ`, and the volume-weighted average by
+    ///   `Δ`. (Individual tetrahedra are *not* translation-invariant
+    ///   because the origin is the implicit fourth vertex; the
+    ///   surface-cancellation argument that makes
+    ///   `signed_volume` translation-invariant also makes the volume
+    ///   centroid translation-equivariant — the origin-anchored
+    ///   contributions cancel pairwise for the closed boundary.)
+    /// * **Sign-invariant** — flipping every triangle's winding flips
+    ///   `signed_volume`'s sign *and* each `V_i`'s sign, so the
+    ///   weighted-average ratio is unchanged. An inside-out cube
+    ///   reports the same centre of mass as the equivalent
+    ///   right-side-out cube.
+    /// * Only physically meaningful for a closed two-manifold (see
+    ///   [`Primitive::is_closed_manifold`]); arithmetically
+    ///   well-defined regardless. An open surface (a hemisphere, a
+    ///   plane) produces an answer that depends on where the origin
+    ///   sits because the surface-cancellation argument no longer
+    ///   applies. Callers wanting the centroid of an open patch
+    ///   should use [`Primitive::surface_centroid`] instead.
+    /// * Returns `None` when `Σ V_i` is `0.0` (degenerate mesh / flat
+    ///   sheet / perfectly cancelling shells) or non-finite — there
+    ///   is no centre of mass to report for a zero-volume body.
+    /// * Pure; cost `O(triangle_count)`.
+    ///
+    /// # Use
+    ///
+    /// * Rigid-body physics setup — the body's centre of mass is the
+    ///   torque-free axis of rotation around which the inertia tensor
+    ///   is diagonalisable.
+    /// * Camera framing / orbit-target picking — the volume centroid
+    ///   of a closed mesh is closer to the perceptual centre of a
+    ///   solid object than its [`Primitive::bounding_box`] centre
+    ///   (which is pulled toward heavy / wide protrusions) or its
+    ///   [`Primitive::surface_centroid`] (which is pulled toward
+    ///   high-surface-area regions, e.g. spikes).
+    /// * 3D-print balance pre-flight — the volume centroid relative to
+    ///   the bed plane predicts tipping during print.
+    ///
+    /// See [`Mesh::volume_centroid`] for the per-mesh roll-up and
+    /// [`crate::Scene3D::volume_centroid`] for the scene-level
+    /// aggregate.
+    pub fn volume_centroid(&self) -> Option<[f64; 3]> {
+        let n = self.positions.len();
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_v = 0.0_f64;
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = self.positions[ia];
+            let pb = self.positions[ib];
+            let pc = self.positions[ic];
+            // f64 from the loaded position values onward so the scalar
+            // triple product (a · (b × c)) and the per-tet centroid
+            // stay stable at scale.
+            let ax = pa[0] as f64;
+            let ay = pa[1] as f64;
+            let az = pa[2] as f64;
+            let bx = pb[0] as f64;
+            let by = pb[1] as f64;
+            let bz = pb[2] as f64;
+            let cx = pc[0] as f64;
+            let cy = pc[1] as f64;
+            let cz = pc[2] as f64;
+            // P_b × P_c
+            let crx = by * cz - bz * cy;
+            let cry = bz * cx - bx * cz;
+            let crz = bx * cy - by * cx;
+            if !crx.is_finite() || !cry.is_finite() || !crz.is_finite() {
+                continue;
+            }
+            // 6 · V_i — the signed volume of the tetrahedron formed by
+            // the origin and the three corners times six. We divide by
+            // six only at the end (it cancels between numerator and
+            // denominator, but we keep the factor to make the final
+            // signed-volume comparison faithful).
+            let six_v = ax * crx + ay * cry + az * crz;
+            if !six_v.is_finite() {
+                continue;
+            }
+            // Per-tetrahedron centroid contribution `V_i · C_i` where
+            // `C_i = (P_a + P_b + P_c) / 4`. We accumulate `6 · V_i ·
+            // (P_a + P_b + P_c)` and divide by 24 at the end so the
+            // per-step cost is one multiply per axis.
+            let sx = ax + bx + cx;
+            let sy = ay + by + cy;
+            let sz = az + bz + cz;
+            sum_x += six_v * sx;
+            sum_y += six_v * sy;
+            sum_z += six_v * sz;
+            sum_v += six_v;
+        }
+        if sum_v == 0.0 || !sum_v.is_finite() {
+            return None;
+        }
+        // sum_x is 24 · Σ (V_i · C_i_x); sum_v is 6 · Σ V_i.
+        // Ratio is 4 · Σ (V_i · C_i_x) / Σ V_i → divide by 4 so the
+        // final answer is the textbook `Σ V_i · C_i / Σ V_i`.
+        let inv = 1.0 / (sum_v * 4.0);
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
     /// Recompute per-vertex MikkTSpace-style tangent-space basis
     /// vectors from this primitive's positions, UVs (UV set `uv_set`),
     /// and per-vertex normals, returning one `[f32; 4]` per vertex
@@ -2244,6 +2398,58 @@ impl Mesh {
     /// primitive's [`Primitive::volume`] separately.
     pub fn volume(&self) -> f64 {
         self.signed_volume().abs()
+    }
+
+    /// Volume-weighted centroid (centre of mass) across every contained
+    /// primitive — the signed-volume-weighted combination of every
+    /// primitive's [`Primitive::volume_centroid`].
+    ///
+    /// # Derivation
+    ///
+    /// The continuous identity `C = ∫∫∫_V x dV / ∫∫∫_V dV` from
+    /// [`Primitive::volume_centroid`] generalises to a union of solid
+    /// bodies by additivity of the volume integral: integrating `x`
+    /// over the union is the sum of the per-body integrals
+    /// (`V_i · C_i`), and integrating `1` is the sum of the per-body
+    /// signed volumes (`V_i`). So the mesh-level volume centroid is
+    /// the per-primitive centroid recombined with the per-primitive
+    /// **signed** volumes as weights — `Σ V_i · C_i / Σ V_i`. This
+    /// matches [`Mesh::signed_volume`]'s additive roll-up; the signed
+    /// weights cause an inside-out subshell to subtract correctly.
+    ///
+    /// # Contract
+    ///
+    /// * Mesh-local — no transforms, skin pose, or morph deltas are
+    ///   applied.
+    /// * Skips primitives whose [`Primitive::volume_centroid`] returns
+    ///   `None` (non-triangle / zero-signed-volume) or whose
+    ///   [`Primitive::signed_volume`] is non-finite. Returns `None`
+    ///   when the accumulated signed volume is `0.0` or non-finite.
+    /// * Mirrors [`Mesh::surface_centroid`]'s `f64` accumulator and
+    ///   silent-skip policy for partly-corrupt buffers.
+    /// * Pure; cost `O(Σ triangle_count_per_primitive)`.
+    pub fn volume_centroid(&self) -> Option<[f64; 3]> {
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_v = 0.0_f64;
+        for p in &self.primitives {
+            let v = p.signed_volume();
+            if v == 0.0 || !v.is_finite() {
+                continue;
+            }
+            if let Some(c) = p.volume_centroid() {
+                sum_x += c[0] * v;
+                sum_y += c[1] * v;
+                sum_z += c[2] * v;
+                sum_v += v;
+            }
+        }
+        if sum_v == 0.0 || !sum_v.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_v;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
     }
 
     /// Closest-hit ray query across every contained primitive.
