@@ -1698,6 +1698,249 @@ impl Primitive {
         sum_v / 6.0
     }
 
+    /// Unit-density inertia tensor of the solid enclosed by this
+    /// primitive's closed triangle tessellation, taken about the
+    /// **origin** of [`Primitive::positions`], in the unit-to-the-fifth
+    /// of the position frame.
+    ///
+    /// Returned as a row-major `[[f64; 3]; 3]` symmetric matrix:
+    ///
+    /// ```text
+    /// [ I_xx  I_xy  I_xz ]
+    /// [ I_xy  I_yy  I_yz ]
+    /// [ I_xz  I_yz  I_zz ]
+    /// ```
+    ///
+    /// The convention is the standard rigid-body one: diagonal entries
+    /// are the *moments* `I_αα = ∫_V (β² + γ²) dV` (the two coordinates
+    /// not equal to α), and off-diagonal entries are the negated
+    /// *products of inertia* `I_αβ = -∫_V x_α · x_β dV` (α ≠ β). The
+    /// tensor maps an angular velocity `ω` to the angular momentum
+    /// `L = I · ω` for a rigid body of unit density and the given shape.
+    /// Multiply by the body's actual density `ρ` (or by the total mass
+    /// `M = ρ · V` and divide by `V` if you prefer mass-normalised
+    /// units) to get the physical inertia tensor.
+    ///
+    /// # Derivation
+    ///
+    /// The continuous identity `I_αβ = ∫∫∫_V f_αβ(x, y, z) dV` (with the
+    /// integrand the moment or product-of-inertia kernel) is reduced by
+    /// the same divergence-theorem decomposition
+    /// [`Primitive::signed_volume`] and [`Primitive::volume_centroid`]
+    /// already use: fan the closed surface into origin-anchored
+    /// tetrahedra `(0, P_a, P_b, P_c)`, whose origin-coincident
+    /// boundary terms cancel pairwise for a closed two-manifold. Each
+    /// origin-anchored tetrahedron has signed volume
+    /// `V_i = (P_a · (P_b × P_c)) / 6`, and the second-moment integrals
+    /// over its interior have the closed form (with `P_0 = 0`,
+    /// `P_1 = P_a`, `P_2 = P_b`, `P_3 = P_c`):
+    ///
+    /// ```text
+    /// ∫_T x_α² dV  = (V_i / 10) · ( Σ_{k=1..3} p_α[k]²
+    ///                              + Σ_{1 ≤ j < k ≤ 3} p_α[j]·p_α[k] )
+    ///
+    /// ∫_T x_α x_β dV = (V_i / 20) · ( 2·Σ_{k=1..3} p_α[k]·p_β[k]
+    ///                                + Σ_{j ≠ k} p_α[j]·p_β[k] / 2 )
+    /// ```
+    ///
+    /// (The `P_0 = 0` corner drops every term it appears in, collapsing
+    /// the four-corner symmetric polynomials to the three-corner forms
+    /// above.) These are the standard second-moment integrals of a
+    /// tetrahedron, the same closed-form Mirtich, "Fast and Accurate
+    /// Computation of Polyhedral Mass Properties", *Journal of Graphics
+    /// Tools* 1(2), 1996 uses (we already cite Mirtich for
+    /// [`Primitive::volume_centroid`]), specialised to the
+    /// origin-anchored fourth vertex.
+    ///
+    /// The per-tetrahedron diagonal-moment contributions assemble
+    /// directly:
+    ///
+    /// ```text
+    /// I_xx_i = ∫_T (y² + z²) dV = ∫_T y² dV + ∫_T z² dV
+    /// I_xy_i = - ∫_T x · y dV
+    /// ```
+    ///
+    /// — and the same shape for the remaining tensor components. The
+    /// per-tetrahedron sums add up across the closed surface to give the
+    /// whole-body inertia tensor about the origin.
+    ///
+    /// To shift the tensor to a different reference point (e.g. the
+    /// centre of mass returned by [`Primitive::volume_centroid`]), apply
+    /// the parallel-axis theorem: `I_about_C = I_about_O - M · D` where
+    /// `M = ρ · V` is the body's mass, and `D` is the
+    /// rank-1-plus-trace-corrected displacement tensor
+    /// `D_αβ = c_α · c_β - δ_αβ · |c|²` for the centroid offset
+    /// `c = C - O`.
+    ///
+    /// # Contract
+    ///
+    /// * Topology integration goes through
+    ///   [`Primitive::triangle_indices`], so `Triangles` /
+    ///   `TriangleStrip` (alternating winding) / `TriangleFan` all feed
+    ///   in correctly; non-triangle topologies (lines/points) return
+    ///   `None`.
+    /// * Accumulators are `f64`; per-triangle math is `f64`. Returns
+    ///   `None` only for non-triangle topology, an empty primitive, or
+    ///   when every face has been silently skipped because every per-tet
+    ///   integrand was non-finite.
+    /// * **Degenerate triangles contribute zero.** A face whose edge
+    ///   cross product, signed-volume scalar, or per-axis polynomial
+    ///   sum is non-finite is silently skipped — same robustness
+    ///   contract as [`Primitive::signed_volume`] /
+    ///   [`Primitive::volume_centroid`].
+    /// * **Out-of-range index** entries are skipped, not panicked.
+    /// * **Translation-equivariant for a closed surface.** Under a
+    ///   uniform translation `Δ` the tensor about the *origin* shifts
+    ///   by the parallel-axis correction (every per-tet integrand
+    ///   changes), but the tensor about the *centre of mass* is
+    ///   invariant (a coordinate-independent intrinsic property of the
+    ///   shape). For an *open* mesh the closed-mesh boundary-term
+    ///   cancellation argument does not apply and the returned tensor
+    ///   depends on where the origin sits in the primitive's frame.
+    /// * **Sign-invariant for the diagonal moments under winding flip.**
+    ///   Flipping every triangle's winding flips every per-tet signed
+    ///   volume, but the closed-form integrals scale linearly in that
+    ///   signed volume, so an inside-out closed mesh produces the
+    ///   *negated* tensor. Callers wanting the physical (positive-
+    ///   diagonal) tensor of a closed body should either ensure the
+    ///   winding is CCW-from-outside or take `[I_αα.abs()]`-stamped
+    ///   diagonals — same caveat as [`Primitive::signed_volume`]'s
+    ///   sign-vs-volume relationship.
+    /// * Only physically meaningful for a closed two-manifold (see
+    ///   [`Primitive::is_closed_manifold`]); arithmetically well-defined
+    ///   regardless.
+    /// * **Does not mutate `self`.** Pure; cost `O(triangle_count)`.
+    ///
+    /// # Use
+    ///
+    /// * Rigid-body dynamics — the body's inertia tensor is what an
+    ///   engine multiplies into its angular-velocity update; the
+    ///   centre-of-mass-shifted form is what most simulators want, and
+    ///   the parallel-axis shift outlined in the derivation gets you
+    ///   there from this origin-about result.
+    /// * Principal-axis decomposition / oriented bounding boxes — the
+    ///   eigenvectors of the centred inertia tensor are the body's
+    ///   principal axes, useful as a tighter alternative to AABB for
+    ///   picking / collision broad-phase.
+    /// * Numerical 3D-print analysis — the principal moments tell you
+    ///   the body's preferred resting orientation under gravity (the
+    ///   axis with the largest moment is the most stable spin axis).
+    ///
+    /// See [`Mesh::inertia_tensor`] for the per-mesh roll-up.
+    pub fn inertia_tensor(&self) -> Option<[[f64; 3]; 3]> {
+        if !matches!(
+            self.topology,
+            Topology::Triangles | Topology::TriangleStrip | Topology::TriangleFan
+        ) {
+            return None;
+        }
+        let n = self.positions.len();
+        // Accumulators scaled to keep the per-tet step division-free.
+        // `acc_xx` holds `Σ six_v · (Ax² + Bx² + Cx² + Ax·Bx + Ax·Cx + Bx·Cx)`,
+        // which is `60 · Σ V_i · ∫_T x² dV / V_i = 60 · Σ ∫_T x² dV`.
+        // The whole-body `∫_V x² dV` is therefore `acc_xx / 60`.
+        // Off-diagonals accumulate the doubled-symmetric polynomial; the
+        // closed-form factor there is `V/20`, so per-tet contribution is
+        // `six_v · (…) / 120` and the divisor at the end is 120.
+        let mut acc_xx = 0.0_f64;
+        let mut acc_yy = 0.0_f64;
+        let mut acc_zz = 0.0_f64;
+        let mut acc_xy = 0.0_f64;
+        let mut acc_xz = 0.0_f64;
+        let mut acc_yz = 0.0_f64;
+        let mut any_finite = false;
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = self.positions[ia];
+            let pb = self.positions[ib];
+            let pc = self.positions[ic];
+            // Promote to f64 once per corner; matches the
+            // `signed_volume` / `volume_centroid` precision policy.
+            let ax = pa[0] as f64;
+            let ay = pa[1] as f64;
+            let az = pa[2] as f64;
+            let bx = pb[0] as f64;
+            let by = pb[1] as f64;
+            let bz = pb[2] as f64;
+            let cx = pc[0] as f64;
+            let cy = pc[1] as f64;
+            let cz = pc[2] as f64;
+            // P_b × P_c — same cross-product as `signed_volume`.
+            let crx = by * cz - bz * cy;
+            let cry = bz * cx - bx * cz;
+            let crz = bx * cy - by * cx;
+            if !crx.is_finite() || !cry.is_finite() || !crz.is_finite() {
+                continue;
+            }
+            // six_v = 6 · V_i — the origin-anchored signed tetrahedron
+            // volume times six.
+            let six_v = ax * crx + ay * cry + az * crz;
+            if !six_v.is_finite() {
+                continue;
+            }
+            // Per-axis closed-form `Σ p[k]² + Σ_{j<k} p[j]·p[k]` for the
+            // three non-origin corners — the polynomial that appears in
+            // `∫_T x_α² dV = (V_i / 10) · (…)`.
+            let mxx = ax * ax + bx * bx + cx * cx + ax * bx + ax * cx + bx * cx;
+            let myy = ay * ay + by * by + cy * cy + ay * by + ay * cy + by * cy;
+            let mzz = az * az + bz * bz + cz * cz + az * bz + az * cz + bz * cz;
+            // Cross-axis closed-form
+            // `2·Σ p_α[k]·p_β[k] + Σ_{j≠k} p_α[j]·p_β[k]` for the three
+            // non-origin corners — the polynomial that appears in
+            // `∫_T x_α·x_β dV = (V_i / 20) · (…)`.
+            let mxy = 2.0 * (ax * ay + bx * by + cx * cy)
+                + (ax * by + ay * bx)
+                + (ax * cy + ay * cx)
+                + (bx * cy + by * cx);
+            let mxz = 2.0 * (ax * az + bx * bz + cx * cz)
+                + (ax * bz + az * bx)
+                + (ax * cz + az * cx)
+                + (bx * cz + bz * cx);
+            let myz = 2.0 * (ay * az + by * bz + cy * cz)
+                + (ay * bz + az * by)
+                + (ay * cz + az * cy)
+                + (by * cz + bz * cy);
+            if !mxx.is_finite()
+                || !myy.is_finite()
+                || !mzz.is_finite()
+                || !mxy.is_finite()
+                || !mxz.is_finite()
+                || !myz.is_finite()
+            {
+                continue;
+            }
+            acc_xx += six_v * mxx;
+            acc_yy += six_v * myy;
+            acc_zz += six_v * mzz;
+            acc_xy += six_v * mxy;
+            acc_xz += six_v * mxz;
+            acc_yz += six_v * myz;
+            any_finite = true;
+        }
+        if !any_finite {
+            return None;
+        }
+        // `∫_V x_α² dV = acc_αα / 60`; `∫_V x_α·x_β dV = acc_αβ / 120`.
+        // Diagonals: `I_αα = ∫(β² + γ²) dV`.
+        // Off-diagonals carry the minus sign by convention.
+        let int_xx = acc_xx / 60.0;
+        let int_yy = acc_yy / 60.0;
+        let int_zz = acc_zz / 60.0;
+        let int_xy = acc_xy / 120.0;
+        let int_xz = acc_xz / 120.0;
+        let int_yz = acc_yz / 120.0;
+        let i_xx = int_yy + int_zz;
+        let i_yy = int_xx + int_zz;
+        let i_zz = int_xx + int_yy;
+        let i_xy = -int_xy;
+        let i_xz = -int_xz;
+        let i_yz = -int_yz;
+        Some([[i_xx, i_xy, i_xz], [i_xy, i_yy, i_yz], [i_xz, i_yz, i_zz]])
+    }
+
     /// Recompute per-vertex MikkTSpace-style tangent-space basis
     /// vectors from this primitive's positions, UVs (UV set `uv_set`),
     /// and per-vertex normals, returning one `[f32; 4]` per vertex
@@ -2737,6 +2980,62 @@ impl Mesh {
         }
         let inv = 1.0 / sum_v;
         Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
+    /// Unit-density inertia tensor of the solid enclosed by this mesh's
+    /// closed triangle tessellation, taken about the **origin** of
+    /// [`Primitive::positions`], summed across every contained
+    /// primitive.
+    ///
+    /// # Derivation
+    ///
+    /// The continuous identity `I_αβ = ∫∫∫_V f_αβ(x, y, z) dV` (with the
+    /// integrand the moment or product-of-inertia kernel from
+    /// [`Primitive::inertia_tensor`]) is additive over a union of
+    /// disjoint volumes: integrating any of the second-moment kernels
+    /// over a union is the sum of the per-body integrals. So the
+    /// mesh-level tensor is the element-wise sum of every primitive's
+    /// own [`Primitive::inertia_tensor`] — the same additivity argument
+    /// [`Mesh::signed_volume`] / [`Mesh::volume_centroid`] use to
+    /// recombine per-primitive reductions. **Sign-aware**, just like
+    /// [`Mesh::signed_volume`]: an inside-out subshell contributes a
+    /// negated tensor, the same way it contributes a negative signed
+    /// volume.
+    ///
+    /// # Contract
+    ///
+    /// * Mesh-local — no transforms, skin pose, or morph deltas are
+    ///   applied.
+    /// * Skips primitives whose [`Primitive::inertia_tensor`] returns
+    ///   `None` (non-triangle topology, empty primitive, every-face-
+    ///   degenerate). Returns `None` when **every** primitive returned
+    ///   `None` (or the mesh holds zero primitives).
+    /// * Mirrors [`Mesh::volume_centroid`]'s `f64` accumulator and
+    ///   silent-skip policy for partly-corrupt buffers.
+    /// * Symmetric matrix; the off-diagonal entries are populated
+    ///   symmetrically (`I[0][1] == I[1][0]`, etc.). The diagonals are
+    ///   `I_xx = ∫(y² + z²) dV`, `I_yy = ∫(x² + z²) dV`,
+    ///   `I_zz = ∫(x² + y²) dV`. The off-diagonals carry the standard
+    ///   minus sign (`I_xy = -∫ x·y dV`).
+    /// * Pure; cost `O(Σ triangle_count_per_primitive)`.
+    pub fn inertia_tensor(&self) -> Option<[[f64; 3]; 3]> {
+        let mut total = [[0.0_f64; 3]; 3];
+        let mut any = false;
+        for p in &self.primitives {
+            if let Some(t) = p.inertia_tensor() {
+                for r in 0..3 {
+                    for c in 0..3 {
+                        total[r][c] += t[r][c];
+                    }
+                }
+                any = true;
+            }
+        }
+        if !any {
+            None
+        } else {
+            Some(total)
+        }
     }
 
     /// Closest-hit ray query across every contained primitive.

@@ -804,6 +804,80 @@ Round 227 lands the area-weighted surface centroid
   `Primitive::surface_centroid` and combine the per-instance
   centroids with their post-transform areas as weights.
 
+Round 259 lands the unit-density inertia tensor reduction
+(`tests/inertia_tensor.rs`, 18 tests):
+
+- `Primitive::inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
+  unit-density inertia tensor of the solid enclosed by this
+  primitive's closed triangle tessellation, taken about the
+  **origin** of [`Primitive::positions`], returned as a row-major
+  symmetric `[[f64; 3]; 3]` matrix. Diagonal entries are the
+  *moments* `I_αα = ∫_V (β² + γ²) dV` (the two coordinates not
+  equal to α); off-diagonals carry the standard rigid-body minus
+  sign, `I_αβ = -∫_V x_α · x_β dV`. Multiply by the body's
+  density `ρ` to recover the physical tensor; apply the parallel-
+  axis theorem (`I_about_C = I_about_O - M · D` with
+  `D_αβ = c_α·c_β - δ_αβ·|c|²`) to shift to any other reference
+  point — e.g. the centre of mass from
+  [`Primitive::volume_centroid`].
+- Derivation reuses the same divergence-theorem decomposition that
+  [`Primitive::signed_volume`] and [`Primitive::volume_centroid`]
+  rest on: fan the closed surface into origin-anchored tetrahedra
+  `(0, P_a, P_b, P_c)` and apply the closed-form per-tetrahedron
+  second-moment integrals. For the origin-anchored case (`P_0 = 0`,
+  `P_1 = A`, `P_2 = B`, `P_3 = C`):
+  `∫_T x_α² dV = (V/10) · (Σ_k p_α[k]² + Σ_{j<k} p_α[j]·p_α[k])`
+  and
+  `∫_T x_α·x_β dV = (V/20) · (2·Σ_k p_α[k]·p_β[k] + Σ_{j≠k} p_α[j]·p_β[k] / 2)`,
+  the textbook closed form. Same lineage as Mirtich, "Fast and
+  Accurate Computation of Polyhedral Mass Properties", *Journal
+  of Graphics Tools* 1(2), 1996 (the citation
+  `Primitive::volume_centroid` already carries), specialised here
+  to the second-moment kernel rather than the constant or
+  first-moment kernel.
+- Topology integration goes through `triangle_indices`, so
+  `Triangles` / `TriangleStrip` (alternating winding) /
+  `TriangleFan` all feed in correctly; non-triangle topologies
+  (lines/points) return `None`. `f64` accumulators throughout;
+  per-triangle math is `f64`. Degenerate, NaN-/Inf-producing, and
+  out-of-range-index faces are silently skipped — same robustness
+  contract as `signed_volume` / `volume_centroid`. Returns `None`
+  only when every face has been skipped or the primitive is empty
+  / non-triangle. Pure; `O(triangle_count)`.
+- Translation-equivariant for a closed surface in the sense that
+  the tensor about the centre of mass is invariant under
+  coordinate translation (the parallel-axis shift recovers it),
+  even though `I_about_origin` shifts. Sign-equivariant under
+  winding flip: an inside-out closed mesh produces the negated
+  tensor (the same way `signed_volume` flips sign).
+- `Mesh::inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
+  element-wise sum across every contained primitive. The
+  second-moment integral is additive over disjoint volumes (same
+  argument [`Mesh::signed_volume`] / [`Mesh::volume_centroid`] rest
+  on), so the per-primitive tensors add component-wise.
+  Sign-aware: an inside-out subshell subtracts component-wise.
+  Skips primitives whose `inertia_tensor` returns `None`; returns
+  `None` only when every primitive returned `None`.
+- `Scene3D::inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
+  element-wise sum across every mesh in the scene. Walks meshes
+  once, **not node instances**: a mesh instantiated by multiple
+  reachable nodes contributes once, not once per node (matches
+  [`Scene3D::volume_centroid`] / [`Scene3D::signed_volume`]
+  resource-level counting). Result is in the scene's local frame;
+  for a per-instance world-frame total, walk
+  [`Scene3D::world_node_transforms`] alongside
+  `Primitive::inertia_tensor` and apply the rigid-body transform
+  rule (`I_world = M_3 · I_local · M_3ᵀ` + parallel-axis
+  correction) — that walk is a candidate for the next round.
+- Use cases: rigid-body physics solver setup (the per-body
+  inertia tensor is what an integrator multiplies into the
+  angular-velocity update); principal-axis decomposition (the
+  eigenvectors of the centred tensor are the body's principal
+  axes — a tighter alternative to AABB for collision broad-phase
+  and oriented-bounding-box picking); 3D-print balance analysis
+  (the principal moments tell you the body's preferred resting
+  orientation under gravity, i.e. the most stable spin axis).
+
 Round 256 closes the per-instance world-frame gap that round 247
 flagged (`tests/world_volume_centroid.rs`, 40 tests):
 

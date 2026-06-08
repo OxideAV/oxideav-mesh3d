@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 259 (Unit-density inertia tensor: `Primitive` / `Mesh` / `Scene3D`)
+
+- `Primitive::inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
+  unit-density inertia tensor of the solid enclosed by this
+  primitive's closed triangle tessellation, taken about the
+  **origin** of `Primitive::positions`, returned as a row-major
+  symmetric `[[f64; 3]; 3]` matrix. Diagonal entries are the
+  *moments* `I_αα = ∫_V (β² + γ²) dV` (the two coordinates not
+  equal to α); off-diagonals carry the standard rigid-body minus
+  sign, `I_αβ = -∫_V x_α · x_β dV`. Multiply by the body's
+  density `ρ` to recover the physical tensor; apply the parallel-
+  axis theorem (`I_about_C = I_about_O - M · D` with
+  `D_αβ = c_α·c_β - δ_αβ·|c|²`) to shift to any other reference
+  point — e.g. the centre of mass returned by
+  `Primitive::volume_centroid`.
+- Derivation reuses the same divergence-theorem decomposition
+  `signed_volume` and `volume_centroid` already use: fan the closed
+  surface into origin-anchored tetrahedra `(0, P_a, P_b, P_c)` and
+  apply the closed-form per-tetrahedron second-moment integrals.
+  For an origin-anchored tet (`P_0 = 0`, `P_1 = A`, `P_2 = B`,
+  `P_3 = C`):
+  `∫_T x_α² dV = (V/10)·(Σ_k p_α[k]² + Σ_{j<k} p_α[j]·p_α[k])` and
+  `∫_T x_α·x_β dV = (V/20)·(2·Σ_k p_α[k]·p_β[k] + Σ_{j≠k} p_α[j]·p_β[k] / 2)`,
+  the textbook closed form. Same lineage as Mirtich, "Fast and
+  Accurate Computation of Polyhedral Mass Properties", *Journal
+  of Graphics Tools* 1(2), 1996 (already cited for
+  `Primitive::volume_centroid`), specialised here to the
+  second-moment kernel.
+- Topology integration goes through `triangle_indices`, so
+  `Triangles` / `TriangleStrip` / `TriangleFan` all feed in
+  correctly; non-triangle topologies (lines/points) return `None`.
+  `f64` accumulators; per-triangle math is `f64`. Degenerate,
+  NaN-/Inf-producing, and out-of-range-index faces are silently
+  skipped — same robustness contract as `signed_volume` /
+  `volume_centroid`. Returns `None` only when every face has been
+  skipped or the primitive is empty / non-triangle. Pure;
+  `O(triangle_count)`.
+- Translation-equivariant for a closed surface in the sense that
+  the tensor about the centre of mass is invariant under coordinate
+  translation (the parallel-axis shift recovers it), even though
+  `I_about_origin` shifts. Sign-equivariant under winding flip:
+  an inside-out closed mesh produces the negated tensor (the
+  same way `signed_volume` flips sign).
+- `Mesh::inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
+  element-wise sum across every contained primitive. The
+  second-moment integral is additive over disjoint volumes (same
+  argument `Mesh::signed_volume` / `Mesh::volume_centroid` rest
+  on), so the per-primitive tensors add component-wise.
+  Sign-aware: an inside-out subshell subtracts component-wise.
+  Skips primitives whose `inertia_tensor` returns `None`; returns
+  `None` only when every primitive returned `None`.
+- `Scene3D::inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
+  element-wise sum across every mesh in the scene. Walks meshes
+  once, not node instances: a mesh instantiated by multiple
+  reachable nodes contributes once, not once per node (matches
+  `Scene3D::volume_centroid` / `Scene3D::signed_volume` resource-
+  level counting). Result is in the scene's local frame; for a
+  per-instance world-frame total, walk `world_node_transforms`
+  alongside `Primitive::inertia_tensor` and apply the rigid-body
+  transform rule (`I_world = M_3 · I_local · M_3ᵀ` + parallel-axis
+  correction).
+- Test coverage in `tests/inertia_tensor.rs` (18 cases):
+  - **Unit cube about its corner** — `[0, 1]³` CCW; expected
+    `diag(2/3, 2/3, 2/3)` with `-1/4` off-diagonals (closed-form
+    `∫ x² dV = 1/3`, `∫ x·y dV = 1/4`).
+  - **Centred unit cube** — `[-1/2, 1/2]³`; expected
+    `diag(1/6, 1/6, 1/6)` with off-diagonals at numerical zero
+    (reflection symmetry collapses the antisymmetric integrand).
+  - **Inside-out cube negates the tensor** — flipping every
+    triangle's winding flips every component.
+  - **Axis-aligned tetrahedron** — corners at origin + unit axes;
+    closed-form `∫ x² dV = 1/60`, `∫ x·y dV = 1/120`.
+  - **Symmetry** — off-diagonals match across the diagonal for
+    cube, centred-cube, tetrahedron.
+  - **Parallel-axis theorem** — `I_corner = I_centred + M·D` with
+    `M = 1`, `D_αβ = c_α·c_β - δ_αβ·|c|²`, `c = (1/2, 1/2, 1/2)`.
+  - **Empty / non-triangle topologies return `None`**.
+  - **Uniform-scale law** — scaling all corners by `s` scales every
+    component by `s⁵` (one `s²` from each `x_α` factor, one `s³`
+    from the volume element).
+  - **Out-of-range indices skipped without panic.**
+  - **TriangleFan accepted** — a degenerate flat fan yields a
+    near-zero tensor without NaN.
+  - **`Mesh::inertia_tensor` additive across primitives.**
+  - **Mesh skips non-triangle primitives; empty mesh returns `None`.**
+  - **`Scene3D::inertia_tensor` additive across meshes**, empty
+    scene returns `None`.
+  - **Instance count is per-mesh, not per-node** — adding the same
+    mesh to two nodes still yields one contribution.
+  - **General axis-aligned box** — sides `(a, b, c) = (2, 3, 5)`
+    centred at origin; expected diagonal
+    `(M(b²+c²)/12, M(a²+c²)/12, M(a²+b²)/12)` with off-diagonals
+    vanishing — the classical solid-cuboid formula.
+
 ### Added — Round 256 (Transform-aware volume-weighted centroid: `Primitive` / `Mesh` / `Scene3D`)
 
 - `Primitive::world_volume_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`

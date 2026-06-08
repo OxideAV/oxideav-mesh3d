@@ -1269,6 +1269,52 @@ impl Scene3D {
         Some([sum_x * inv, sum_y * inv, sum_z * inv])
     }
 
+    /// Unit-density inertia tensor across every mesh in the scene —
+    /// the element-wise sum of every contained mesh's
+    /// [`crate::Mesh::inertia_tensor`].
+    ///
+    /// This walks meshes once, **not node instances**: a mesh
+    /// instantiated by multiple reachable nodes contributes its
+    /// inertia tensor once, not once per node. The result is in the
+    /// scene's local frame (no node transforms applied); to fold in
+    /// per-instance transforms, walk [`Scene3D::world_node_transforms`]
+    /// alongside [`crate::Primitive::inertia_tensor`] and apply the
+    /// rigid-body transform rule (`I_world = M_3 · I_local · M_3ᵀ +
+    /// parallel-axis correction`).
+    ///
+    /// **Only physically meaningful when each contained mesh is a
+    /// closed two-manifold surface.** See
+    /// [`crate::Primitive::is_closed_manifold`] /
+    /// [`crate::Primitive::edge_manifold_report`]. An open patch yields
+    /// a tensor that depends on where the origin sits in the mesh's
+    /// frame because the closed-mesh boundary-term cancellation no
+    /// longer applies.
+    ///
+    /// Returns `None` when every contained mesh returns `None` (or the
+    /// scene holds zero meshes). Coordinates are in the scene's local
+    /// frame ([`Scene3D::unit`]); contract matches
+    /// [`crate::Primitive::inertia_tensor`] for finiteness,
+    /// degenerate-skipping, and out-of-range / NaN handling.
+    pub fn inertia_tensor(&self) -> Option<[[f64; 3]; 3]> {
+        let mut total = [[0.0_f64; 3]; 3];
+        let mut any = false;
+        for m in &self.meshes {
+            if let Some(t) = m.inertia_tensor() {
+                for r in 0..3 {
+                    for c in 0..3 {
+                        total[r][c] += t[r][c];
+                    }
+                }
+                any = true;
+            }
+        }
+        if !any {
+            None
+        } else {
+            Some(total)
+        }
+    }
+
     /// Transform-aware total surface area across every node-instantiated
     /// mesh in the scene, in world units squared (matching
     /// [`Scene3D::unit`]² when the scene's root has identity transform).
