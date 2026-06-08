@@ -1464,6 +1464,240 @@ impl Primitive {
         Some([sum_x * inv, sum_y * inv, sum_z * inv])
     }
 
+    /// Transform-aware volume-weighted centroid (centre of mass) of the
+    /// uniform-density solid enclosed by this primitive's triangle
+    /// tessellation, after every corner is mapped through the row-major
+    /// column-vector affine 4x4 `world` matrix (same convention as
+    /// [`crate::Transform::Matrix`] / [`crate::BoundingBox::transform`]
+    /// / [`Primitive::world_surface_area`] /
+    /// [`Primitive::world_surface_centroid`]). Sibling of
+    /// [`Primitive::volume_centroid`] for the per-instance world-frame
+    /// case.
+    ///
+    /// Used by [`crate::Scene3D::world_volume_centroid`] to fold each
+    /// reachable node's ancestor-chain transform into a per-instance
+    /// volume-weighted centroid total. Returning the post-divide ratio
+    /// rather than the raw numerator (`Σ V_i · C_i`) and denominator
+    /// (`Σ V_i`) keeps the per-primitive shape natural for direct
+    /// callers; the scene-level helper recovers each per-primitive
+    /// signed volume from [`Primitive::world_signed_volume`] (one extra
+    /// triangle pass) and multiplies — same pattern as
+    /// [`Mesh::world_surface_centroid`].
+    ///
+    /// # Derivation
+    ///
+    /// The local helper [`Primitive::volume_centroid`] sums per-tet
+    /// signed volumes `V_i = (P_a · (P_b × P_c)) / 6` weighted by the
+    /// per-tet centroid `C_i = (P_a + P_b + P_c) / 4`. Under an affine
+    /// map `M`, every corner `P_*` becomes `M·P_*`, so:
+    ///
+    /// ```text
+    /// V_i_world  = (M·P_a · ((M·P_b) × (M·P_c))) / 6
+    /// C_i_world  = (M·P_a + M·P_b + M·P_c) / 4.
+    /// ```
+    ///
+    /// Both formulas mirror the local case with the transformed corners
+    /// substituted in. Because the per-tet volume here is the signed
+    /// volume of the **origin-anchored** tet `(0, M·P_a, M·P_b, M·P_c)`
+    /// (not the local-then-transformed tet), the translation column of
+    /// `M` *does* enter every term — translating `world` by `t` shifts
+    /// every `V_i` by a boundary-dependent amount and every `C_i` by
+    /// `t`. The boundary terms cancel pairwise for a **closed**
+    /// two-manifold mesh (Σ V_i_world = det(M_3) · V_local; Σ V_i_world
+    /// · C_i_world = det(M_3) · V_local · (C_local + 0) folded with the
+    /// per-corner translation gives the post-transform centroid), so
+    /// the post-divide ratio reduces to the textbook `C_world = M_3 ·
+    /// C_local + t`. For an open patch the boundary terms remain; the
+    /// returned ratio is still the closed-form per-tet volume integral
+    /// and matches the arithmetic generalisation of
+    /// [`Primitive::volume_centroid`].
+    ///
+    /// # Contract
+    ///
+    /// * Topology handling, degenerate / NaN guards, and out-of-range-
+    ///   index skipping all mirror [`Primitive::volume_centroid`] /
+    ///   [`Primitive::world_surface_centroid`]. Non-triangle topologies
+    ///   return `None`. Result components are finite for any finite
+    ///   input.
+    /// * Returns `None` when the accumulated signed volume is `0.0` or
+    ///   non-finite — every triangle degenerate, non-triangle topology,
+    ///   transform collapsing every tet to zero signed volume (e.g. a
+    ///   `[1, 1, 0]` scale), or perfectly cancelling shells.
+    /// * Coordinates are in the **world** frame defined by `world`. For
+    ///   a closed mesh under an invertible affine `M`, the result
+    ///   equals `M · C_local` exactly (within `f64` round-off); for an
+    ///   open patch the result depends on where the origin sits in the
+    ///   transformed frame (same caveat as
+    ///   [`Primitive::volume_centroid`]).
+    /// * Accumulators are `f64`; per-triangle math is `f64`.
+    /// * **Does not mutate `self`.** Pure; cost `O(triangle_count)`.
+    pub fn world_volume_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]> {
+        let n = self.positions.len();
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_v = 0.0_f64;
+        // Promote the 4x4 to f64 once so the per-corner mapping is a
+        // small fixed cost rather than a per-vertex f32-cast cascade —
+        // mirrors `world_surface_centroid`.
+        let m00 = world[0][0] as f64;
+        let m01 = world[0][1] as f64;
+        let m02 = world[0][2] as f64;
+        let m03 = world[0][3] as f64;
+        let m10 = world[1][0] as f64;
+        let m11 = world[1][1] as f64;
+        let m12 = world[1][2] as f64;
+        let m13 = world[1][3] as f64;
+        let m20 = world[2][0] as f64;
+        let m21 = world[2][1] as f64;
+        let m22 = world[2][2] as f64;
+        let m23 = world[2][3] as f64;
+        let xform = |p: [f32; 3]| {
+            let x = p[0] as f64;
+            let y = p[1] as f64;
+            let z = p[2] as f64;
+            [
+                m00 * x + m01 * y + m02 * z + m03,
+                m10 * x + m11 * y + m12 * z + m13,
+                m20 * x + m21 * y + m22 * z + m23,
+            ]
+        };
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = xform(self.positions[ia]);
+            let pb = xform(self.positions[ib]);
+            let pc = xform(self.positions[ic]);
+            if !pa[0].is_finite()
+                || !pa[1].is_finite()
+                || !pa[2].is_finite()
+                || !pb[0].is_finite()
+                || !pb[1].is_finite()
+                || !pb[2].is_finite()
+                || !pc[0].is_finite()
+                || !pc[1].is_finite()
+                || !pc[2].is_finite()
+            {
+                continue;
+            }
+            // P_b × P_c (in world frame).
+            let crx = pb[1] * pc[2] - pb[2] * pc[1];
+            let cry = pb[2] * pc[0] - pb[0] * pc[2];
+            let crz = pb[0] * pc[1] - pb[1] * pc[0];
+            if !crx.is_finite() || !cry.is_finite() || !crz.is_finite() {
+                continue;
+            }
+            // 6 · V_i — six times the signed volume of the origin-tet
+            // formed in the post-transform frame. Same scaling trick as
+            // `volume_centroid`: keep the factor of 6 in V and the
+            // factor of 4 in C, divide both out at the end.
+            let six_v = pa[0] * crx + pa[1] * cry + pa[2] * crz;
+            if !six_v.is_finite() {
+                continue;
+            }
+            let sx = pa[0] + pb[0] + pc[0];
+            let sy = pa[1] + pb[1] + pc[1];
+            let sz = pa[2] + pb[2] + pc[2];
+            sum_x += six_v * sx;
+            sum_y += six_v * sy;
+            sum_z += six_v * sz;
+            sum_v += six_v;
+        }
+        if sum_v == 0.0 || !sum_v.is_finite() {
+            return None;
+        }
+        // sum_x = 24 · Σ (V_i · C_i_x), sum_v = 6 · Σ V_i → ratio is
+        // `4 · Σ V_i · C_i / Σ V_i` → divide by 4 once at the end so
+        // the final answer matches the textbook `Σ V_i · C_i / Σ V_i`.
+        let inv = 1.0 / (sum_v * 4.0);
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
+    /// Transform-aware signed volume of the origin-anchored tetrahedron
+    /// sum after every corner is mapped through the row-major
+    /// column-vector affine 4x4 `world` matrix. Helper used by
+    /// [`Mesh::world_volume_centroid`] to recover each per-primitive
+    /// signed-volume weight without re-walking the centroid path. The
+    /// per-corner mapping is identical to
+    /// [`Primitive::world_volume_centroid`]; only the centroid
+    /// accumulators are dropped.
+    ///
+    /// # Contract
+    ///
+    /// * Mirrors [`Primitive::signed_volume`]'s `f64` accumulator and
+    ///   non-triangle / out-of-range / NaN skipping policy. Always
+    ///   returns a finite `f64` for finite input.
+    /// * Coordinates are in the **world** frame. For a closed two-
+    ///   manifold mesh under an affine `M` the result reduces to
+    ///   `det(M_3) · signed_volume()` (closed-mesh translation
+    ///   cancellation); for an open patch the translation column of
+    ///   `M` enters the result.
+    /// * Pure; cost `O(triangle_count)`.
+    pub fn world_signed_volume(&self, world: [[f32; 4]; 4]) -> f64 {
+        let n = self.positions.len();
+        let mut sum_v = 0.0_f64;
+        let m00 = world[0][0] as f64;
+        let m01 = world[0][1] as f64;
+        let m02 = world[0][2] as f64;
+        let m03 = world[0][3] as f64;
+        let m10 = world[1][0] as f64;
+        let m11 = world[1][1] as f64;
+        let m12 = world[1][2] as f64;
+        let m13 = world[1][3] as f64;
+        let m20 = world[2][0] as f64;
+        let m21 = world[2][1] as f64;
+        let m22 = world[2][2] as f64;
+        let m23 = world[2][3] as f64;
+        let xform = |p: [f32; 3]| {
+            let x = p[0] as f64;
+            let y = p[1] as f64;
+            let z = p[2] as f64;
+            [
+                m00 * x + m01 * y + m02 * z + m03,
+                m10 * x + m11 * y + m12 * z + m13,
+                m20 * x + m21 * y + m22 * z + m23,
+            ]
+        };
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = xform(self.positions[ia]);
+            let pb = xform(self.positions[ib]);
+            let pc = xform(self.positions[ic]);
+            if !pa[0].is_finite()
+                || !pa[1].is_finite()
+                || !pa[2].is_finite()
+                || !pb[0].is_finite()
+                || !pb[1].is_finite()
+                || !pb[2].is_finite()
+                || !pc[0].is_finite()
+                || !pc[1].is_finite()
+                || !pc[2].is_finite()
+            {
+                continue;
+            }
+            let crx = pb[1] * pc[2] - pb[2] * pc[1];
+            let cry = pb[2] * pc[0] - pb[0] * pc[2];
+            let crz = pb[0] * pc[1] - pb[1] * pc[0];
+            if !crx.is_finite() || !cry.is_finite() || !crz.is_finite() {
+                continue;
+            }
+            let six_v = pa[0] * crx + pa[1] * cry + pa[2] * crz;
+            if !six_v.is_finite() {
+                continue;
+            }
+            sum_v += six_v;
+        }
+        // The accumulator has six times each per-tet signed volume; the
+        // textbook formula is `(1/6) Σ P_a · (P_b × P_c)`. Divide once
+        // at the end.
+        sum_v / 6.0
+    }
+
     /// Recompute per-vertex MikkTSpace-style tangent-space basis
     /// vectors from this primitive's positions, UVs (UV set `uv_set`),
     /// and per-vertex normals, returning one `[f32; 4]` per vertex
@@ -2439,6 +2673,59 @@ impl Mesh {
                 continue;
             }
             if let Some(c) = p.volume_centroid() {
+                sum_x += c[0] * v;
+                sum_y += c[1] * v;
+                sum_z += c[2] * v;
+                sum_v += v;
+            }
+        }
+        if sum_v == 0.0 || !sum_v.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_v;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
+    /// Transform-aware volume-weighted centroid (centre of mass) across
+    /// every contained primitive: every primitive's
+    /// [`Primitive::world_volume_centroid`] (post-divide centroid) is
+    /// recombined with [`Primitive::world_signed_volume`] as the weight,
+    /// then divided once at the end.
+    ///
+    /// # Derivation
+    ///
+    /// Same additivity argument as [`Mesh::volume_centroid`]: the
+    /// continuous identity `C = ∫∫∫_V x dV / ∫∫∫_V dV` over a union of
+    /// solid bodies splits into per-body integrals, so the mesh-level
+    /// centroid is the per-primitive centroid recombined with the per-
+    /// primitive **signed** volumes as weights. Because
+    /// [`Primitive::world_volume_centroid`] returns the post-divide
+    /// ratio rather than the raw numerator, the mesh helper recovers
+    /// each per-primitive signed volume from
+    /// [`Primitive::world_signed_volume`] (one fixed-cost extra
+    /// triangle pass) and multiplies — same recombination shape as
+    /// [`Mesh::world_surface_centroid`].
+    ///
+    /// # Contract
+    ///
+    /// * Skips primitives whose [`Primitive::world_volume_centroid`]
+    ///   returns `None` or whose [`Primitive::world_signed_volume`] is
+    ///   `0.0` / non-finite. Returns `None` when every primitive
+    ///   contributes nothing under `world`.
+    /// * Mirrors [`Mesh::volume_centroid`]'s `f64` accumulator and
+    ///   silent-skip policy for partly-corrupt buffers.
+    /// * Pure; cost `O(Σ triangle_count_per_primitive)`.
+    pub fn world_volume_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]> {
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_v = 0.0_f64;
+        for p in &self.primitives {
+            let v = p.world_signed_volume(world);
+            if v == 0.0 || !v.is_finite() {
+                continue;
+            }
+            if let Some(c) = p.world_volume_centroid(world) {
                 sum_x += c[0] * v;
                 sum_y += c[1] * v;
                 sum_z += c[2] * v;

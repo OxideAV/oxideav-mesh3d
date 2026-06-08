@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 256 (Transform-aware volume-weighted centroid: `Primitive` / `Mesh` / `Scene3D`)
+
+- `Primitive::world_volume_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`
+  — centre of mass of the uniform-density solid enclosed by this
+  primitive's closed triangle tessellation after every corner is
+  mapped through the row-major column-vector affine 4x4 `world`
+  matrix (same convention as `Transform::Matrix` /
+  `BoundingBox::transform` / `Primitive::world_surface_area` /
+  `Primitive::world_surface_centroid`). Derivation: substitute
+  `M·P_*` for each `P_*` in `Primitive::volume_centroid`'s per-tet
+  formula — per-tet signed volume becomes
+  `V_i_world = ((M·P_a) · ((M·P_b) × (M·P_c))) / 6`, per-tet centroid
+  becomes `C_i_world = (M·P_a + M·P_b + M·P_c) / 4`, and the
+  textbook ratio `Σ V_i · C_i / Σ V_i` is accumulated in `f64`. For
+  a closed two-manifold under invertible affine `M = [M_3 | t]` the
+  result reduces analytically to `M · C_local = M_3 · C_local + t`
+  (boundary terms cancel pairwise); for an open patch the
+  origin-anchored tet sum picks up translation-dependent boundary
+  terms — same caveat as the local helper. Topology integration
+  goes through `triangle_indices`, so `Triangles` / `TriangleStrip`
+  / `TriangleFan` all feed in; non-triangle topologies return
+  `None`. `f64` accumulators; degenerate / NaN-/Inf- / out-of-range
+  faces silently skipped. Returns `None` when the world-frame
+  signed volume sum is `0.0` (every triangle degenerate, non-
+  triangle topology, or transform flattens every tet — e.g.
+  `[1, 1, 0]` scale) or non-finite. Pure; `O(triangle_count)`.
+- `Primitive::world_signed_volume(&self, world: [[f32; 4]; 4]) -> f64`
+  — companion helper computing the post-transform signed volume of
+  the origin-anchored tetrahedron sum in the world frame (the
+  denominator the centroid helper accumulates internally). For a
+  closed mesh under affine `M` the result reduces to `det(M_3) ·
+  signed_volume()`; for an open patch the translation column of
+  `M` enters the result. Mirrors `Primitive::signed_volume`'s
+  silent-skip policy for partly-corrupt buffers. `f64` accumulator;
+  pure; `O(triangle_count)`.
+- `Mesh::world_volume_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`
+  — signed-volume-weighted recombination across every contained
+  primitive: each primitive's `world_volume_centroid` is recovered
+  with `world_signed_volume` as its weight, then divided once at
+  the end. Additivity of the volume integral guarantees correctness
+  across primitives; an inside-out subshell subtracts correctly.
+  Skips primitives whose centroid is `None` or whose weight is
+  `0.0` / non-finite. Pure; `O(Σ triangle_count_per_primitive)`.
+- `Scene3D::world_volume_centroid(&self) -> Option<[f64; 3]>` —
+  walks the `Scene3D::roots` forest with the same DFS shape as
+  `Scene3D::world_signed_volume` / `Scene3D::world_surface_centroid`,
+  applies each reachable node's full ancestor-chain world matrix to
+  its primitive's triangle vertices, and recombines the per-instance
+  centroids weighted by their per-instance post-transform signed
+  volumes. A mesh instanced under two nodes contributes twice (once
+  per instance), and each instance carries the world-space scale,
+  skew, and translation on the path to that node. Cycles guarded
+  the same way as `world_surface_centroid`. Returns `None` for
+  empty / no-mesh / all-degenerate-instance / all-collapsed-transform
+  scenes. Skin pose, morph targets, and unit-axis conversion not
+  applied. Cost
+  `O(reachable_nodes + Σ triangle_count_per_reachable_mesh)`.
+- `tests/world_volume_centroid.rs` — 40 tests covering primitive-
+  level identity / pure-translation / uniform-scale / non-uniform-
+  scale / mirror / scale-then-translate / 180-degree-Z-rotation /
+  `[0,0,0]`-scale-None / partial-collapse-None / non-triangle-None
+  / empty-None / NaN-coord-skip / OOB-index-skip / post-divide-
+  formula parity, signed-volume identity / translation-unchanged-
+  for-closed / uniform-scale-cubes / non-uniform-det /
+  mirror-flip-sign / rotation-unchanged, mesh-level passthrough /
+  empty-None / all-degenerate-None / two-cubes-midpoint /
+  translation-shift / cancelling-shells-None, and scene-level
+  empty-None / no-roots-None / single-identity-matches-local /
+  translation-shift / uniform-scale / two-instances-midpoint /
+  per-instance-not-per-resource / unreachable-mesh-skipped /
+  two-meshes / nested-transforms / mirrored-instance-cancels /
+  intermediate-pure-xform-node / unreachable-node-skipped.
+
 ### Added — Round 247 (Volume-weighted centroid / centre of mass: `Primitive` / `Mesh` / `Scene3D`)
 
 - `Primitive::volume_centroid(&self) -> Option<[f64; 3]>` — centre of

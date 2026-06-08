@@ -804,6 +804,67 @@ Round 227 lands the area-weighted surface centroid
   `Primitive::surface_centroid` and combine the per-instance
   centroids with their post-transform areas as weights.
 
+Round 256 closes the per-instance world-frame gap that round 247
+flagged (`tests/world_volume_centroid.rs`, 40 tests):
+
+- `Primitive::world_volume_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`
+  — centre of mass of the uniform-density solid enclosed by this
+  primitive's closed triangle tessellation after every corner is
+  mapped through the row-major column-vector affine 4x4 `world`
+  matrix (same convention as [`Transform::Matrix`] /
+  [`BoundingBox::transform`] / [`Primitive::world_surface_area`] /
+  [`Primitive::world_surface_centroid`]). Derivation: substitute
+  `M·P_*` for each `P_*` in `Primitive::volume_centroid`'s per-tet
+  formula — per-tet signed volume becomes `V_i_world = ((M·P_a) ·
+  ((M·P_b) × (M·P_c))) / 6`, per-tet centroid becomes `C_i_world =
+  (M·P_a + M·P_b + M·P_c) / 4`, and the textbook ratio
+  `Σ V_i · C_i / Σ V_i` is accumulated in `f64`. For a closed
+  two-manifold under invertible affine `M = [M_3 | t]` the
+  result reduces analytically to `M · C_local = M_3 · C_local +
+  t` (the boundary terms in the origin-anchored tet sum cancel
+  pairwise — same closed-mesh argument that makes `signed_volume`
+  translation-invariant); for an open patch the result depends on
+  where the origin sits in the transformed frame (same caveat as
+  the local helper). Topology + degenerate / NaN / OOB handling
+  mirrors `Primitive::volume_centroid`. Returns `None` when the
+  world-frame `Σ V_i` is `0.0` (every triangle degenerate /
+  non-triangle / transform flattens every tet) or non-finite.
+  `f64` accumulators; pure; `O(triangle_count)`.
+- `Primitive::world_signed_volume(&self, world: [[f32; 4]; 4]) -> f64`
+  — companion helper computing the post-transform signed volume of
+  the origin-anchored tetrahedron sum (the denominator the centroid
+  helper accumulates internally, exposed as a stand-alone reduction
+  so per-primitive recombination at the mesh level doesn't need to
+  re-walk the centroid path). For a closed mesh under affine `M`
+  the result reduces to `det(M_3) · signed_volume()`; for an open
+  patch the translation column of `M` enters the result.
+- `Mesh::world_volume_centroid(&self, world: [[f32; 4]; 4]) -> Option<[f64; 3]>`
+  — signed-volume-weighted recombination across every contained
+  primitive: each primitive's `world_volume_centroid` is recovered
+  with `world_signed_volume` as its weight, then divided once at
+  the end (same shape as `Mesh::world_surface_centroid`'s
+  area-weight recombination). An inside-out subshell subtracts
+  correctly. Returns `None` when every primitive contributes
+  nothing.
+- `Scene3D::world_volume_centroid(&self) -> Option<[f64; 3]>` —
+  walks the [`Scene3D::roots`] forest with the same DFS shape as
+  [`Scene3D::world_signed_volume`] /
+  [`Scene3D::world_surface_centroid`], applies each reachable
+  node's full ancestor-chain world matrix to its primitive's
+  triangle vertices, and recombines the per-instance centroids
+  weighted by their per-instance post-transform signed volumes. A
+  mesh instanced under two nodes contributes **twice**, and each
+  instance carries the world-space scale, skew, *and* translation
+  on the path to that node — unlike the surface variants, the
+  per-instance volume integral over the origin-anchored tets picks
+  up the translation column too. Cycles guarded the same way as
+  the surface companion. Skin pose, morph targets, and unit-axis
+  conversion are not applied. Use cases: per-instance rigid-body
+  centre-of-mass in world coordinates (physics solver setup);
+  scene-level orbit-target picking that respects per-instance
+  scale, skew, and translation; multi-instance 3D-print bed-layout
+  balance.
+
 Round 247 lands the volume-weighted centroid (centre of mass)
 reduction (`tests/volume_centroid.rs`, 35 tests):
 

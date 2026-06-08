@@ -1603,6 +1603,131 @@ impl Scene3D {
         Some([sum_x * inv, sum_y * inv, sum_z * inv])
     }
 
+    /// Transform-aware volume-weighted centroid (centre of mass) across
+    /// every node-instantiated mesh in the scene, in world units.
+    ///
+    /// Whereas [`Scene3D::volume_centroid`] recombines each *mesh
+    /// resource* once regardless of how many nodes carry it,
+    /// `world_volume_centroid` walks the [`Scene3D::roots`] forest the
+    /// same way [`Scene3D::world_signed_volume`] /
+    /// [`Scene3D::world_surface_centroid`] do, applies each reachable
+    /// node's full ancestor-chain world matrix to its primitive's
+    /// triangle vertices, and recombines the post-transform per-instance
+    /// centroids weighted by the per-instance post-transform signed
+    /// volume. A mesh instanced under two nodes therefore contributes
+    /// twice (once per instance), and each instance's contribution
+    /// reflects the world-space scale, skew, *and* translation on the
+    /// path to that node — unlike the surface variants, the per-
+    /// instance volume integral picks up the translation column too
+    /// (the origin-anchored tet sum is not translation-invariant).
+    ///
+    /// # Derivation
+    ///
+    /// Picking up where [`Scene3D::world_volume`] leaves off: for a
+    /// closed mesh under affine `M = [M_3 | t]`, the per-instance
+    /// signed volume is `det(M_3) · V_local` and the per-instance
+    /// centroid is `M · C_local = M_3 · C_local + t`. The
+    /// signed-volume-weighted recombination across instances is then
+    /// additivity of the volume integral over a union of solid bodies
+    /// — the same reasoning that fixes [`Mesh::volume_centroid`] /
+    /// [`Scene3D::volume_centroid`] in the local frame. For an open
+    /// patch the recombination still goes through, but the per-
+    /// instance signed volume is no longer `det(M_3) · V_local` — the
+    /// origin-anchored tet sum picks up a translation-dependent
+    /// boundary term — so the helper computes both the per-primitive
+    /// centroid and signed volume in the transformed frame
+    /// independently and feeds them through the
+    /// `Σ V_i · C_i / Σ V_i` recombination directly.
+    ///
+    /// # Contract
+    ///
+    /// * Topology handling, degenerate / NaN guards, and out-of-range-
+    ///   index skipping all mirror
+    ///   [`crate::Primitive::world_volume_centroid`].
+    /// * Mesh resources not reachable from any [`Scene3D::roots`] node
+    ///   contribute nothing — the count is per-instance over the
+    ///   scene-graph, not per-resource. For a resource-level total see
+    ///   [`Scene3D::volume_centroid`].
+    /// * Cycles in the scene-graph are guarded the same way as
+    ///   [`Scene3D::bounding_box`] / [`Scene3D::world_node_transforms`]
+    ///   / [`Scene3D::world_surface_centroid`]: each node is visited at
+    ///   most once. A node instanced under two parents resolves to one
+    ///   world matrix (the first parent on the DFS path).
+    /// * Returns `None` when no reachable instance contributes —
+    ///   empty scene, no reachable mesh, every reachable mesh
+    ///   non-triangle / degenerate, or every world transform
+    ///   collapsing every tet to zero signed volume.
+    /// * Skin pose deformation, morph targets, and unit-axis conversion
+    ///   are *not* applied — the static scene-graph transform is the
+    ///   only thing folded in. For a pose-time centroid, apply the
+    ///   animation pose before calling.
+    /// * Only physically meaningful when each reachable mesh is a
+    ///   closed two-manifold surface (see
+    ///   [`crate::Primitive::edge_manifold_report`]). For an open patch
+    ///   the result depends on where the origin sits in the
+    ///   transformed frame — same caveat as
+    ///   [`crate::Primitive::world_volume_centroid`].
+    /// * Cost `O(reachable_nodes + Σ triangle_count_per_reachable_mesh)`.
+    ///   Allocates the DFS stack only; per-triangle math is in `f64`.
+    pub fn world_volume_centroid(&self) -> Option<[f64; 3]> {
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        if n_nodes == 0 || n_meshes == 0 {
+            return None;
+        }
+        let mut visited = vec![false; n_nodes];
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_v = 0.0_f64;
+        // Push roots in reverse so the LIFO pop visits the leftmost
+        // root first — matching `world_node_transforms`'s documented
+        // single-resolution policy (a shared instance reachable from
+        // two parents resolves via the first parent on the DFS path).
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                    for prim in &mesh.primitives {
+                        let v = prim.world_signed_volume(world);
+                        if v == 0.0 || !v.is_finite() {
+                            continue;
+                        }
+                        if let Some(c) = prim.world_volume_centroid(world) {
+                            sum_x += c[0] * v;
+                            sum_y += c[1] * v;
+                            sum_z += c[2] * v;
+                            sum_v += v;
+                        }
+                    }
+                }
+            }
+            // Walk children in reverse so leftmost child is popped first.
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        if sum_v == 0.0 || !sum_v.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / sum_v;
+        Some([sum_x * inv, sum_y * inv, sum_z * inv])
+    }
+
     /// Closest-hit ray query across every reachable node-mesh
     /// instance in world space.
     ///
