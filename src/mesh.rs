@@ -2487,6 +2487,100 @@ impl Primitive {
         }
     }
 
+    /// Return every **boundary edge** of this primitive — the undirected
+    /// triangle edges used by exactly one triangle.
+    ///
+    /// This is the *detection-only* extractor counterpart to
+    /// [`EdgeManifoldReport::boundary_edge_count`] (which only counts
+    /// them), the same way [`Primitive::degenerate_triangles`] is the
+    /// extractor counterpart to a degenerate-triangle count. A boundary
+    /// edge sits on a hole, a crack, or the open rim of a non-closed
+    /// surface; a closed two-manifold mesh
+    /// ([`Primitive::is_closed_manifold`]) has **none**. Each returned
+    /// `[u32; 2]` is the edge's two vertex-pool indices in ascending
+    /// order (`[min(a, b), max(a, b)]`), so the pair is canonical
+    /// regardless of which triangle's winding first introduced it.
+    ///
+    /// # Use cases
+    ///
+    /// * **Hole detection / hole-filling pre-pass** — the boundary edges
+    ///   are the open seams; chaining them end-to-end recovers the
+    ///   boundary loops a fill pass would triangulate.
+    /// * **Open-rim outlining** — rendering just the boundary edges of an
+    ///   open surface (a cloth patch, a terrain tile) as a wireframe
+    ///   silhouette.
+    /// * **Watertightness diagnostics** — a non-empty result on a mesh
+    ///   that should be solid flags exactly where the surface is torn,
+    ///   complementing the aggregate [`EdgeManifoldReport`] readout with
+    ///   the concrete edge list.
+    ///
+    /// # Contract
+    ///
+    /// * Edge bucketing is identical to
+    ///   [`Primitive::edge_manifold_report`]: undirected edges keyed by
+    ///   `(min, max)` vertex index, counted over
+    ///   [`Primitive::triangle_indices`] (so `Triangles` /
+    ///   `TriangleStrip` / `TriangleFan` all feed in with the strip
+    ///   alternating-winding rule honoured). Only edges whose use count
+    ///   is exactly `1` are returned; manifold-interior (`2`) and
+    ///   non-manifold (`≥ 3`) edges are not.
+    /// * A triangle with an out-of-range corner index, or a duplicate
+    ///   corner index (a zero-length edge), is **excluded whole** before
+    ///   counting — its sides don't appear and don't perturb the
+    ///   neighbour counts of valid triangles. Same exclusion rule as
+    ///   [`Primitive::edge_manifold_report`].
+    /// * Topology comparison is by **vertex index**, not 3D position.
+    ///   Run [`Primitive::weld_vertices`] first if positionally
+    ///   coincident corners on different indices should merge before the
+    ///   boundary is computed (otherwise a welded-shut seam still reads
+    ///   as two boundary edges).
+    /// * Non-triangle topologies (lines/points) and empty primitives
+    ///   return an empty `Vec`.
+    /// * The result is sorted ascending by `(first, second)` index so
+    ///   the output is deterministic across runs (the underlying
+    ///   `HashMap` walk order is not). Pure (no `self` mutation); cost
+    ///   `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // A single open triangle has three boundary edges.
+    /// let mut prim = Primitive::new(Topology::Triangles);
+    /// prim.positions = vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    /// assert_eq!(prim.boundary_edges().len(), 3);
+    /// assert!(!prim.edge_manifold_report().is_closed_manifold());
+    /// ```
+    pub fn boundary_edges(&self) -> Vec<[u32; 2]> {
+        let n = self.positions.len();
+        // Undirected edge → use count (same keying as
+        // `edge_manifold_report`).
+        let mut edge_uses: HashMap<(u32, u32), u32> = HashMap::new();
+        for [ia, ib, ic] in self.triangle_indices() {
+            // Out-of-range triangle: skip entirely.
+            if (ia as usize) >= n || (ib as usize) >= n || (ic as usize) >= n {
+                continue;
+            }
+            // Duplicate corner index → zero-length edge; degenerate by
+            // index. Skip the whole triangle so its real sides don't
+            // confuse neighbour counts.
+            if ia == ib || ib == ic || ia == ic {
+                continue;
+            }
+            for (a, b) in [(ia, ib), (ib, ic), (ic, ia)] {
+                let key = if a < b { (a, b) } else { (b, a) };
+                *edge_uses.entry(key).or_insert(0) += 1;
+            }
+        }
+
+        let mut out: Vec<[u32; 2]> = edge_uses
+            .into_iter()
+            .filter_map(|((a, b), count)| (count == 1).then_some([a, b]))
+            .collect();
+        // Deterministic ordering — the HashMap walk order is not stable.
+        out.sort_unstable();
+        out
+    }
+
     /// Closest-hit ray query against this primitive's triangle
     /// tessellation.
     ///

@@ -302,6 +302,39 @@ detection + edge-manifold classification (`tests/mesh_validity.rs`,
   `weld_vertices` first if positional duplicates should merge before
   counting. Pure; `O(triangle_count)`.
 
+Round 267 lands the boundary-edge extractor (`tests/boundary_edges.rs`,
+21 tests):
+
+- `Primitive::boundary_edges(&self) -> Vec<[u32; 2]>` — returns every
+  undirected triangle edge used by exactly one triangle: the holes,
+  cracks, and open rims of a non-closed surface. This is the
+  detection-only **extractor** counterpart to
+  [`EdgeManifoldReport::boundary_edge_count`] (which only counts them),
+  the same relationship [`Primitive::degenerate_triangles`] has to a
+  degenerate-triangle count. Each `[u32; 2]` is the edge's two
+  vertex-pool indices in ascending `[min, max]` order, so the pair is
+  canonical regardless of which triangle's winding first introduced it;
+  the output is sorted ascending so it is deterministic across runs (the
+  underlying `HashMap` walk order is not). Edge bucketing is identical to
+  [`Primitive::edge_manifold_report`]: undirected edges keyed by
+  `(min, max)` vertex index, counted over `triangle_indices`, so
+  `Triangles` / `TriangleStrip` (alternating winding) / `TriangleFan`
+  all feed in. Triangles with an out-of-range corner index or a
+  duplicate corner index (a zero-length edge) are excluded whole before
+  counting, so a malformed neighbour can't wrongly close a valid
+  triangle's boundary seam. Topology comparison is by **vertex index**,
+  not 3D position — run [`Primitive::weld_vertices`] first to merge
+  positionally-coincident corners. Non-triangle topologies (lines/points)
+  and empty primitives return an empty `Vec`. A closed two-manifold
+  ([`Primitive::is_closed_manifold`]) returns an empty list; a non-empty
+  result on a should-be-solid mesh names exactly where it is torn,
+  complementing the aggregate [`EdgeManifoldReport`] readout with the
+  concrete edge list. Headline uses: a hole-detection / hole-filling
+  pre-pass (chaining the boundary edges end-to-end recovers the boundary
+  loops a fill pass triangulates), open-rim wireframe outlining, and
+  watertightness diagnostics. Pure (no `self` mutation); cost
+  `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
+
 Round 118 lands coincident-vertex welding / index de-duplication
 (`tests/weld_vertices.rs`, 29 tests):
 

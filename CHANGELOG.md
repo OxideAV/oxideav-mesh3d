@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 267 (Boundary-edge extractor: `Primitive::boundary_edges`)
+
+- `Primitive::boundary_edges(&self) -> Vec<[u32; 2]>` — returns every
+  undirected triangle edge used by exactly one triangle: the holes,
+  cracks, and open rims of a non-closed surface. This is the
+  detection-only *extractor* counterpart to
+  `EdgeManifoldReport::boundary_edge_count` (which only counts them),
+  the same way `Primitive::degenerate_triangles` is the extractor
+  counterpart to a degenerate-triangle count. Each `[u32; 2]` is the
+  edge's two vertex-pool indices in ascending `[min, max]` order so the
+  pair is canonical regardless of triangle winding; the output is
+  sorted ascending so it is deterministic across runs (the underlying
+  `HashMap` walk order is not).
+- Edge bucketing matches `Primitive::edge_manifold_report` exactly:
+  undirected edges keyed by `(min, max)` vertex index, counted over
+  `Primitive::triangle_indices` (so `Triangles` / `TriangleStrip`
+  alternating-winding / `TriangleFan` all feed in). Triangles with an
+  out-of-range corner index or a duplicate corner index (a zero-length
+  edge) are excluded whole before counting, so a malformed neighbour
+  cannot wrongly close a valid triangle's boundary seam. Non-triangle
+  topologies (lines/points) and empty primitives return an empty `Vec`.
+  Topology comparison is by vertex index, not 3D position — run
+  `weld_vertices` first to merge positionally-coincident corners.
+- A closed two-manifold (`is_closed_manifold()`) returns an empty list;
+  a non-empty result on a should-be-solid mesh names exactly where it is
+  torn, complementing the aggregate `EdgeManifoldReport`. Headline uses:
+  hole-detection / hole-filling pre-pass (chain the edges into boundary
+  loops), open-rim wireframe outlining, watertightness diagnostics.
+  Pure; `O(triangle_count + boundary_edges · log boundary_edges)`.
+- `tests/boundary_edges.rs` — 21 tests: closed-tetrahedron emptiness,
+  single open triangle, open quad (rim-only, count-matches-report),
+  sorted/canonical/min-max-ordered output, winding independence,
+  tetrahedron-with-one-face-removed rim exposure, non-manifold
+  book-spine exclusion, out-of-range and duplicate-corner whole-triangle
+  exclusion, excluded-neighbour seam reversion, lines/points gating,
+  strip/fan topology feed-in, U16/U32 parity, idempotence, and the
+  unwelded-seam weld-interaction caveat.
+
 ### Added — Round 259 (Unit-density inertia tensor: `Primitive` / `Mesh` / `Scene3D`)
 
 - `Primitive::inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
