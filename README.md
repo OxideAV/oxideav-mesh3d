@@ -335,6 +335,46 @@ Round 267 lands the boundary-edge extractor (`tests/boundary_edges.rs`,
   watertightness diagnostics. Pure (no `self` mutation); cost
   `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
 
+Round 275 lands the boundary-loop chainer (`tests/boundary_loops.rs`,
+32 tests):
+
+- `Primitive::boundary_loops(&self) -> Vec<Vec<u32>>` — chains the loose
+  boundary edges of [`Primitive::boundary_edges`] end-to-end into ordered
+  **boundary loops**: the connected vertex-index sequences that bound
+  each hole, crack, or open rim. This is the next step the round-267
+  `boundary_edges` prose gestured toward — "chaining them end-to-end
+  recovers the boundary loops a fill pass triangulates". Each `Vec<u32>`
+  is one loop, listed as the ordered vertex-pool indices walked along the
+  boundary in the surface's **winding-consistent** direction: a boundary
+  half-edge keeps the orientation of the single triangle that owns it
+  (for an outward-facing CCW mesh, a hole's loop therefore runs the
+  "surface on your left" way). The start vertex is **not** repeated at the
+  end — a triangular hole returns three indices, not four. The boundary-
+  edge set is exactly [`Primitive::boundary_edges`]'s (undirected edges
+  used by exactly one triangle), but chaining uses each such edge's
+  **directed** half-edge `a → b` from the owning triangle's winding so the
+  loop direction is well-defined. Walking seeds from the smallest source
+  vertex and follows `b → next` through the outgoing boundary half-edge at
+  each vertex until the loop closes or runs out of continuations; a pinch
+  / non-manifold vertex with more than one outgoing boundary half-edge
+  picks the smallest-target continuation deterministically and seeds the
+  rest as their own loops, so the loops **partition** the boundary-edge
+  set (every boundary half-edge consumed exactly once). Each loop is
+  rotated to start at its own smallest vertex index (seed-independent) and
+  the loop list is sorted ascending (the underlying `HashMap` walk order
+  is not deterministic). Edge bucketing, the out-of-range / duplicate-
+  corner whole-triangle exclusion, and the [`Primitive::triangle_indices`]
+  topology feed (`Triangles` / `TriangleStrip` / `TriangleFan`) all match
+  `boundary_edges`; comparison is by **vertex index**, not 3D position
+  (run [`Primitive::weld_vertices`] first to merge coincident corners).
+  Non-triangle topologies (lines/points), empty primitives, and closed
+  two-manifolds ([`EdgeManifoldReport::is_closed_manifold`]) return an
+  empty `Vec`. Headline uses: hole filling (each closed loop is a polygon
+  a fan / ear-clip triangulator caps to make the surface watertight),
+  open-rim outlining, and genus / hole-count diagnostics (the loop count
+  is the number of distinct open seams). Pure (no `self` mutation); cost
+  `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
+
 Round 118 lands coincident-vertex welding / index de-duplication
 (`tests/weld_vertices.rs`, 29 tests):
 

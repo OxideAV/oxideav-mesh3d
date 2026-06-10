@@ -2581,6 +2581,162 @@ impl Primitive {
         out
     }
 
+    /// Chain this primitive's boundary edges end-to-end into ordered
+    /// **boundary loops**.
+    ///
+    /// Where [`Primitive::boundary_edges`] returns the loose set of
+    /// open-seam edges, this method stitches them into connected
+    /// vertex-index sequences — the closed (or open) chains of vertices
+    /// that bound each hole, crack, or open rim. It is the natural next
+    /// step the [`Primitive::boundary_edges`] docs gesture toward: "a
+    /// hole-detection / hole-filling pre-pass (chaining the boundary
+    /// edges end-to-end recovers the boundary loops a fill pass
+    /// triangulates)".
+    ///
+    /// Each returned `Vec<u32>` is one loop, listed as the ordered
+    /// vertex-pool indices walked along the boundary in the surface's
+    /// **winding-consistent direction** (a boundary half-edge keeps the
+    /// orientation of the single triangle that owns it — for an
+    /// outward-facing CCW mesh, a hole's loop therefore runs clockwise
+    /// when viewed from outside, the standard "the surface is on your
+    /// left" convention). The start vertex is **not** repeated at the
+    /// end: a triangular hole returns three indices, not four. A
+    /// well-formed loop is closed (its last vertex's outgoing boundary
+    /// edge returns to the first); a chain that dead-ends (because a
+    /// non-manifold defect consumed the continuation) is returned as the
+    /// open path it is, so the caller still gets every boundary vertex.
+    ///
+    /// # Use cases
+    ///
+    /// * **Hole filling** — each closed loop is a polygon a fan / ear-clip
+    ///   triangulator can cap to make the surface watertight.
+    /// * **Open-rim outlining** — render each loop as a closed polyline
+    ///   silhouette of an open patch.
+    /// * **Genus / hole-count diagnostics** — the number of loops is the
+    ///   number of distinct open seams on the surface.
+    ///
+    /// # Contract
+    ///
+    /// * The boundary-edge set is exactly [`Primitive::boundary_edges`]'s
+    ///   (undirected edges used by exactly one triangle), but the chaining
+    ///   uses each such edge's **directed** half-edge `a → b` taken from
+    ///   the owning triangle's winding, so the loop direction is
+    ///   well-defined. Edge bucketing, the out-of-range / duplicate-corner
+    ///   whole-triangle exclusion, and the [`Primitive::triangle_indices`]
+    ///   topology feed (`Triangles` / `TriangleStrip` / `TriangleFan`) all
+    ///   match `boundary_edges`.
+    /// * Walking starts from the boundary half-edge whose source vertex is
+    ///   smallest and follows `b → next` through the outgoing boundary
+    ///   half-edge at each vertex until the loop closes or no
+    ///   continuation exists. At a pinch vertex with more than one
+    ///   outgoing boundary half-edge (a figure-eight / non-manifold
+    ///   vertex) the smallest-target continuation is chosen
+    ///   deterministically; the remaining half-edges seed their own loops.
+    ///   Every boundary half-edge is consumed exactly once, so the loops
+    ///   partition the boundary-edge set.
+    /// * The list of loops is sorted ascending by each loop's first
+    ///   (smallest-rotation) vertex so the output is deterministic across
+    ///   runs (the underlying `HashMap` walk order is not). Each loop is
+    ///   additionally rotated to start at its own smallest vertex index,
+    ///   so the same loop is reported identically regardless of which
+    ///   half-edge seeded it.
+    /// * Topology comparison is by **vertex index**, not 3D position — run
+    ///   [`Primitive::weld_vertices`] first if positionally coincident
+    ///   corners on different indices should merge before the boundary is
+    ///   traced.
+    /// * Non-triangle topologies (lines/points), empty primitives, and
+    ///   closed two-manifolds
+    ///   ([`EdgeManifoldReport::is_closed_manifold`]) return an empty
+    ///   `Vec`. Pure (no `self` mutation); cost
+    ///   `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // A single open triangle's three boundary edges chain into one
+    /// // three-vertex loop.
+    /// let mut prim = Primitive::new(Topology::Triangles);
+    /// prim.positions = vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    /// let loops = prim.boundary_loops();
+    /// assert_eq!(loops.len(), 1);
+    /// assert_eq!(loops[0].len(), 3);
+    /// ```
+    pub fn boundary_loops(&self) -> Vec<Vec<u32>> {
+        let n = self.positions.len();
+        // First pass: count undirected edge uses and record the directed
+        // half-edge for each. Same exclusion rules as `boundary_edges`.
+        let mut edge_uses: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut directed: Vec<(u32, u32)> = Vec::new();
+        for [ia, ib, ic] in self.triangle_indices() {
+            if (ia as usize) >= n || (ib as usize) >= n || (ic as usize) >= n {
+                continue;
+            }
+            if ia == ib || ib == ic || ia == ic {
+                continue;
+            }
+            for (a, b) in [(ia, ib), (ib, ic), (ic, ia)] {
+                let key = if a < b { (a, b) } else { (b, a) };
+                *edge_uses.entry(key).or_insert(0) += 1;
+                directed.push((a, b));
+            }
+        }
+
+        // Outgoing boundary half-edges per source vertex (use count == 1).
+        // Sorted-target buckets give a deterministic continuation pick.
+        let mut outgoing: HashMap<u32, Vec<u32>> = HashMap::new();
+        for &(a, b) in &directed {
+            let key = if a < b { (a, b) } else { (b, a) };
+            if edge_uses.get(&key) == Some(&1) {
+                outgoing.entry(a).or_default().push(b);
+            }
+        }
+        if outgoing.is_empty() {
+            return Vec::new();
+        }
+        for targets in outgoing.values_mut() {
+            // Largest-last so `pop()` consumes the smallest target first.
+            targets.sort_unstable_by(|x, y| y.cmp(x));
+        }
+
+        // Deterministic seed order: ascending source vertex.
+        let mut sources: Vec<u32> = outgoing.keys().copied().collect();
+        sources.sort_unstable();
+
+        let mut loops: Vec<Vec<u32>> = Vec::new();
+        for &seed in &sources {
+            // Drain every half-edge that still starts at `seed`.
+            while outgoing.get(&seed).is_some_and(|t| !t.is_empty()) {
+                let mut chain: Vec<u32> = Vec::new();
+                let mut cur = seed;
+                // Follow the boundary until it returns to the seed (closed
+                // loop) or runs out of continuations (open chain).
+                loop {
+                    chain.push(cur);
+                    let next = match outgoing.get_mut(&cur).and_then(|t| t.pop()) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    if next == seed {
+                        // Loop closed — `next` is the already-recorded
+                        // start vertex, so don't push it again.
+                        break;
+                    }
+                    cur = next;
+                }
+                // Rotate so the loop starts at its smallest vertex index,
+                // making the representation seed-independent.
+                if let Some((min_pos, _)) = chain.iter().enumerate().min_by_key(|&(_, &v)| v) {
+                    chain.rotate_left(min_pos);
+                }
+                loops.push(chain);
+            }
+        }
+
+        // Deterministic loop ordering by first (smallest) vertex.
+        loops.sort_unstable();
+        loops
+    }
+
     /// Closest-hit ray query against this primitive's triangle
     /// tessellation.
     ///

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 275 (Boundary-loop chaining: `Primitive::boundary_loops`)
+
+- `Primitive::boundary_loops(&self) -> Vec<Vec<u32>>` — chains the loose
+  boundary edges of `Primitive::boundary_edges` end-to-end into ordered,
+  winding-consistent vertex loops, one per hole / crack / open rim. Each
+  loop is the ordered sequence of vertex-pool indices walked along the
+  boundary in the surface's winding-consistent direction (a boundary
+  half-edge keeps the orientation of the single triangle that owns it),
+  rotated to start at the loop's smallest vertex index so the
+  representation is seed-independent; the start vertex is not repeated at
+  the end. The directed-half-edge chaining consumes every boundary
+  half-edge exactly once, so the loops partition the boundary-edge set; a
+  pinch / non-manifold vertex with multiple outgoing boundary half-edges
+  picks the smallest-target continuation deterministically and seeds the
+  remaining half-edges as their own loops. Same edge bucketing,
+  out-of-range / duplicate-corner whole-triangle exclusion, and
+  `triangle_indices` topology feed (`Triangles` / `TriangleStrip` /
+  `TriangleFan`) as `boundary_edges`. Non-triangle topologies, empty
+  primitives, and closed two-manifolds
+  (`EdgeManifoldReport::is_closed_manifold`) return an empty `Vec`. The
+  loop list is sorted ascending for determinism. Pure (no `self`
+  mutation); cost
+  `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
+  This is the hole-detection / hole-filling pre-pass the round-267
+  `boundary_edges` docs gesture toward — each closed loop is a polygon a
+  fan / ear-clip triangulator can cap to make the surface watertight.
+  Covered by `tests/boundary_loops.rs` (32 tests).
+
 ### Added — Round 267 (Boundary-edge extractor: `Primitive::boundary_edges`)
 
 - `Primitive::boundary_edges(&self) -> Vec<[u32; 2]>` — returns every
