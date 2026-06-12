@@ -375,6 +375,75 @@ Round 275 lands the boundary-loop chainer (`tests/boundary_loops.rs`,
   is the number of distinct open seams). Pure (no `self` mutation); cost
   `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
 
+Round 285 lands parametric extruded solids — the swept-solid
+tessellation kernel an IFC-style format producer consumes
+(`tests/extrude_profile.rs`, 33 tests):
+
+- `extrude::Profile2D { outer, holes }` (re-exported at the crate
+  root) — planar profile in the *xy* plane: one outer boundary loop
+  plus zero or more hole loops. This is the shape of the IFC 4.3
+  extruded-area-solid `SweptArea` per the staged entity page
+  (`docs/3d/ifc/ifc43-entity-IfcExtrudedAreaSolid.html`,
+  §8.8.3.15): outer bound counter-clockwise seen from `+z`, inner
+  bounds clockwise — though both `triangulate` and `extrude`
+  normalise either input winding. Closing duplicate points
+  (`last == first`, wire-format closed polylines) and exact
+  consecutive duplicates are ignored. Builders `new` / `with_hole`;
+  accessors `vertex_count` and `area` (shoelace, outer minus holes,
+  winding-agnostic).
+- `Profile2D::triangulate(&self) -> Option<Vec<[u32; 3]>>` —
+  ear-clip triangulation of the enclosed area (outer minus holes)
+  into counter-clockwise triangles whose indices reference the
+  flattened `outer ++ holes[…]` vertex list — directly usable as a
+  cap face, a hole-fill patch over a
+  [`Primitive::boundary_loops`] loop (the capping pass that
+  round-275 prose gestured toward), or the input to `extrude`.
+  Correctness rests on the two-ears theorem (Meisters, "Polygons
+  Have Ears", *American Mathematical Monthly* 82(6), 1975: every
+  simple polygon beyond the triangle has at least two ears), so the
+  clip loop always terminates with `n + 2·h − 2` triangles (minus
+  zero-area clips). Holes are reduced to the simple-polygon case by
+  splicing each hole into the outer ring through a zero-width
+  bridge: a `+x` ray from the hole's rightmost vertex finds the
+  nearest crossing ring edge, and the candidate end-point is
+  refined against reflex occluders inside the candidate triangle
+  (smallest angle to the ray, then nearest), holes merged
+  largest-`x` first. Only reflex vertices are scanned as ear
+  blockers, so convex profiles clip in near-linear time (the
+  33 000-gon test runs in debug comfortably). Returns `None` when
+  no area exists: fewer than 3 distinct outer vertices, zero-area /
+  non-finite loops, degenerate holes, or a hole that never sees the
+  boundary along its `+x` ray. Self-intersecting input is not
+  detected (output unspecified but the call terminates). Pure;
+  `O(n · reflex_count)` typical, `O(n²)` worst case.
+- `Profile2D::extrude(&self, direction: [f32; 3], depth: f32) -> Option<Primitive>`
+  — sweeps the profile into a **closed, watertight** indexed
+  `Topology::Triangles` primitive: bottom ring at `z = 0` (the
+  flattened profile vertices in stored order), top ring offset by
+  `depth · direction / |direction|`, both caps from `triangulate`
+  (bottom reversed to face `−z`-ish), and two outward-facing wall
+  triangles per boundary edge of every loop. Per the IFC validity
+  rule the direction may be **any** vector whose z component is
+  non-zero — oblique prisms shear correctly (volume
+  `area() · depth · |dz| / |direction|`), and a downward extrusion
+  flips every winding so faces stay outward and
+  [`Primitive::signed_volume`] stays positive. Caps and walls share
+  ring vertices, so [`Primitive::is_closed_manifold`] holds and
+  [`Primitive::boundary_edges`] is empty by construction — the
+  result feeds every existing reduction (`signed_volume` /
+  `surface_area` / `volume_centroid` / `inertia_tensor` / BVH / ray
+  queries) without a weld pass. Index width follows the crate's
+  `U16`/`U32` promotion rule; `normals` / `uvs` are left unset
+  ([`Primitive::compute_normals`] reconstructs smooth normals; a
+  renderer wanting hard creases splits corners first). Returns
+  `None` on a non-triangulatable profile, non-positive or
+  non-finite depth, or a zero / in-plane / non-finite direction.
+  Placement into the scene is the caller's node [`Transform`]. The
+  33 tests cross-check watertightness, volume, surface area, and
+  centroid against the existing reductions for convex / concave /
+  hollow-section / two-hole profiles plus oblique, downward, and
+  non-unit directions.
+
 Round 118 lands coincident-vertex welding / index de-duplication
 (`tests/weld_vertices.rs`, 29 tests):
 

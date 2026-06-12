@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 285 (Parametric extruded solids: `Profile2D` + ear-clip triangulation)
+
+- `extrude::Profile2D { outer, holes }` (re-exported at the crate
+  root) — planar profile in the *xy* plane: one outer boundary loop
+  plus zero or more hole loops, the shape of the IFC 4.3
+  extruded-area-solid `SweptArea` (clean-room source:
+  `docs/3d/ifc/ifc43-entity-IfcExtrudedAreaSolid.html`, §8.8.3.15).
+  Builders `new` / `with_hole`; accessors `vertex_count` (flattened
+  list length) and `area` (shoelace, outer minus holes,
+  winding-agnostic).
+- `Profile2D::triangulate(&self) -> Option<Vec<[u32; 3]>>` —
+  ear-clip triangulation of the enclosed area into counter-clockwise
+  triangles indexing the flattened `outer ++ holes[…]` vertex list.
+  Correctness rests on the two-ears theorem (Meisters, "Polygons
+  Have Ears", *American Mathematical Monthly* 82(6), 1975); holes
+  are reduced to the simple-polygon case by splicing each hole into
+  the outer ring through a zero-width bridge found by a `+x` ray
+  from the hole's rightmost vertex (refined against reflex occluders
+  by smallest angle, then distance; holes merged largest-`x` first).
+  Triangle count is `n + 2·h − 2` minus zero-area clips. Input
+  windings are normalised (outer → CCW, holes → CW); closing /
+  consecutive duplicate points are ignored; reflex-only occlusion
+  scanning makes convex profiles clip in near-linear time. `None`
+  on fewer than 3 distinct outer vertices, zero-area or non-finite
+  loops, degenerate holes, or a hole outside the boundary.
+- `Profile2D::extrude(&self, direction: [f32; 3], depth: f32) -> Option<Primitive>`
+  — sweeps the profile into a closed, watertight indexed
+  `Topology::Triangles` primitive: bottom ring at `z = 0`, top ring
+  offset by `depth · direction / |direction|`, both caps from
+  `triangulate`, two outward-facing wall triangles per boundary
+  edge of every loop. Any direction with a non-zero z component is
+  accepted (oblique prisms; the IFC validity rule); downward
+  extrusion flips every winding so faces stay outward and
+  `signed_volume` stays positive. Vertices are shared between caps
+  and walls (`is_closed_manifold` holds, `boundary_edges` is empty);
+  index width follows the crate's `U16`/`U32` promotion rule;
+  `normals`/`uvs` are left for the `compute_normals` /
+  `compute_tangents` post-passes. `None` on a non-triangulatable
+  profile, non-positive/non-finite depth, or a zero / in-plane /
+  non-finite direction.
+- Covered by `tests/extrude_profile.rs` (33 tests): cap counts +
+  area sums for convex/concave/holed/two-hole profiles, winding
+  normalisation at both levels, duplicate-point tolerance, collinear
+  handling, hollow-section + L-shape + two-hole watertightness,
+  volume / surface-area / centroid cross-checks against the existing
+  reductions, oblique / downward / non-unit directions, every `None`
+  contract, and the 33 000-gon `U32` index-promotion path.
+
 ### Added — Round 275 (Boundary-loop chaining: `Primitive::boundary_loops`)
 
 - `Primitive::boundary_loops(&self) -> Vec<Vec<u32>>` — chains the loose
