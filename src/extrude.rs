@@ -559,7 +559,10 @@ impl Profile2D {
     ///   boundary edge of every loop. All faces wind outward
     ///   (counter-clockwise seen from outside the solid), so
     ///   [`Primitive::signed_volume`] is positive and
-    ///   [`Primitive::is_closed_manifold`] holds — extruding
+    ///   [`Primitive::edge_manifold_report`] reports a closed
+    ///   two-manifold
+    ///   ([`EdgeManifoldReport::is_closed_manifold`](crate::EdgeManifoldReport::is_closed_manifold))
+    ///   — extruding
     ///   downward (`dz < 0`) flips every winding to keep that true.
     ///   Width follows the crate's promotion rule: [`Indices::U16`]
     ///   while the vertex pool is `≤ 65 536` entries, else
