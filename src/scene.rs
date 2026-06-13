@@ -1774,6 +1774,120 @@ impl Scene3D {
         Some([sum_x * inv, sum_y * inv, sum_z * inv])
     }
 
+    /// Transform-aware unit-density inertia tensor across every
+    /// node-instantiated mesh in the scene, about the **world origin**,
+    /// returned as a row-major symmetric `[[f64; 3]; 3]`.
+    ///
+    /// Closes the per-instance world-frame gap that
+    /// [`Scene3D::inertia_tensor`]'s prose (round 259) flagged as the
+    /// next-round candidate. Whereas [`Scene3D::inertia_tensor`] sums
+    /// each *mesh resource* once in the scene's local frame regardless of
+    /// how many nodes carry it, `world_inertia_tensor` walks the
+    /// [`Scene3D::roots`] forest the same way
+    /// [`Scene3D::world_volume_centroid`] /
+    /// [`Scene3D::world_surface_centroid`] /
+    /// [`Scene3D::world_node_transforms`] do, applies each reachable
+    /// node's full ancestor-chain world matrix to its primitive's
+    /// triangle vertices, and sums the per-instance world-frame tensors
+    /// element-wise. A mesh instanced under two nodes therefore
+    /// contributes **twice** (once per instance), and each instance
+    /// carries the world-space rotation, scale, skew, *and* translation
+    /// on the path to that node.
+    ///
+    /// # Derivation
+    ///
+    /// Each reachable node-mesh instance contributes
+    /// [`crate::Mesh::world_inertia_tensor`] of its mesh under the
+    /// composed world matrix `M` — the same per-corner mapping
+    /// [`crate::Primitive::world_inertia_tensor`] performs, so rotation,
+    /// non-uniform scale, skew, and the translation column of `M` are all
+    /// folded in. Element-wise summation across instances is additivity
+    /// of the second-moment integral over a union of disjoint solids
+    /// (the same argument [`Scene3D::world_signed_volume`] /
+    /// [`Scene3D::world_volume_centroid`] rest on). A mirrored instance
+    /// (`det(M_3) < 0`) contributes a negated tensor, matching the
+    /// sign-flip [`crate::Primitive::world_signed_volume`] carries.
+    ///
+    /// # Contract
+    ///
+    /// * Topology / degenerate / NaN / out-of-range skipping all mirror
+    ///   [`crate::Primitive::inertia_tensor`].
+    /// * Mesh resources not reachable from any [`Scene3D::roots`] node
+    ///   contribute nothing — the count is per-instance over the
+    ///   scene-graph. For a resource-level local-frame total see
+    ///   [`Scene3D::inertia_tensor`].
+    /// * Cycles are guarded the same way as
+    ///   [`Scene3D::world_node_transforms`] / [`Scene3D::bounding_box`]:
+    ///   each node is visited at most once; a node instanced under two
+    ///   parents resolves to one world matrix (the first parent on the
+    ///   DFS path).
+    /// * Returns `None` when no reachable mesh contributes a finite
+    ///   tensor — empty scene, no reachable mesh node, or every reachable
+    ///   primitive degenerate / non-triangle under its world transform.
+    /// * Skin pose deformation, morph targets, and unit-axis conversion
+    ///   are *not* applied — the static scene-graph transform is the only
+    ///   thing folded in.
+    /// * The result is the inertia tensor **about the world origin**; for
+    ///   the tensor about the scene's centre of mass apply the parallel-
+    ///   axis theorem with [`Scene3D::world_volume_centroid`] as the
+    ///   reference point (`I_about_C = I_about_O - M_total · D`,
+    ///   `D_αβ = c_α·c_β - δ_αβ·|c|²`).
+    /// * Pure; cost
+    ///   `O(reachable_nodes + Σ triangle_count_per_reachable_mesh)`.
+    ///   Allocates the DFS stack only; per-triangle math is in `f64`.
+    pub fn world_inertia_tensor(&self) -> Option<[[f64; 3]; 3]> {
+        let n_nodes = self.nodes.len();
+        let n_meshes = self.meshes.len();
+        if n_nodes == 0 || n_meshes == 0 {
+            return None;
+        }
+        let mut visited = vec![false; n_nodes];
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut total = [[0.0_f64; 3]; 3];
+        let mut any = false;
+        // Push roots in reverse so the LIFO pop visits the leftmost
+        // root first — matching `world_node_transforms`'s documented
+        // single-resolution policy (a shared instance reachable from
+        // two parents resolves via the first parent on the DFS path).
+        let mut stack: Vec<(NodeId, [[f32; 4]; 4])> =
+            self.roots.iter().rev().map(|r| (*r, identity)).collect();
+        while let Some((nid, parent)) = stack.pop() {
+            let idx = nid.0 as usize;
+            if idx >= n_nodes || visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            let node = &self.nodes[idx];
+            let world = mat4_mul(parent, node.transform.to_matrix());
+            if let Some(m) = node.mesh {
+                if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                    if let Some(t) = mesh.world_inertia_tensor(world) {
+                        for r in 0..3 {
+                            for c in 0..3 {
+                                total[r][c] += t[r][c];
+                            }
+                        }
+                        any = true;
+                    }
+                }
+            }
+            // Walk children in reverse so leftmost child is popped first.
+            for child in node.children.iter().rev() {
+                stack.push((*child, world));
+            }
+        }
+        if any {
+            Some(total)
+        } else {
+            None
+        }
+    }
+
     /// Closest-hit ray query across every reachable node-mesh
     /// instance in world space.
     ///

@@ -1020,6 +1020,59 @@ Round 259 lands the unit-density inertia tensor reduction
   (the principal moments tell you the body's preferred resting
   orientation under gravity, i.e. the most stable spin axis).
 
+Round 292 closes the per-instance world-frame gap that round 259's
+inertia-tensor prose flagged (`tests/world_inertia_tensor.rs`,
+24 tests):
+
+- `Primitive::world_inertia_tensor(&self, world: [[f32; 4]; 4]) -> Option<[[f64; 3]; 3]>`
+  — the world-frame sibling of [`Primitive::inertia_tensor`]. Maps
+  every corner through the row-major column-vector affine 4x4 `world`
+  matrix (same convention as [`Transform::Matrix`] /
+  [`BoundingBox::transform`] / [`Primitive::world_volume_centroid`])
+  into world coordinates, then evaluates the same origin-anchored
+  per-tetrahedron second-moment integrals (Mirtich, "Fast and Accurate
+  Computation of Polyhedral Mass Properties", *Journal of Graphics
+  Tools* 1(2), 1996 — the same lineage as
+  [`Primitive::inertia_tensor`] / `volume_centroid` / `signed_volume`)
+  in the world frame. Folding the transform in at the corner level —
+  rather than `M_3 · I_local · M_3ᵀ` plus a separate parallel-axis
+  correction — handles rotation, non-uniform scale, **skew**, *and*
+  the **translation** column of `M` in one pass, exactly the way
+  [`Primitive::world_volume_centroid`] / `world_signed_volume` map
+  corners first so the translation enters every origin-anchored tet
+  term. For a closed two-manifold the result equals the analytic
+  transform of the local tensor (the `R · I · Rᵀ` similarity under
+  rotation, `s⁵` scale under uniform scale `s`, sign-flip under a
+  `det(M_3) < 0` mirror, and the parallel-axis shift under
+  translation — all cross-checked in the tests); for an open patch the
+  result depends on where the world origin sits, the same caveat the
+  local helper carries. Topology integration through `triangle_indices`
+  (`Triangles` / `TriangleStrip` / `TriangleFan`); degenerate / NaN /
+  out-of-range / non-triangle skipping mirror `inertia_tensor`. `f64`
+  throughout. Pure; `O(triangle_count)`.
+- `Mesh::world_inertia_tensor(&self, world) -> Option<[[f64; 3]; 3]>`
+  — element-wise sum across every contained primitive's world tensor
+  (additivity of the second-moment integral over disjoint volumes;
+  sign-aware so an inside-out subshell subtracts). Skips primitives
+  returning `None`; `None` only when every primitive returned `None`.
+- `Scene3D::world_inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
+  the per-instance world-frame total. Walks the [`Scene3D::roots`]
+  forest with the same cycle-guarded, leftmost-first, first-parent
+  shared-instance-resolution DFS as
+  [`Scene3D::world_volume_centroid`] /
+  [`Scene3D::world_node_transforms`], folds each reachable node's full
+  ancestor-chain world matrix into its mesh's tensor, and sums
+  element-wise. **Per-instance, not per-resource** — a mesh instanced
+  under N reachable nodes contributes N times (unlike
+  [`Scene3D::inertia_tensor`], which counts each mesh resource once in
+  the local frame). The result is about the **world origin**; shift to
+  the scene centre of mass via the parallel-axis theorem with
+  [`Scene3D::world_volume_centroid`] as the reference point. Skin pose,
+  morph targets, and unit-axis conversion are not folded in. Use cases:
+  per-instance world-frame rigid-body inertia for a physics solver,
+  principal-axis / oriented-bounding-box picking that respects
+  per-instance scale and skew, multi-instance 3D-print balance.
+
 Round 256 closes the per-instance world-frame gap that round 247
 flagged (`tests/world_volume_centroid.rs`, 40 tests):
 

@@ -1698,6 +1698,199 @@ impl Primitive {
         sum_v / 6.0
     }
 
+    /// Transform-aware unit-density inertia tensor of the solid enclosed
+    /// by this primitive's closed triangle tessellation, taken about the
+    /// **origin of the world frame** after every corner is mapped through
+    /// the row-major column-vector affine 4x4 `world` matrix (same
+    /// convention as [`crate::Transform::Matrix`] /
+    /// [`crate::BoundingBox::transform`] /
+    /// [`Primitive::world_volume_centroid`] /
+    /// [`Primitive::world_surface_centroid`]). Sibling of
+    /// [`Primitive::inertia_tensor`] for the per-instance world-frame
+    /// case that round 259's prose flagged as the next-round candidate.
+    ///
+    /// Returned as a row-major symmetric `[[f64; 3]; 3]` matrix with the
+    /// same rigid-body convention as [`Primitive::inertia_tensor`]:
+    /// diagonal entries are the moments `I_αα = ∫_V (β² + γ²) dV` (the two
+    /// world coordinates not equal to α), off-diagonals are the negated
+    /// products of inertia `I_αβ = -∫_V x_α · x_β dV`.
+    ///
+    /// # Derivation
+    ///
+    /// The local helper [`Primitive::inertia_tensor`] fans the closed
+    /// surface into origin-anchored tetrahedra `(0, P_a, P_b, P_c)` and
+    /// evaluates the closed-form per-tet second-moment integrals. Under
+    /// an affine map `M` every corner `P_*` becomes `M·P_*`, so the same
+    /// closed form evaluated on the **world-frame** corners
+    /// `(0, M·P_a, M·P_b, M·P_c)` gives `∫ x_α x_β dV` in the world frame
+    /// directly. Mapping the corners first (rather than transforming the
+    /// local tensor with `M_3 · I_local · M_3ᵀ` and a separate parallel-
+    /// axis correction) folds rotation, non-uniform scale, **skew**, and
+    /// the **translation** column of `M` into one pass — exactly the way
+    /// [`Primitive::world_volume_centroid`] maps corners first so the
+    /// translation column enters every origin-anchored tet term. For a
+    /// closed two-manifold under an invertible affine `M` the result
+    /// equals the analytic transform of the local tensor:
+    /// `I_world(about world origin)` follows from `I_local(about local
+    /// origin)` by the linear map `M_3 · (centred tensor) · M_3ᵀ`
+    /// scaled by `det(M_3)` plus the parallel-axis shift induced by the
+    /// translation `t` — but the direct corner-mapped integral computes
+    /// it in one place without the bookkeeping. For an open patch the
+    /// boundary terms remain and the result depends on where the world
+    /// origin sits, the same caveat the local helper carries.
+    ///
+    /// # Contract
+    ///
+    /// * Topology integration, degenerate / NaN guards, and out-of-range-
+    ///   index skipping all mirror [`Primitive::inertia_tensor`] /
+    ///   [`Primitive::world_volume_centroid`]. Non-triangle topologies
+    ///   return `None`.
+    /// * Returns `None` only when every face has been silently skipped
+    ///   (non-triangle, empty, or every per-tet integrand non-finite).
+    /// * Coordinates are in the **world** frame defined by `world`. Scale
+    ///   `s` along an axis scales the corresponding second moments by the
+    ///   fifth power overall (`∫ x² dV` carries two position powers plus
+    ///   three volume powers); a uniform scale `s` multiplies the whole
+    ///   tensor by `s⁵`. A winding flip (or a mirror in `M`, `det(M_3) <
+    ///   0`) negates the tensor, the same way it negates
+    ///   [`Primitive::world_signed_volume`].
+    /// * Accumulators are `f64`; per-triangle math is `f64`. Always
+    ///   finite for finite input.
+    /// * **Does not mutate `self`.** Pure; cost `O(triangle_count)`.
+    ///
+    /// Used by [`Mesh::world_inertia_tensor`] and
+    /// [`crate::Scene3D::world_inertia_tensor`] to fold each reachable
+    /// node's ancestor-chain transform into a per-instance world-frame
+    /// inertia total.
+    pub fn world_inertia_tensor(&self, world: [[f32; 4]; 4]) -> Option<[[f64; 3]; 3]> {
+        if !matches!(
+            self.topology,
+            Topology::Triangles | Topology::TriangleStrip | Topology::TriangleFan
+        ) {
+            return None;
+        }
+        let n = self.positions.len();
+        let mut acc_xx = 0.0_f64;
+        let mut acc_yy = 0.0_f64;
+        let mut acc_zz = 0.0_f64;
+        let mut acc_xy = 0.0_f64;
+        let mut acc_xz = 0.0_f64;
+        let mut acc_yz = 0.0_f64;
+        let mut any_finite = false;
+        // Promote the 4x4 to f64 once so each corner mapping is a small
+        // fixed cost — mirrors `world_volume_centroid` / `world_signed_volume`.
+        let m00 = world[0][0] as f64;
+        let m01 = world[0][1] as f64;
+        let m02 = world[0][2] as f64;
+        let m03 = world[0][3] as f64;
+        let m10 = world[1][0] as f64;
+        let m11 = world[1][1] as f64;
+        let m12 = world[1][2] as f64;
+        let m13 = world[1][3] as f64;
+        let m20 = world[2][0] as f64;
+        let m21 = world[2][1] as f64;
+        let m22 = world[2][2] as f64;
+        let m23 = world[2][3] as f64;
+        let xform = |p: [f32; 3]| {
+            let x = p[0] as f64;
+            let y = p[1] as f64;
+            let z = p[2] as f64;
+            [
+                m00 * x + m01 * y + m02 * z + m03,
+                m10 * x + m11 * y + m12 * z + m13,
+                m20 * x + m21 * y + m22 * z + m23,
+            ]
+        };
+        for [ia, ib, ic] in self.triangle_indices() {
+            let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
+            if ia >= n || ib >= n || ic >= n {
+                continue;
+            }
+            let pa = xform(self.positions[ia]);
+            let pb = xform(self.positions[ib]);
+            let pc = xform(self.positions[ic]);
+            let (ax, ay, az) = (pa[0], pa[1], pa[2]);
+            let (bx, by, bz) = (pb[0], pb[1], pb[2]);
+            let (cx, cy, cz) = (pc[0], pc[1], pc[2]);
+            if !ax.is_finite()
+                || !ay.is_finite()
+                || !az.is_finite()
+                || !bx.is_finite()
+                || !by.is_finite()
+                || !bz.is_finite()
+                || !cx.is_finite()
+                || !cy.is_finite()
+                || !cz.is_finite()
+            {
+                continue;
+            }
+            // P_b × P_c in the world frame — same cross product as
+            // `world_signed_volume`.
+            let crx = by * cz - bz * cy;
+            let cry = bz * cx - bx * cz;
+            let crz = bx * cy - by * cx;
+            if !crx.is_finite() || !cry.is_finite() || !crz.is_finite() {
+                continue;
+            }
+            // six_v = 6 · V_i — the origin-anchored signed tetrahedron
+            // volume (world frame) times six.
+            let six_v = ax * crx + ay * cry + az * crz;
+            if !six_v.is_finite() {
+                continue;
+            }
+            // Same closed-form per-axis / cross-axis polynomials as
+            // `inertia_tensor`, evaluated on the transformed corners.
+            let mxx = ax * ax + bx * bx + cx * cx + ax * bx + ax * cx + bx * cx;
+            let myy = ay * ay + by * by + cy * cy + ay * by + ay * cy + by * cy;
+            let mzz = az * az + bz * bz + cz * cz + az * bz + az * cz + bz * cz;
+            let mxy = 2.0 * (ax * ay + bx * by + cx * cy)
+                + (ax * by + ay * bx)
+                + (ax * cy + ay * cx)
+                + (bx * cy + by * cx);
+            let mxz = 2.0 * (ax * az + bx * bz + cx * cz)
+                + (ax * bz + az * bx)
+                + (ax * cz + az * cx)
+                + (bx * cz + bz * cx);
+            let myz = 2.0 * (ay * az + by * bz + cy * cz)
+                + (ay * bz + az * by)
+                + (ay * cz + az * cy)
+                + (by * cz + bz * cy);
+            if !mxx.is_finite()
+                || !myy.is_finite()
+                || !mzz.is_finite()
+                || !mxy.is_finite()
+                || !mxz.is_finite()
+                || !myz.is_finite()
+            {
+                continue;
+            }
+            acc_xx += six_v * mxx;
+            acc_yy += six_v * myy;
+            acc_zz += six_v * mzz;
+            acc_xy += six_v * mxy;
+            acc_xz += six_v * mxz;
+            acc_yz += six_v * myz;
+            any_finite = true;
+        }
+        if !any_finite {
+            return None;
+        }
+        // `∫_V x_α² dV = acc_αα / 60`; `∫_V x_α·x_β dV = acc_αβ / 120`.
+        let int_xx = acc_xx / 60.0;
+        let int_yy = acc_yy / 60.0;
+        let int_zz = acc_zz / 60.0;
+        let int_xy = acc_xy / 120.0;
+        let int_xz = acc_xz / 120.0;
+        let int_yz = acc_yz / 120.0;
+        let i_xx = int_yy + int_zz;
+        let i_yy = int_xx + int_zz;
+        let i_zz = int_xx + int_yy;
+        let i_xy = -int_xy;
+        let i_xz = -int_xz;
+        let i_yz = -int_yz;
+        Some([[i_xx, i_xy, i_xz], [i_xy, i_yy, i_yz], [i_xz, i_yz, i_zz]])
+    }
+
     /// Unit-density inertia tensor of the solid enclosed by this
     /// primitive's closed triangle tessellation, taken about the
     /// **origin** of [`Primitive::positions`], in the unit-to-the-fifth
@@ -3273,6 +3466,57 @@ impl Mesh {
         let mut any = false;
         for p in &self.primitives {
             if let Some(t) = p.inertia_tensor() {
+                for r in 0..3 {
+                    for c in 0..3 {
+                        total[r][c] += t[r][c];
+                    }
+                }
+                any = true;
+            }
+        }
+        if !any {
+            None
+        } else {
+            Some(total)
+        }
+    }
+
+    /// Transform-aware unit-density inertia tensor across every contained
+    /// primitive: every primitive's [`Primitive::world_inertia_tensor`] is
+    /// summed element-wise after each corner is mapped through the
+    /// row-major column-vector affine 4x4 `world` matrix. Sibling of
+    /// [`Mesh::inertia_tensor`] for the per-instance world-frame case.
+    ///
+    /// # Derivation
+    ///
+    /// Same additivity argument as [`Mesh::inertia_tensor`]: the
+    /// second-moment integral `I_αβ = ∫∫∫_V f_αβ dV` is additive over a
+    /// union of disjoint volumes, so the mesh-level world tensor is the
+    /// element-wise sum of every primitive's own
+    /// [`Primitive::world_inertia_tensor`]. Because the transform is
+    /// folded in per primitive (every corner mapped through `world`
+    /// before the integral), the sum is taken in the **world** frame and
+    /// is sign-aware — an inside-out subshell contributes a negated
+    /// tensor, the same way it contributes a negative
+    /// [`Primitive::world_signed_volume`].
+    ///
+    /// # Contract
+    ///
+    /// * Skips primitives whose [`Primitive::world_inertia_tensor`]
+    ///   returns `None` (non-triangle topology, empty primitive, every-
+    ///   face-degenerate under `world`). Returns `None` when **every**
+    ///   primitive returned `None` (or the mesh holds zero primitives).
+    /// * Mirrors [`Mesh::world_volume_centroid`]'s `f64` accumulator and
+    ///   silent-skip policy for partly-corrupt buffers.
+    /// * Symmetric matrix; same diagonal-moment / negated-product-of-
+    ///   inertia convention as [`Mesh::inertia_tensor`], in the world
+    ///   frame.
+    /// * Pure; cost `O(Σ triangle_count_per_primitive)`.
+    pub fn world_inertia_tensor(&self, world: [[f32; 4]; 4]) -> Option<[[f64; 3]; 3]> {
+        let mut total = [[0.0_f64; 3]; 3];
+        let mut any = false;
+        for p in &self.primitives {
+            if let Some(t) = p.world_inertia_tensor(world) {
                 for r in 0..3 {
                     for c in 0..3 {
                         total[r][c] += t[r][c];

@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 292 (Transform-aware inertia tensor: `world_inertia_tensor`)
+
+- `Primitive::world_inertia_tensor(&self, world: [[f32; 4]; 4]) -> Option<[[f64; 3]; 3]>`
+  — the world-frame sibling of `Primitive::inertia_tensor`, closing
+  the per-instance gap round 259's prose flagged as the next-round
+  candidate. Maps every corner through the row-major column-vector
+  affine 4x4 `world` matrix into world coordinates, then evaluates the
+  same origin-anchored per-tetrahedron second-moment integrals
+  (Mirtich, JGT 1996; same derivation as `inertia_tensor` /
+  `volume_centroid` / `signed_volume`) in the world frame. Folding the
+  transform in at the corner level (rather than `M_3 · I_local · M_3ᵀ`
+  plus a separate parallel-axis correction) handles rotation,
+  non-uniform scale, skew, *and* translation in one pass — mirroring
+  the `world_volume_centroid` / `world_signed_volume` corner-mapping
+  style. Topology / degenerate / NaN / out-of-range skipping match
+  `inertia_tensor`; non-triangle / empty / all-skipped return `None`.
+  `f64` throughout. Pure; `O(triangle_count)`.
+- `Mesh::world_inertia_tensor(&self, world) -> Option<[[f64; 3]; 3]>`
+  — element-wise sum across every contained primitive's
+  `world_inertia_tensor` (additivity of the second-moment integral
+  over disjoint volumes; sign-aware so an inside-out subshell
+  subtracts).
+- `Scene3D::world_inertia_tensor(&self) -> Option<[[f64; 3]; 3]>` —
+  per-instance world-frame total: depth-first walk over the
+  `Scene3D::roots` forest (same cycle-guarded, leftmost-first,
+  first-parent-resolution shape as `world_volume_centroid` /
+  `world_node_transforms`), folding each reachable node's
+  ancestor-chain world matrix into its mesh's tensor and summing
+  element-wise. A mesh instanced under N nodes contributes N times.
+  Result is about the world origin; shift to the centre of mass via
+  the parallel-axis theorem with `world_volume_centroid`.
+- `tests/world_inertia_tensor.rs` (24 tests) — identity passthrough,
+  parallel-axis theorem under translation, `R · I · Rᵀ` similarity +
+  trace-invariance under rotation, `s⁵` scaling under uniform scale,
+  mirror sign-flip, symmetry, NaN-matrix / out-of-range / non-triangle
+  / empty handling, strip↔list parity, mesh additivity + non-triangle
+  skip, and scene-level identity-root / per-instance-doubling /
+  ancestor-chain composition / cycle-guard / detached-mesh / two-
+  instance-sum cross-checks.
+
 ### Added — Round 285 (Parametric extruded solids: `Profile2D` + ear-clip triangulation)
 
 - `extrude::Profile2D { outer, holes }` (re-exported at the crate
