@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 299 (Combinatorial-topology summary: `topology_summary`)
+
+- `Primitive::topology_summary(&self) -> TopologySummary` — rolls the
+  triangle tessellation's connectivity graph up into the classical
+  topological invariants: the **V / E / F** counts, the **Euler
+  characteristic** `χ = V − E + F`, the connected-component count
+  (facet adjacency via a path-halving union-find over the edge buckets),
+  the boundary-loop count, and — for a single connected closed
+  orientable two-manifold — the **genus** recovered from `χ = 2 − 2g`
+  (`Some(0)` sphere/cube, `Some(1)` torus, `Some(2)` double-torus). All
+  counts are by vertex index (run `weld_vertices` first); **V** counts
+  only referenced vertices so unreferenced pool slots don't inflate the
+  Euler identity. Face/edge bucketing and the out-of-range /
+  duplicate-corner whole-triangle exclusion match
+  `edge_manifold_report`; the `triangle_indices` feed flows `Triangles`
+  / `TriangleStrip` / `TriangleFan` in. Genus is `None` for any open,
+  multi-component, non-manifold, or non-orientable surface. Purely
+  combinatorial (a NaN position does not change index-level
+  connectivity). Pure; `O(triangle_count · α(V))` plus the boundary-loop
+  walk it calls.
+- `TopologySummary { vertex_count, edge_count, face_count,
+  euler_characteristic, component_count, boundary_loop_count, genus }`
+  — `Clone + Copy + Debug + Default + PartialEq + Eq` report struct,
+  re-exported from the crate root.
+
 ### Added — Round 292 (Transform-aware inertia tensor: `world_inertia_tensor`)
 
 - `Primitive::world_inertia_tensor(&self, world: [[f32; 4]; 4]) -> Option<[[f64; 3]; 3]>`

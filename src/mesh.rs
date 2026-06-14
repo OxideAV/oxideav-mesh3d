@@ -12,7 +12,7 @@
 //! [`Primitive::targets`] (per the glTF 2.0 §3.7.2.2 schema), with the
 //! per-target blend weights' default values on [`Mesh::weights`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::scene::{BoundingBox, MaterialId};
 
@@ -2930,6 +2930,203 @@ impl Primitive {
         loops
     }
 
+    /// Summarise the combinatorial topology of this primitive's triangle
+    /// tessellation: the vertex / edge / face counts, the
+    /// **Euler characteristic** `χ = V − E + F`, the number of connected
+    /// surface components, the number of boundary loops, and — for a
+    /// closed orientable two-manifold — the **genus** (handle count).
+    ///
+    /// This is the aggregate topological-invariant readout the
+    /// [`Primitive::boundary_loops`] docs gesture toward with "genus /
+    /// hole-count diagnostics". Where [`Primitive::edge_manifold_report`]
+    /// classifies edges and [`Primitive::boundary_loops`] traces open
+    /// seams, this method rolls the whole connectivity graph up into the
+    /// classical [`TopologySummary`] a mesh-repair or analysis pass keys
+    /// off.
+    ///
+    /// # Counting conventions
+    ///
+    /// All three counts are over the *combinatorial* surface — by
+    /// **vertex index**, not 3D position (run [`Primitive::weld_vertices`]
+    /// first to merge positionally coincident corners):
+    ///
+    /// * **F** ([`TopologySummary::face_count`]) — the number of valid
+    ///   triangles. A triangle with an out-of-range corner index or a
+    ///   duplicate corner index (a zero-length edge) is **excluded whole**
+    ///   — the same exclusion rule as
+    ///   [`Primitive::edge_manifold_report`] / [`Primitive::boundary_edges`].
+    /// * **E** ([`TopologySummary::edge_count`]) — the number of distinct
+    ///   undirected edges `(min, max)` across the valid triangles, bucketed
+    ///   identically to `edge_manifold_report` (this equals its
+    ///   `total_edge_count`).
+    /// * **V** ([`TopologySummary::vertex_count`]) — the number of distinct
+    ///   vertex indices **referenced by a valid triangle**, *not*
+    ///   `positions.len()`. Unreferenced pool slots (a decoder's slack, a
+    ///   point cloud's stray points) do not inflate `V`, so an isolated
+    ///   triangle reports `V = 3` regardless of pool size and the Euler
+    ///   identity stays meaningful.
+    ///
+    /// # Euler characteristic and genus
+    ///
+    /// `χ = V − E + F` ([`TopologySummary::euler_characteristic`]) is the
+    /// classical topological invariant (Euler's polyhedron formula,
+    /// generalised to surfaces). For a disjoint union of `C` closed
+    /// orientable surfaces of genera `g_1 … g_C` it equals
+    /// `Σ (2 − 2·g_k)`; with `b` total boundary loops removed it is
+    /// `2·C − 2·g_total − b`. When the primitive is a **single connected
+    /// closed orientable two-manifold** (`component_count == 1`,
+    /// `is_closed_manifold()`), this method inverts that to recover the
+    /// genus `g = (2 − χ) / 2` ([`TopologySummary::genus`] = `Some(g)`):
+    /// a sphere/cube/convex hull is `g = 0`, a torus/coffee-mug is
+    /// `g = 1`, a double-torus is `g = 2`. The genus is **only** reported
+    /// when that single-closed-component precondition holds *and*
+    /// `2 − χ` is even and non-negative; otherwise it is `None` (an open
+    /// patch, a non-manifold or self-touching surface, a multi-component
+    /// mesh, or a non-orientable / defective surface whose `χ` does not
+    /// admit an orientable-genus reading).
+    ///
+    /// # Connected components and boundary loops
+    ///
+    /// [`TopologySummary::component_count`] is the number of
+    /// edge-connected triangle groups (two triangles are connected when
+    /// they share an undirected edge — the standard "facet adjacency"
+    /// relation, computed with a union-find over the edge buckets). A
+    /// vertex touched by two otherwise-separate fans is **not** enough to
+    /// join them (edge adjacency, not vertex adjacency), matching the
+    /// two-manifold seam definition the rest of the crate uses. An empty
+    /// or all-invalid primitive reports `0` components.
+    /// [`TopologySummary::boundary_loop_count`] is
+    /// `self.boundary_loops().len()` — the number of distinct open seams.
+    ///
+    /// # Contract
+    ///
+    /// * Topology feed and exclusion rules are identical to
+    ///   [`Primitive::edge_manifold_report`] — `Triangles` /
+    ///   `TriangleStrip` (alternating winding) / `TriangleFan` all feed in
+    ///   through [`Primitive::triangle_indices`]. Non-triangle topologies
+    ///   (lines/points) and empty primitives return an all-zero summary
+    ///   with `genus == None`.
+    /// * Pure (no `self` mutation). Cost
+    ///   `O(triangle_count · α(V))` for the union-find pass plus the
+    ///   `boundary_loops` walk it calls; `α` is the inverse-Ackermann
+    ///   function (effectively constant).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // A single open triangle: V=3, E=3, F=1, χ=1, one component,
+    /// // one boundary loop, no closed genus.
+    /// let mut prim = Primitive::new(Topology::Triangles);
+    /// prim.positions = vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    /// let t = prim.topology_summary();
+    /// assert_eq!(
+    ///     (t.vertex_count, t.edge_count, t.face_count), (3, 3, 1));
+    /// assert_eq!(t.euler_characteristic, 1);
+    /// assert_eq!(t.component_count, 1);
+    /// assert_eq!(t.boundary_loop_count, 1);
+    /// assert_eq!(t.genus, None);
+    /// ```
+    pub fn topology_summary(&self) -> TopologySummary {
+        let n = self.positions.len();
+        // Gather the valid triangles once (same exclusion rules as
+        // `edge_manifold_report`): in-range corners, no duplicate corner.
+        let mut faces: Vec<[u32; 3]> = Vec::new();
+        for [ia, ib, ic] in self.triangle_indices() {
+            if (ia as usize) >= n || (ib as usize) >= n || (ic as usize) >= n {
+                continue;
+            }
+            if ia == ib || ib == ic || ia == ic {
+                continue;
+            }
+            faces.push([ia, ib, ic]);
+        }
+
+        if faces.is_empty() {
+            return TopologySummary::default();
+        }
+
+        // Distinct referenced vertices (V) — by index, referenced-only.
+        // Distinct undirected edges (E), with the owning face indices so
+        // facet adjacency can be derived without a second pass.
+        let mut verts: HashSet<u32> = HashSet::new();
+        // Undirected edge → the (up to two) face indices we union across.
+        // A third+ sharer (non-manifold edge) still unions transitively;
+        // we only need one representative per edge to chain the component.
+        let mut edge_first_face: HashMap<(u32, u32), usize> = HashMap::new();
+        let mut edge_set: HashSet<(u32, u32)> = HashSet::new();
+
+        // Union-find over face indices for connected components.
+        let mut parent: Vec<usize> = (0..faces.len()).collect();
+        fn find(parent: &mut [usize], mut x: usize) -> usize {
+            while parent[x] != x {
+                parent[x] = parent[parent[x]]; // path halving
+                x = parent[x];
+            }
+            x
+        }
+
+        for (fi, &[ia, ib, ic]) in faces.iter().enumerate() {
+            verts.insert(ia);
+            verts.insert(ib);
+            verts.insert(ic);
+            for (a, b) in [(ia, ib), (ib, ic), (ic, ia)] {
+                let key = if a < b { (a, b) } else { (b, a) };
+                edge_set.insert(key);
+                match edge_first_face.get(&key) {
+                    Some(&other) => {
+                        // Share an edge → union the two facets.
+                        let ra = find(&mut parent, fi);
+                        let rb = find(&mut parent, other);
+                        if ra != rb {
+                            parent[ra] = rb;
+                        }
+                    }
+                    None => {
+                        edge_first_face.insert(key, fi);
+                    }
+                }
+            }
+        }
+
+        // Count distinct roots = connected components.
+        let mut roots: HashSet<usize> = HashSet::new();
+        for fi in 0..faces.len() {
+            let r = find(&mut parent, fi);
+            roots.insert(r);
+        }
+
+        let vertex_count = verts.len();
+        let edge_count = edge_set.len();
+        let face_count = faces.len();
+        let component_count = roots.len();
+        let euler_characteristic = vertex_count as i64 - edge_count as i64 + face_count as i64;
+
+        let boundary_loop_count = self.boundary_loops().len();
+
+        // Genus only for a single connected closed orientable manifold.
+        // χ = 2 − 2g ⇒ g = (2 − χ)/2, requiring (2 − χ) even and ≥ 0.
+        let genus = if component_count == 1 && self.edge_manifold_report().is_closed_manifold() {
+            let two_minus_chi = 2 - euler_characteristic;
+            if two_minus_chi >= 0 && two_minus_chi % 2 == 0 {
+                Some((two_minus_chi / 2) as u32)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        TopologySummary {
+            vertex_count,
+            edge_count,
+            face_count,
+            euler_characteristic,
+            component_count,
+            boundary_loop_count,
+            genus,
+        }
+    }
+
     /// Closest-hit ray query against this primitive's triangle
     /// tessellation.
     ///
@@ -3091,6 +3288,53 @@ impl EdgeManifoldReport {
             && self.boundary_edge_count == 0
             && self.non_manifold_edge_count == 0
     }
+}
+
+/// Combinatorial-topology summary of a [`Primitive`]'s triangle
+/// tessellation, produced by [`Primitive::topology_summary`].
+///
+/// Rolls the whole connectivity graph up into the classical topological
+/// invariants: the vertex / edge / face counts, the **Euler
+/// characteristic** `χ = V − E + F`, the connected-component count, the
+/// boundary-loop count, and — for a single closed orientable
+/// two-manifold — the [`genus`](TopologySummary::genus).
+///
+/// All counts are by **vertex index**, not 3D position, and exclude
+/// triangles with an out-of-range or duplicate corner index (the same
+/// exclusion rule as [`EdgeManifoldReport`]). `V` counts only the
+/// vertices a valid triangle actually references — unreferenced pool
+/// slots do not inflate it — so the Euler identity stays meaningful for
+/// a primitive whose `positions` pool carries slack.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TopologySummary {
+    /// **V** — distinct vertex indices referenced by a valid triangle
+    /// (not `positions.len()`).
+    pub vertex_count: usize,
+    /// **E** — distinct undirected edges across the valid triangles
+    /// (equals [`EdgeManifoldReport::total_edge_count`]).
+    pub edge_count: usize,
+    /// **F** — number of valid triangles (out-of-range / duplicate-corner
+    /// triangles excluded).
+    pub face_count: usize,
+    /// **χ = V − E + F** — the Euler characteristic. Signed because an
+    /// open surface with many holes can drive it negative.
+    pub euler_characteristic: i64,
+    /// Number of edge-connected triangle groups (facet adjacency: two
+    /// triangles connect when they share an undirected edge). `0` for an
+    /// empty / all-invalid primitive.
+    pub component_count: usize,
+    /// Number of distinct boundary loops — equals
+    /// `Primitive::boundary_loops().len()`. `0` for a closed surface.
+    pub boundary_loop_count: usize,
+    /// Handle count of the surface, **only** populated for a single
+    /// connected closed orientable two-manifold (`component_count == 1`
+    /// and [`EdgeManifoldReport::is_closed_manifold`]) whose
+    /// `g = (2 − χ) / 2` is a non-negative integer: `Some(0)` for a
+    /// sphere/cube, `Some(1)` for a torus, `Some(2)` for a double-torus.
+    /// `None` for an open patch, a multi-component mesh, a
+    /// non-manifold / self-touching surface, or any surface whose `χ`
+    /// does not admit an orientable-genus reading.
+    pub genus: Option<u32>,
 }
 
 /// Evaluated output of [`Primitive::apply_morph_weights`].

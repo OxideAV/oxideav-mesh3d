@@ -375,6 +375,47 @@ Round 275 lands the boundary-loop chainer (`tests/boundary_loops.rs`,
   is the number of distinct open seams). Pure (no `self` mutation); cost
   `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
 
+Round 299 lands the combinatorial-topology summary — Euler
+characteristic, connected-component count, and orientable genus
+(`tests/topology_summary.rs`, 23 tests):
+
+- `Primitive::topology_summary(&self) -> TopologySummary` — rolls the
+  whole connectivity graph up into the classical topological invariants
+  that the round-275 [`Primitive::boundary_loops`] prose gestured toward
+  as "genus / hole-count diagnostics". `TopologySummary { vertex_count,
+  edge_count, face_count, euler_characteristic, component_count,
+  boundary_loop_count, genus }` (re-exported at the crate root) carries:
+  the **V / E / F** counts of the triangle tessellation, the **Euler
+  characteristic** `χ = V − E + F` (Euler's polyhedron formula
+  generalised to surfaces), the number of edge-connected triangle groups
+  (facet adjacency via a path-halving union-find over the edge buckets),
+  the boundary-loop count (`boundary_loops().len()`), and — for a
+  **single connected closed orientable two-manifold** — the **genus**
+  recovered by inverting `χ = 2 − 2g` to `g = (2 − χ) / 2`: `Some(0)` for
+  a sphere / cube / convex hull, `Some(1)` for a torus / coffee-mug,
+  `Some(2)` for a double-torus.
+- All counts are by **vertex index**, not 3D position (run
+  [`Primitive::weld_vertices`] first to merge coincident corners — a
+  cube *soup* of 36 distinct corners reports many components + `None`
+  genus until welded down to its 8-corner indexed form). **V** counts
+  only the vertices a valid triangle actually references, so an
+  unreferenced pool slot never inflates the Euler identity. Face / edge
+  bucketing and the out-of-range / duplicate-corner whole-triangle
+  exclusion are identical to [`Primitive::edge_manifold_report`]
+  (`edge_count` equals its `total_edge_count`); the
+  [`Primitive::triangle_indices`] feed means `Triangles` /
+  `TriangleStrip` (alternating winding) / `TriangleFan` all flow in.
+  Genus is `None` for any open patch, multi-component mesh,
+  non-manifold / self-touching surface, or surface whose `2 − χ` is odd
+  or negative (no orientable-genus reading). The summary is purely
+  combinatorial: a NaN-position vertex does not change index-level
+  connectivity (unlike the geometric [`Primitive::degenerate_triangles`]).
+  Two triangles touching only at a shared vertex stay **two** components
+  (edge adjacency, not vertex adjacency). Non-triangle topologies and
+  empty primitives return an all-zero summary with `genus == None`. Pure
+  (no `self` mutation); cost `O(triangle_count · α(V))` for the union-find
+  pass plus the boundary-loop walk it calls.
+
 Round 285 lands parametric extruded solids — the swept-solid
 tessellation kernel an IFC-style format producer consumes
 (`tests/extrude_profile.rs`, 33 tests):
