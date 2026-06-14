@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 305 (Face-dual adjacency graph: `triangle_adjacency`)
+
+- `Primitive::triangle_adjacency(&self) -> Vec<[Option<u32>; 3]>` — the
+  explicit facet-adjacency (face-dual) graph that
+  `topology_summary`'s union-find walks implicitly. Indexed by
+  `triangle_indices` enumeration order; entry `i` is `[n01, n12, n20]`,
+  the index of the triangle sharing triangle `i`'s edge `0→1` / `1→2`
+  / `2→0`, or `None`. `None` for a boundary edge (one user) or a
+  non-manifold edge (≥ 3 users — no single well-defined neighbour);
+  only a clean manifold-interior edge (exactly two users) yields a
+  symmetric `Some(other)` link, so total links =
+  `2 · EdgeManifoldReport::manifold_interior_edge_count`. Edge bucketing
+  and the out-of-range / duplicate-corner whole-triangle exclusion match
+  `edge_manifold_report` / `topology_summary`; an excluded triangle
+  keeps its (all-`None`, inert) slot so indices line up. Adjacency is by
+  vertex index (run `weld_vertices` first to link a coincident seam);
+  the `triangle_indices` feed flows `Triangles` / `TriangleStrip` /
+  `TriangleFan` in; non-triangle and empty primitives return an empty
+  `Vec`. Use cases: winding/normal-consistency repair, region-growing
+  segmentation, triangle-strip generation, connected-component
+  labelling. Pure; `O(triangle_count)`. (`tests/triangle_adjacency.rs`,
+  26 tests.)
+
 ### Added — Round 299 (Combinatorial-topology summary: `topology_summary`)
 
 - `Primitive::topology_summary(&self) -> TopologySummary` — rolls the

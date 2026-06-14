@@ -3127,6 +3127,154 @@ impl Primitive {
         }
     }
 
+    /// Build the **face-dual adjacency graph** of this primitive's
+    /// triangle tessellation: for every triangle, the (up to three)
+    /// triangles that share one of its edges.
+    ///
+    /// The result is indexed by the same enumeration
+    /// [`Primitive::triangle_indices`] produces — entry `i` describes the
+    /// neighbours of triangle `i`. Each entry is `[n01, n12, n20]`, where
+    /// `n01` is the index of the triangle sharing this triangle's first
+    /// edge (corners `0→1`), `n12` the one across edge `1→2`, and `n20`
+    /// the one across edge `2→0`. A slot is `None` when that edge has no
+    /// single well-defined neighbour:
+    ///
+    /// * a **boundary edge** (used by exactly one triangle — this one)
+    ///   has no neighbour, the same edge
+    ///   [`Primitive::boundary_edges`] reports;
+    /// * a **non-manifold edge** (used by three or more triangles —
+    ///   the `≥ 3` bucket of [`EdgeManifoldReport`]) has no *single*
+    ///   neighbour, so every triangle on it gets `None` on that side
+    ///   rather than an arbitrary pick.
+    ///
+    /// Only a clean **manifold-interior edge** (used by exactly two
+    /// triangles) yields a `Some(other)` link, and the relation is then
+    /// symmetric: if triangle `i`'s edge points to `j`, one of `j`'s
+    /// slots points back to `i`. The number of `Some` links across the
+    /// whole result is therefore `2 ·
+    /// EdgeManifoldReport::manifold_interior_edge_count`.
+    ///
+    /// This is the explicit form of the facet-adjacency graph that
+    /// [`Primitive::topology_summary`] walks implicitly with its
+    /// union-find component pass — exposed here so a caller can traverse
+    /// the dual graph directly. The edge two triangles share is the same
+    /// shared-edge relation the STL "vertex-to-vertex rule" rests on
+    /// (each triangle of a closed solid shares an edge — two vertices —
+    /// with each adjacent triangle).
+    ///
+    /// # Use cases
+    ///
+    /// * **Winding / normal-consistency repair** — flood-fill across the
+    ///   dual graph, flipping any neighbour whose shared edge is
+    ///   traversed in the same direction by both triangles (a winding
+    ///   disagreement), so a soup of inconsistently-wound facets becomes
+    ///   coherently oriented.
+    /// * **Region growing / mesh segmentation** — grow connected patches
+    ///   by hopping `Some` links while a per-edge predicate (dihedral
+    ///   angle below a crease threshold, same material) holds.
+    /// * **Triangle-strip generation** — walk a chain of edge-adjacent
+    ///   triangles to emit a long strip from a list.
+    /// * **Connected-component labelling** — a breadth-first walk over
+    ///   the `Some` links partitions the faces into the same components
+    ///   [`TopologySummary::component_count`] reports.
+    ///
+    /// # Contract
+    ///
+    /// * Adjacency is by **vertex index**, not 3D position — run
+    ///   [`Primitive::weld_vertices`] first if positionally coincident
+    ///   corners on different indices should be treated as the same
+    ///   vertex (otherwise a welded-shut seam reads as two boundary
+    ///   edges with no link across it).
+    /// * Edge bucketing and the out-of-range / duplicate-corner
+    ///   whole-triangle exclusion are identical to
+    ///   [`Primitive::edge_manifold_report`] /
+    ///   [`Primitive::topology_summary`]. A triangle that is excluded
+    ///   keeps its slot in the output (so indices line up with
+    ///   `triangle_indices`) but every slot is `None`, and its edges
+    ///   never count toward any other triangle's neighbour total.
+    /// * Topology integration goes through
+    ///   [`Primitive::triangle_indices`], so `Triangles` /
+    ///   `TriangleStrip` (alternating winding) / `TriangleFan` all feed
+    ///   in. Non-triangle topologies (lines/points) and empty primitives
+    ///   return an empty `Vec`.
+    /// * The output length always equals
+    ///   `self.triangle_indices().len()` (= [`Primitive::triangle_count`]
+    ///   for triangle topologies). Deterministic: the result depends only
+    ///   on the index data, not on `HashMap` walk order. Pure (no `self`
+    ///   mutation); cost `O(triangle_count)`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Two triangles sharing the diagonal edge 1→2 of a quad.
+    /// let mut prim = Primitive::new(Topology::Triangles);
+    /// prim.positions =
+    ///     vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]];
+    /// prim.indices = Some(Indices::U32(vec![0, 1, 2, 2, 1, 3]));
+    /// let adj = prim.triangle_adjacency();
+    /// // Triangle 0's edge 1→2 (slot index 1) is shared with triangle 1.
+    /// assert_eq!(adj[0][1], Some(1));
+    /// // The other two edges of triangle 0 are boundary.
+    /// assert_eq!(adj[0][0], None);
+    /// assert_eq!(adj[0][2], None);
+    /// ```
+    pub fn triangle_adjacency(&self) -> Vec<[Option<u32>; 3]> {
+        let n = self.positions.len();
+        let tris = self.triangle_indices();
+
+        // First pass: bucket every valid triangle's undirected edges to
+        // the faces that own them. The same exclusion rules as
+        // `edge_manifold_report` / `topology_summary`: out-of-range
+        // corners and duplicate-corner (zero-length-edge) triangles are
+        // dropped whole so their bogus edges don't pollute neighbour
+        // counts. A `Vec` per edge captures non-manifold (≥ 3) sharers,
+        // which resolve to `None` rather than an arbitrary pick.
+        let mut edge_faces: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
+        let mut valid: Vec<bool> = vec![false; tris.len()];
+        for (fi, &[ia, ib, ic]) in tris.iter().enumerate() {
+            if (ia as usize) >= n || (ib as usize) >= n || (ic as usize) >= n {
+                continue;
+            }
+            if ia == ib || ib == ic || ia == ic {
+                continue;
+            }
+            valid[fi] = true;
+            for (a, b) in [(ia, ib), (ib, ic), (ic, ia)] {
+                let key = if a < b { (a, b) } else { (b, a) };
+                edge_faces.entry(key).or_default().push(fi as u32);
+            }
+        }
+
+        // Second pass: for each valid triangle, look up each of its three
+        // edges. A `Some(other)` link exists only when the edge is shared
+        // by exactly two faces (this one + one neighbour).
+        let mut out: Vec<[Option<u32>; 3]> = vec![[None; 3]; tris.len()];
+        for (fi, &[ia, ib, ic]) in tris.iter().enumerate() {
+            if !valid[fi] {
+                continue;
+            }
+            for (slot, (a, b)) in [(ia, ib), (ib, ic), (ic, ia)].into_iter().enumerate() {
+                let key = if a < b { (a, b) } else { (b, a) };
+                if let Some(faces) = edge_faces.get(&key) {
+                    if faces.len() == 2 {
+                        // Exactly two sharers — the neighbour is the one
+                        // that is not this face.
+                        let neighbour = if faces[0] == fi as u32 {
+                            faces[1]
+                        } else {
+                            faces[0]
+                        };
+                        out[fi][slot] = Some(neighbour);
+                    }
+                    // len == 1 (boundary) or len ≥ 3 (non-manifold):
+                    // no single well-defined neighbour → leave None.
+                }
+            }
+        }
+
+        out
+    }
+
     /// Closest-hit ray query against this primitive's triangle
     /// tessellation.
     ///

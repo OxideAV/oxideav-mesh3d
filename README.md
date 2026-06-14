@@ -375,6 +375,41 @@ Round 275 lands the boundary-loop chainer (`tests/boundary_loops.rs`,
   is the number of distinct open seams). Pure (no `self` mutation); cost
   `O(triangle_count + boundary_edge_count · log boundary_edge_count)`.
 
+Round 305 lands the face-dual adjacency graph
+(`tests/triangle_adjacency.rs`, 26 tests):
+
+- `Primitive::triangle_adjacency(&self) -> Vec<[Option<u32>; 3]>` —
+  the explicit facet-adjacency graph the round-299
+  [`Primitive::topology_summary`] union-find walks implicitly. Indexed
+  by [`Primitive::triangle_indices`] enumeration order; entry `i` is
+  `[n01, n12, n20]`, the index of the triangle sharing triangle `i`'s
+  edge `0→1` / `1→2` / `2→0`, or `None`. A slot is `None` for a
+  **boundary edge** (one user — the same edges
+  [`Primitive::boundary_edges`] reports) and for a **non-manifold
+  edge** (≥ 3 users — the `≥ 3` bucket of [`EdgeManifoldReport`] has no
+  single well-defined neighbour, so every face on it gets `None`
+  rather than an arbitrary pick). Only a clean manifold-interior edge
+  (exactly two users) yields a `Some(other)` link, and the relation is
+  symmetric: total `Some` links =
+  `2 · EdgeManifoldReport::manifold_interior_edge_count` (12 for a
+  tetrahedron, 36 for a cube — every face fully linked on a closed
+  two-manifold). Edge bucketing and the out-of-range / duplicate-corner
+  whole-triangle exclusion match
+  [`Primitive::edge_manifold_report`] / `topology_summary`; an excluded
+  triangle keeps its output slot (so indices line up with
+  `triangle_indices`) but is all-`None` and inert. Adjacency is by
+  **vertex index**, not 3D position — run [`Primitive::weld_vertices`]
+  first to link a positionally-coincident seam. Topology integration
+  through `triangle_indices` (`Triangles` / `TriangleStrip` alternating
+  winding / `TriangleFan`); non-triangle topologies and empty
+  primitives return an empty `Vec`. Headline uses: winding /
+  normal-consistency repair (flood-fill flipping disagreeing
+  neighbours), region-growing segmentation, triangle-strip generation,
+  and connected-component labelling (a BFS over the `Some` links
+  partitions faces into the same groups
+  [`TopologySummary::component_count`] reports — cross-checked in the
+  tests). Pure (no `self` mutation); cost `O(triangle_count)`.
+
 Round 299 lands the combinatorial-topology summary — Euler
 characteristic, connected-component count, and orientable genus
 (`tests/topology_summary.rs`, 23 tests):
