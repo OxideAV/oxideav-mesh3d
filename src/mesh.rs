@@ -2930,6 +2930,139 @@ impl Primitive {
         loops
     }
 
+    /// Cap every boundary loop of this surface with a triangle fan-free
+    /// ear-clip patch, returning a new closed(-er) [`Topology::Triangles`]
+    /// primitive — the hole-filling step the [`Primitive::boundary_edges`]
+    /// / [`Primitive::boundary_loops`] docs name as their headline use.
+    ///
+    /// [`Primitive::boundary_loops`] traces each hole / crack / open rim as
+    /// an ordered vertex-pool loop walked in the surface's
+    /// winding-consistent direction; this method triangulates the polygon
+    /// each loop bounds and appends the patch triangles to a de-stripped
+    /// copy of the surface, so the seams those loops named become filled
+    /// faces. **Every** boundary loop is capped — a free-floating surface
+    /// patch has no intrinsic "outer" rim distinct from an interior hole,
+    /// so a flat patch with a hole is closed into a (zero-thickness)
+    /// double-sided shell with both its hole and its outer rim filled.
+    /// Callers that need to keep a known outer rim open should splice only
+    /// the caps they want from [`Primitive::boundary_loops`] instead. The
+    /// intended pipeline is therefore
+    /// `weld_vertices().fill_holes()` — weld positionally-coincident
+    /// corners into a shared pool first (boundary detection is by vertex
+    /// index, so an unwelded seam is not seen as a hole), then cap.
+    ///
+    /// # Output
+    ///
+    /// * The surface is first run through [`Primitive::to_triangle_list`],
+    ///   so the result is always [`Topology::Triangles`] with an explicit
+    ///   `U32` index buffer; the original triangles are preserved verbatim
+    ///   and the cap triangles are appended after them.
+    /// * Cap triangles reference **existing** vertex-pool indices only (a
+    ///   boundary loop is made of pool vertices the surface already owns),
+    ///   so no new vertices are introduced and every attribute buffer
+    ///   (`normals`, `tangents`, `uvs`, `colors`, `joints`, `weights`,
+    ///   morph `targets`) stays index-aligned and is carried over
+    ///   unchanged. Re-run [`Primitive::compute_normals`] afterwards if a
+    ///   smooth normal over the new faces is wanted — the caps inherit the
+    ///   stored per-vertex normals, which were authored for the open rim.
+    /// * Each cap triangle is wound so it **crosses every boundary edge in
+    ///   the direction opposite** to the loop's traversal. Because a
+    ///   boundary half-edge keeps the orientation of the single triangle
+    ///   that owns it (glTF 2.0 §3.7.2.1: CCW = front-facing), crossing it
+    ///   the other way makes each filled interior edge traversed once each
+    ///   way — the same manifold-consistency condition
+    ///   [`Primitive::orient_consistent`] enforces — so the patch's
+    ///   front-face normal agrees with the surrounding surface and
+    ///   `signed_volume`'s sign is preserved.
+    ///
+    /// # Triangulation
+    ///
+    /// A boundary loop is generally **not planar** (it bounds a hole in a
+    /// curved surface), so it is first projected onto its best-fit plane.
+    /// The plane normal is the area vector
+    /// `N = ½ Σ (Pᵢ × Pᵢ₊₁)` (Newell's method — robust for a non-planar
+    /// polygon, reducing to the exact face normal for a planar one); the
+    /// loop is then expressed in an orthonormal in-plane basis `(u, v)`
+    /// with `u × v = N̂` and ear-clipped in those 2D coordinates by the
+    /// two-ears theorem (Meisters, "Polygons Have Ears", *American
+    /// Mathematical Monthly* 82(6), 1975). The clip emits `k − 2`
+    /// triangles for a `k`-vertex loop, indexing back through the loop's
+    /// original pool indices, then each emitted triangle is reversed to
+    /// satisfy the winding rule above. Reflex-vertex containment uses the
+    /// standard barycentric-sign point-in-triangle test; a degenerate
+    /// (zero-area) corner is dropped without emitting, and a fully
+    /// non-simple projected loop still terminates (its patch is then
+    /// best-effort, matching the [`extrude`](crate::extrude) cap's
+    /// documented unspecified-on-non-simple contract).
+    ///
+    /// # Contract
+    ///
+    /// * Loops with fewer than three distinct projected vertices, a
+    ///   non-finite Newell normal, or a zero-length area vector (every
+    ///   loop vertex collinear) are skipped — they bound no fillable area.
+    /// * Topology feed matches [`Primitive::boundary_loops`]: `Triangles`
+    ///   / `TriangleStrip` / `TriangleFan` all feed in; a non-triangle
+    ///   topology (lines/points) or a closed two-manifold (no boundary
+    ///   loops) returns the de-stripped surface unchanged (no caps added).
+    /// * Pure (does not mutate `self`). Cost is
+    ///   `O(triangle_count + Σ kᵢ²)` over the loop lengths `kᵢ` (the
+    ///   ear-clip's reflex scan), plus the [`Primitive::boundary_loops`]
+    ///   walk it calls.
+    pub fn fill_holes(&self) -> Primitive {
+        let mut out = self.to_triangle_list();
+        let loops = self.boundary_loops();
+        if loops.is_empty() {
+            return out;
+        }
+        let n = self.positions.len();
+
+        // Accumulate cap triangles, then append to the (already U32) index
+        // buffer carried by `out`.
+        let mut caps: Vec<[u32; 3]> = Vec::new();
+        for lp in &loops {
+            // Gather the loop's 3D positions; bail on any out-of-range or
+            // non-finite vertex (a malformed pool can't be projected).
+            if lp.len() < 3 {
+                continue;
+            }
+            let mut pts3: Vec<[f64; 3]> = Vec::with_capacity(lp.len());
+            let mut ok = true;
+            for &vi in lp {
+                let i = vi as usize;
+                if i >= n {
+                    ok = false;
+                    break;
+                }
+                let p = self.positions[i];
+                if !p[0].is_finite() || !p[1].is_finite() || !p[2].is_finite() {
+                    ok = false;
+                    break;
+                }
+                pts3.push([f64::from(p[0]), f64::from(p[1]), f64::from(p[2])]);
+            }
+            if !ok {
+                continue;
+            }
+            if let Some(tris) = triangulate_loop_3d(&pts3, lp) {
+                // Reverse each triangle's winding so it crosses every
+                // boundary edge opposite to the loop traversal.
+                for [a, b, c] in tris {
+                    caps.push([a, c, b]);
+                }
+            }
+        }
+
+        if caps.is_empty() {
+            return out;
+        }
+        if let Some(Indices::U32(idx)) = &mut out.indices {
+            for t in caps {
+                idx.extend_from_slice(&t);
+            }
+        }
+        out
+    }
+
     /// Summarise the combinatorial topology of this primitive's triangle
     /// tessellation: the vertex / edge / face counts, the
     /// **Euler characteristic** `χ = V − E + F`, the number of connected
@@ -4203,5 +4336,200 @@ impl Mesh {
             }
         }
         best
+    }
+}
+
+/// Triangulate a single (possibly non-planar) 3D boundary loop into a fan
+/// of triangles indexing back through `orig` (the loop's vertex-pool
+/// indices, parallel to `pts3`).
+///
+/// The loop is projected onto its best-fit plane via Newell's area-vector
+/// normal, expressed in an orthonormal in-plane basis, and ear-clipped by
+/// the two-ears theorem. Returns `None` for fewer than three distinct
+/// projected vertices, a non-finite / zero-length Newell normal, or a loop
+/// whose projection collapses (every vertex collinear). The emitted
+/// triangles wind counter-clockwise about the Newell normal in the
+/// projected plane; the caller reverses them to satisfy its boundary-edge
+/// crossing rule.
+fn triangulate_loop_3d(pts3: &[[f64; 3]], orig: &[u32]) -> Option<Vec<[u32; 3]>> {
+    let k = pts3.len();
+    if k < 3 || orig.len() != k {
+        return None;
+    }
+
+    // Newell's method: N = ½ Σ (Pᵢ × Pᵢ₊₁). Robust for a non-planar loop
+    // and exact for a planar one.
+    let mut nrm = [0.0f64; 3];
+    for i in 0..k {
+        let a = pts3[i];
+        let b = pts3[(i + 1) % k];
+        nrm[0] += (a[1] - b[1]) * (a[2] + b[2]);
+        nrm[1] += (a[2] - b[2]) * (a[0] + b[0]);
+        nrm[2] += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    let len = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();
+    if !len.is_finite() || len <= 0.0 {
+        return None;
+    }
+    let n_hat = [nrm[0] / len, nrm[1] / len, nrm[2] / len];
+
+    // Build an orthonormal in-plane basis (u, v) with u × v = n_hat.
+    // Pick the world axis least aligned with n_hat as the seed so the
+    // cross product is well-conditioned.
+    let seed = {
+        let ax = n_hat[0].abs();
+        let ay = n_hat[1].abs();
+        let az = n_hat[2].abs();
+        if ax <= ay && ax <= az {
+            [1.0, 0.0, 0.0]
+        } else if ay <= az {
+            [0.0, 1.0, 0.0]
+        } else {
+            [0.0, 0.0, 1.0]
+        }
+    };
+    let cross = |a: [f64; 3], b: [f64; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let normalize = |a: [f64; 3]| -> Option<[f64; 3]> {
+        let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+        if l > 0.0 && l.is_finite() {
+            Some([a[0] / l, a[1] / l, a[2] / l])
+        } else {
+            None
+        }
+    };
+    let u = normalize(cross(seed, n_hat))?;
+    // v = n_hat × u completes a right-handed (u, v, n_hat) frame, so a
+    // CCW loop about n_hat reads CCW (positive shoelace) in (u, v).
+    let v = cross(n_hat, u);
+
+    // Project to 2D, dropping closing / consecutive duplicate points so the
+    // ear clip sees a clean simple loop.
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let mut p2: Vec<[f64; 2]> = Vec::with_capacity(k);
+    let mut keep: Vec<u32> = Vec::with_capacity(k);
+    for i in 0..k {
+        let q = [dot(pts3[i], u), dot(pts3[i], v)];
+        if let Some(last) = p2.last() {
+            if *last == q {
+                continue;
+            }
+        }
+        p2.push(q);
+        keep.push(orig[i]);
+    }
+    while p2.len() > 1 && p2[0] == p2[p2.len() - 1] {
+        p2.pop();
+        keep.pop();
+    }
+    let m = p2.len();
+    if m < 3 {
+        return None;
+    }
+
+    // Orient the working loop counter-clockwise (positive shoelace) so the
+    // ear test's convex/reflex sign convention holds.
+    let area2 = {
+        let mut s = 0.0;
+        for i in 0..m {
+            let a = p2[i];
+            let b = p2[(i + 1) % m];
+            s += a[0] * b[1] - b[0] * a[1];
+        }
+        s
+    };
+    if !area2.is_finite() || area2 == 0.0 {
+        return None;
+    }
+    if area2 < 0.0 {
+        p2.reverse();
+        keep.reverse();
+    }
+
+    // Standard ear clip over a doubly-linked ring.
+    let cross2 = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| -> f64 {
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    };
+    let in_tri = |p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]| -> bool {
+        cross2(a, b, p) >= 0.0 && cross2(b, c, p) >= 0.0 && cross2(c, a, p) >= 0.0
+    };
+    let mut prev: Vec<usize> = (0..m).map(|i| (i + m - 1) % m).collect();
+    let mut next: Vec<usize> = (0..m).map(|i| (i + 1) % m).collect();
+    let mut alive = vec![true; m];
+    let mut remaining = m;
+    let mut tris: Vec<[u32; 3]> = Vec::with_capacity(m - 2);
+
+    let is_ear = |i: usize, prev: &[usize], next: &[usize], alive: &[bool]| -> bool {
+        let (a, b, c) = (p2[prev[i]], p2[i], p2[next[i]]);
+        if cross2(a, b, c) <= 0.0 {
+            return false; // reflex or degenerate
+        }
+        let mut j = next[next[i]];
+        while j != prev[i] {
+            if alive[j] && p2[j] != a && p2[j] != b && p2[j] != c && in_tri(p2[j], a, b, c) {
+                return false;
+            }
+            j = next[j];
+        }
+        true
+    };
+
+    let mut cursor = 0usize;
+    let mut guard = 0usize;
+    let guard_max = m * m + 4;
+    while remaining > 3 {
+        guard += 1;
+        if guard > guard_max {
+            return None; // non-simple projection: bail rather than spin
+        }
+        // Find an ear, or fall back to a degenerate / forced clip.
+        let mut found = None;
+        let mut degenerate = None;
+        let mut convex = None;
+        let mut i = cursor;
+        for _ in 0..remaining {
+            let c2 = cross2(p2[prev[i]], p2[i], p2[next[i]]);
+            if c2.abs() == 0.0 && degenerate.is_none() {
+                degenerate = Some(i);
+            }
+            if c2 > 0.0 && convex.is_none() {
+                convex = Some(i);
+            }
+            if is_ear(i, &prev, &next, &alive) {
+                found = Some(i);
+                break;
+            }
+            i = next[i];
+        }
+        let (clip_i, emit) = match (found, degenerate, convex) {
+            (Some(i), _, _) => (i, true),
+            (None, Some(d), _) => (d, false),
+            (None, None, Some(c)) => (c, true),
+            (None, None, None) => return None,
+        };
+        if emit {
+            tris.push([keep[prev[clip_i]], keep[clip_i], keep[next[clip_i]]]);
+        }
+        let (p, nx) = (prev[clip_i], next[clip_i]);
+        next[p] = nx;
+        prev[nx] = p;
+        alive[clip_i] = false;
+        remaining -= 1;
+        cursor = nx;
+    }
+    // Final triangle.
+    let last = (0..m).find(|&k| alive[k])?;
+    if cross2(p2[prev[last]], p2[last], p2[next[last]]) > 0.0 {
+        tris.push([keep[prev[last]], keep[last], keep[next[last]]]);
+    }
+    if tris.is_empty() {
+        None
+    } else {
+        Some(tris)
     }
 }

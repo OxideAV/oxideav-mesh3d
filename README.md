@@ -56,7 +56,10 @@ are skipped or fall back rather than panic), and topology-aware
   characteristic, component count, orientable genus),
   `orient_consistent` (flood-fill the face-dual graph to repair
   mixed-winding facet soup into per-component coherent winding,
-  returning the re-oriented faces + an `OrientationReport`).
+  returning the re-oriented faces + an `OrientationReport`),
+  `fill_holes` (cap every boundary loop with a Newell-projected
+  ear-clip patch wound consistent with the surrounding surface,
+  making a torn surface watertight again).
 - **Attributes** — `compute_normals` (area-weighted),
   `compute_tangents` (MikkTSpace-style basis), `apply_morph_weights`.
 - **Measures** — `surface_area`, `surface_centroid`,

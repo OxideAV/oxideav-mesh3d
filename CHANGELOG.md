@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 316 (Hole-filling cap pass: `Primitive::fill_holes`)
+
+- `Primitive::fill_holes(&self) -> Primitive` — caps every boundary loop
+  of the surface with an ear-clip patch, the headline use the round-267
+  `boundary_edges` / round-275 `boundary_loops` docs name ("each closed
+  loop is a polygon a fan / ear-clip triangulator can cap to make the
+  surface watertight"). Traces each hole / crack / open rim with
+  `boundary_loops`, projects the (generally non-planar) loop onto its
+  best-fit plane via **Newell's** area-vector normal
+  `N = ½ Σ (Pᵢ × Pᵢ₊₁)`, expresses it in an orthonormal in-plane basis
+  `(u, v)` with `u × v = N̂`, and **ear-clips** in 2D by the two-ears
+  theorem (Meisters, "Polygons Have Ears", *American Mathematical
+  Monthly* 82(6), 1975). The result is a de-stripped
+  [`Topology::Triangles`] copy (via `to_triangle_list`) with the cap
+  triangles appended; caps reference existing pool indices only, so no
+  new vertices are added and every attribute buffer (`normals`,
+  `tangents`, `uvs`, `colors`, `joints`, `weights`, morph `targets`)
+  stays index-aligned and is carried over unchanged.
+- Each cap triangle is wound to **cross every boundary edge opposite to
+  the loop traversal**: a boundary half-edge keeps the orientation of the
+  single triangle that owns it (glTF 2.0 §3.7.2.1: CCW = front-facing),
+  so crossing it the other way makes each filled interior edge traversed
+  once each way — the same manifold-consistency condition
+  `orient_consistent` enforces — and the patch's front-face normal agrees
+  with the surrounding surface (so `signed_volume`'s sign is preserved; a
+  cube / tetrahedron with a face removed refills to its original positive
+  volume).
+- **Every** loop is capped: a free-floating patch has no intrinsic
+  "outer" rim distinct from an interior hole, so a flat patch with a hole
+  is closed into a zero-thickness double-sided shell with both filled.
+  Loops with fewer than three distinct projected vertices, a non-finite
+  Newell normal, a zero-length area vector (collinear), or any
+  non-finite / out-of-range vertex are skipped without panic. Topology
+  feed matches `boundary_loops` (`Triangles` / `TriangleStrip` /
+  `TriangleFan`); a closed two-manifold or non-triangle topology returns
+  the de-stripped surface unchanged. Intended pipeline
+  `weld_vertices().fill_holes()` (boundary detection is by vertex index).
+  Pure; `O(triangle_count + Σ kᵢ²)` over the loop lengths.
+  (`tests/fill_holes.rs`, 15 tests.)
+
 ### Added — Round 313 (Winding-consistency repair: `orient_consistent`)
 
 - `Primitive::orient_consistent(&self) -> (Vec<[u32; 3]>,
