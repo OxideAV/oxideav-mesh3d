@@ -3275,6 +3275,223 @@ impl Primitive {
         out
     }
 
+    /// Propagate a **consistent triangle winding** across each
+    /// edge-connected component and return the re-oriented triangle list
+    /// together with an [`OrientationReport`].
+    ///
+    /// A vertex soup assembled from independently-authored facets (binary
+    /// STL stores three loose vertices per facet; an OBJ stitched from
+    /// several `g`-groups; a boolean/CSG result) frequently carries
+    /// **mixed winding**: some triangles list their corners
+    /// counter-clockwise (front-facing, per glTF 2.0 §3.7.2.1 — a
+    /// positive-determinant transform makes the CCW triangle the front
+    /// face) and some clockwise, so per-face normals point inconsistently
+    /// in and out and back-face culling / two-sided lighting break. This
+    /// flood-fills the face-dual adjacency graph (see
+    /// [`Primitive::triangle_adjacency`]) and flips whichever neighbour
+    /// disagrees, so within one edge-connected component every triangle
+    /// ends up wound the same way **relative to the component's seed**.
+    ///
+    /// # The consistency rule
+    ///
+    /// Two triangles that share an undirected edge are *consistently*
+    /// wound iff they traverse that shared edge in **opposite**
+    /// directions — triangle A walking `u → v` and triangle B walking
+    /// `v → u`. (Each interior edge of a coherently-oriented manifold is
+    /// crossed once in each direction by its two faces.) When both
+    /// traverse it the **same** way (`u → v` and `u → v`) the neighbour's
+    /// winding disagrees and is flipped by swapping its last two corners
+    /// (`[a, b, c] → [a, c, b]`), which reverses the per-face normal.
+    ///
+    /// # Seeding and the global flip ambiguity
+    ///
+    /// Winding consistency is only defined **relative to a reference**:
+    /// flipping *every* triangle of a closed surface inside-out is still
+    /// internally consistent. This routine fixes the reference per
+    /// component to the **lowest-indexed valid triangle**, whose winding
+    /// is kept verbatim; the rest of that component is brought into
+    /// agreement with it. It does **not** attempt to decide which global
+    /// orientation is "outward" (that needs the signed volume — see
+    /// [`Primitive::signed_volume`], whose sign flips with the winding —
+    /// or a known camera/seed face). Each connected component is seeded
+    /// independently, so a multi-shell mesh's shells are each
+    /// self-consistent but not necessarily co-oriented with one another.
+    ///
+    /// # Output
+    ///
+    /// `(faces, report)` where `faces` is parallel to
+    /// [`Primitive::triangle_indices`] — same length, same order — with
+    /// each disagreeing triangle's corners reordered. The
+    /// [`OrientationReport`] carries the flip count, the component count,
+    /// and a `non_orientable` flag set when a component contains a
+    /// contradiction the flood-fill cannot satisfy (a Möbius-style
+    /// closed loop of faces that forces a triangle into both windings).
+    /// In that case the first assignment along the walk is kept and the
+    /// flag warns the caller the result is a best effort.
+    ///
+    /// # Contract
+    ///
+    /// * Adjacency is by **vertex index** — run
+    ///   [`Primitive::weld_vertices`] first so a positionally-coincident
+    ///   seam links across (an unwelded crack reads as two boundary edges
+    ///   and the two sides orient independently).
+    /// * Edge bucketing and the out-of-range / duplicate-corner
+    ///   whole-triangle exclusion match
+    ///   [`Primitive::triangle_adjacency`]: an excluded triangle keeps its
+    ///   slot in `faces` **verbatim** (never flipped, never linked) so the
+    ///   output lines up with `triangle_indices`.
+    /// * Only clean **manifold-interior** edges (exactly two sharers)
+    ///   carry an orientation constraint. A boundary edge (one face) has
+    ///   no neighbour to agree with; a non-manifold edge (≥ 3 faces) has
+    ///   no single well-defined neighbour, so it is left unconstrained —
+    ///   the components it would have joined orient independently, exactly
+    ///   as [`Primitive::triangle_adjacency`] reports `None` for it.
+    /// * `Triangles` / `TriangleStrip` (alternating winding already
+    ///   resolved) / `TriangleFan` all feed in through
+    ///   `triangle_indices`. Non-triangle topologies and empty primitives
+    ///   return `(vec![], OrientationReport::default())`.
+    /// * Deterministic (lowest-index seeds, sorted neighbour walk; does
+    ///   not depend on `HashMap` order) and pure (no `self` mutation).
+    ///   Cost `O(triangle_count · α)` over the union of edges.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Two triangles of a quad; the second is wound the wrong way so
+    /// // it shares edge 1→2 in the SAME direction as the first.
+    /// let mut prim = Primitive::new(Topology::Triangles);
+    /// prim.positions =
+    ///     vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]];
+    /// prim.indices = Some(Indices::U32(vec![0, 1, 2, /*bad:*/ 1, 2, 3]));
+    /// let (faces, report) = prim.orient_consistent();
+    /// assert_eq!(report.flipped_count, 1);
+    /// assert_eq!(report.component_count, 1);
+    /// assert!(!report.non_orientable);
+    /// // The neighbour was flipped to share the edge the opposite way.
+    /// assert_eq!(faces[1], [1, 3, 2]);
+    /// ```
+    pub fn orient_consistent(&self) -> (Vec<[u32; 3]>, OrientationReport) {
+        let n = self.positions.len();
+        let tris = self.triangle_indices();
+
+        // Identify the valid triangles (same exclusion rules as
+        // `triangle_adjacency`). Invalid triangles keep their slot in the
+        // output verbatim and never participate in orientation.
+        let mut valid: Vec<bool> = vec![false; tris.len()];
+        for (fi, &[ia, ib, ic]) in tris.iter().enumerate() {
+            if (ia as usize) >= n || (ib as usize) >= n || (ic as usize) >= n {
+                continue;
+            }
+            if ia == ib || ib == ic || ia == ic {
+                continue;
+            }
+            valid[fi] = true;
+        }
+
+        // Bucket every valid triangle's undirected edges to its sharers.
+        let mut edge_faces: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
+        for (fi, &[ia, ib, ic]) in tris.iter().enumerate() {
+            if !valid[fi] {
+                continue;
+            }
+            for (a, b) in [(ia, ib), (ib, ic), (ic, ia)] {
+                let key = if a < b { (a, b) } else { (b, a) };
+                edge_faces.entry(key).or_default().push(fi as u32);
+            }
+        }
+
+        // Output starts as the verbatim triangle list; flips rewrite
+        // individual entries below. `flip` tracks the current decision
+        // per triangle so neighbour comparisons use the *oriented* edge
+        // direction, not the raw input.
+        let mut faces = tris.clone();
+        let mut flip: Vec<bool> = vec![false; tris.len()];
+        let mut visited: Vec<bool> = vec![false; tris.len()];
+        let mut flipped_count = 0usize;
+        let mut component_count = 0usize;
+        let mut non_orientable = false;
+
+        // Directed corner pair `(a, b)` for slot index, honouring the
+        // triangle's current flip state. A flipped `[a, b, c]` reads as
+        // `[a, c, b]`, so its directed edges become a→c, c→b, b→a.
+        let oriented = |tri: [u32; 3], flipped: bool| -> [(u32, u32); 3] {
+            let [a, b, c] = tri;
+            if flipped {
+                [(a, c), (c, b), (b, a)]
+            } else {
+                [(a, b), (b, c), (c, a)]
+            }
+        };
+
+        // Flood-fill each edge-connected component from its lowest-index
+        // seed (deterministic). The seed keeps its input winding.
+        for seed in 0..tris.len() {
+            if !valid[seed] || visited[seed] {
+                continue;
+            }
+            component_count += 1;
+            visited[seed] = true;
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(seed);
+            while let Some(fi) = queue.pop_front() {
+                let cur_edges = oriented(tris[fi], flip[fi]);
+                for &(a, b) in cur_edges.iter() {
+                    let key = if a < b { (a, b) } else { (b, a) };
+                    let Some(sharers) = edge_faces.get(&key) else {
+                        continue;
+                    };
+                    // Only a clean manifold-interior edge constrains
+                    // orientation; boundary / non-manifold edges do not.
+                    if sharers.len() != 2 {
+                        continue;
+                    }
+                    let other = if sharers[0] == fi as u32 {
+                        sharers[1]
+                    } else {
+                        sharers[0]
+                    } as usize;
+                    // Does the neighbour, at its current flip state,
+                    // already traverse this edge the opposite way?
+                    let nb_edges = oriented(tris[other], flip[other]);
+                    let nb_same_dir = nb_edges.iter().any(|&(na, nb)| na == a && nb == b);
+                    let nb_opp_dir = nb_edges.iter().any(|&(na, nb)| na == b && nb == a);
+                    // Consistent ⇔ opposite traversal. If the neighbour
+                    // shares the edge in the SAME direction it must flip.
+                    let want_flip = nb_same_dir && !nb_opp_dir;
+                    if !visited[other] {
+                        visited[other] = true;
+                        if want_flip {
+                            flip[other] = true;
+                            faces[other] = {
+                                let [oa, ob, oc] = tris[other];
+                                [oa, oc, ob]
+                            };
+                            flipped_count += 1;
+                        }
+                        queue.push_back(other);
+                    } else {
+                        // Already decided. If it now disagrees with this
+                        // face, the component cannot be coherently
+                        // oriented (a non-orientable loop): keep the
+                        // earlier decision and flag it.
+                        if want_flip {
+                            non_orientable = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        (
+            faces,
+            OrientationReport {
+                flipped_count,
+                component_count,
+                non_orientable,
+            },
+        )
+    }
+
     /// Closest-hit ray query against this primitive's triangle
     /// tessellation.
     ///
@@ -3483,6 +3700,40 @@ pub struct TopologySummary {
     /// non-manifold / self-touching surface, or any surface whose `χ`
     /// does not admit an orientable-genus reading.
     pub genus: Option<u32>,
+}
+
+/// Outcome of [`Primitive::orient_consistent`].
+///
+/// Summarises a winding-consistency flood-fill: how many triangles were
+/// flipped to agree with their component's seed, how many edge-connected
+/// components the walk discovered (each seeded and oriented
+/// independently), and whether any component was found to be
+/// **non-orientable** — a face loop that forces a triangle into both
+/// windings, which the flood-fill cannot satisfy.
+///
+/// The companion `Vec<[u32; 3]>` returned alongside this carries the
+/// actual re-oriented triangle indices. This struct is only the
+/// scalar tally; it never retains the per-edge adjacency map.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OrientationReport {
+    /// Number of triangles whose corners were reordered (`[a, b, c] →
+    /// [a, c, b]`) to bring their winding into agreement with the
+    /// lowest-indexed seed of their edge-connected component. `0` when
+    /// the input was already coherently wound (or had no constrained
+    /// edges).
+    pub flipped_count: usize,
+    /// Number of edge-connected triangle components the flood-fill
+    /// visited — matches [`TopologySummary::component_count`] for the
+    /// same primitive (boundary / non-manifold edges split components
+    /// identically). `0` for an empty / all-invalid primitive.
+    pub component_count: usize,
+    /// `true` iff at least one component could **not** be coherently
+    /// oriented: walking the face-dual graph reached an
+    /// already-decided triangle that the current face's edge contradicts
+    /// (a Möbius-style loop). The earlier decision along the walk is
+    /// kept, so the returned faces are a best effort rather than a
+    /// guaranteed-consistent orientation.
+    pub non_orientable: bool,
 }
 
 /// Evaluated output of [`Primitive::apply_morph_weights`].

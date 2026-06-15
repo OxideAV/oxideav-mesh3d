@@ -96,8 +96,8 @@ pub use instance_bvh::{Instance, InstanceBvh, InstanceBvhNode};
 pub use light::Light;
 pub use material::{AlphaMode, Material, TextureRef};
 pub use mesh::{
-    EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, Primitive, Topology,
-    TopologySummary,
+    EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, OrientationReport,
+    Primitive, Topology, TopologySummary,
 };
 pub use ray::{Ray, RayHit};
 pub use registry::Mesh3DRegistry;

@@ -53,7 +53,10 @@ are skipped or fall back rather than panic), and topology-aware
   `weld_vertices`, `triangle_adjacency`, `degenerate_triangles`,
   `boundary_edges`, `boundary_loops`, `edge_manifold_report` /
   `is_closed_manifold`, `topology_summary` (V/E/F, Euler
-  characteristic, component count, orientable genus).
+  characteristic, component count, orientable genus),
+  `orient_consistent` (flood-fill the face-dual graph to repair
+  mixed-winding facet soup into per-component coherent winding,
+  returning the re-oriented faces + an `OrientationReport`).
 - **Attributes** — `compute_normals` (area-weighted),
   `compute_tangents` (MikkTSpace-style basis), `apply_morph_weights`.
 - **Measures** — `surface_area`, `surface_centroid`,

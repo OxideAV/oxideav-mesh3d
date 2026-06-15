@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 313 (Winding-consistency repair: `orient_consistent`)
+
+- `Primitive::orient_consistent(&self) -> (Vec<[u32; 3]>,
+  OrientationReport)` — flood-fills the face-dual adjacency graph (the
+  same shared-edge relation `triangle_adjacency` exposes) to bring every
+  triangle of each edge-connected component into a consistent winding,
+  fixing the mixed-winding vertex soup that binary STL / stitched-OBJ /
+  CSG output produces. Two edge-adjacent triangles are consistent iff
+  they traverse their shared undirected edge in **opposite** directions
+  (glTF 2.0 §3.7.2.1: CCW = front-facing under a positive-determinant
+  transform, so each interior edge of a coherent manifold is crossed
+  once each way); a neighbour sharing the edge the **same** way is
+  flipped (`[a, b, c] → [a, c, b]`, reversing the per-face normal). The
+  reference is the **lowest-indexed valid triangle** per component (kept
+  verbatim); winding is only defined relative to a seed, so this does not
+  decide global "outward" orientation (use `signed_volume`'s sign or a
+  known seed face for that), and each connected component is seeded
+  independently. The returned faces are parallel to `triangle_indices`
+  (same length / order); excluded triangles (out-of-range /
+  duplicate-corner — same rules as `triangle_adjacency`) keep their slot
+  verbatim and never link. Only clean manifold-interior edges (exactly
+  two sharers) constrain; boundary (one) and non-manifold (≥ 3) edges are
+  unconstrained, so the components they would have joined orient
+  independently. `Triangles` / `TriangleStrip` (alternating winding
+  pre-resolved) / `TriangleFan` feed in; non-triangle / empty primitives
+  return `(vec![], OrientationReport::default())`. Deterministic
+  (lowest-index seeds, FIFO walk) and pure; `O(triangle_count · α)`.
+  (`tests/orient_consistent.rs`, 13 tests.)
+- `OrientationReport { flipped_count, component_count, non_orientable }`
+  — `Clone + Copy + Debug + Default + PartialEq + Eq` tally re-exported
+  from the crate root. `non_orientable` is set when a component's
+  face-dual walk reaches an already-decided triangle the current face
+  contradicts (a Möbius-style loop the flood-fill cannot satisfy); the
+  earlier decision is kept and the result is flagged best-effort.
+
 ### Added — Round 305 (Face-dual adjacency graph: `triangle_adjacency`)
 
 - `Primitive::triangle_adjacency(&self) -> Vec<[Option<u32>; 3]>` — the
