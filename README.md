@@ -78,6 +78,14 @@ are skipped or fall back rather than panic), and topology-aware
   `Scene3D::intersect_ray` returning `SceneRayHit`.
 - **Parametric solids** — `extrude::Profile2D` with ear-clip
   `triangulate` and watertight `extrude`.
+- **Refinement** — `subdivide_loop` (one step of Loop subdivision):
+  welds, splits every triangle `1 → 4`, places interior edge vertices
+  with the `3/8·(A+B) + 1/8·(C+D)` mask / boundary edge vertices at the
+  midpoint, and relaxes original vertices (interior Warren β, boundary
+  cubic-B-spline mask). Positions carry the Loop masks; all other
+  attributes (normals/tangents/UVs/colours/joints/weights/morph deltas)
+  are linearly interpolated. Boundaries stay watertight; iterate for a
+  smooth limit surface from a coarse STL/OBJ/CSG cage.
 
 ## Sketch
 

@@ -3063,6 +3063,436 @@ impl Primitive {
         out
     }
 
+    /// Refine this triangle mesh by **one step of Loop subdivision**,
+    /// returning a new [`Topology::Triangles`] primitive with four
+    /// sub-triangles in place of every original triangle and smoothed
+    /// vertex positions.
+    ///
+    /// Loop subdivision (Charles Loop, *Smooth Subdivision Surfaces
+    /// Based on Triangles*, master's thesis, University of Utah, 1987)
+    /// is the canonical triangle-mesh analogue of Catmull-Clark: each
+    /// step splits every edge with a new **edge vertex** and connects
+    /// the three edge vertices of a triangle, producing the classic
+    /// `1 → 4` fan, then relaxes the original vertices toward their
+    /// neighbourhood. Iterating converges to a `C²`-continuous limit
+    /// surface (`C¹` at extraordinary vertices), the standard way to
+    /// turn a coarse control cage from STL / OBJ / a CSG result into a
+    /// smooth render mesh.
+    ///
+    /// # Masks (clean-room, first-principles)
+    ///
+    /// The connectivity is the de-stripped, **welded** triangle list:
+    /// the method runs [`Primitive::weld_vertices`] internally so that
+    /// vertices coincident in *every* attribute share one pool entry
+    /// (Loop's neighbourhood masks are meaningless on an unwelded vertex
+    /// soup where each face owns private corners). Edges are the
+    /// undirected pairs of the welded list; an edge is **interior** when
+    /// exactly two triangles use it and **boundary** when exactly one
+    /// does (the same use-count rule as [`Primitive::boundary_edges`] /
+    /// [`Primitive::edge_manifold_report`]). Non-manifold edges (≥ 3
+    /// triangles) are treated as boundaries for the position masks so
+    /// the result is always finite.
+    ///
+    /// **Edge vertices** (one new vertex per undirected edge `A–B`):
+    ///
+    /// * Interior edge with the two opposite triangle apexes `C`, `D`:
+    ///   `P = 3/8·(A + B) + 1/8·(C + D)`.
+    /// * Boundary (or non-manifold) edge: `P = 1/2·(A + B)` — the edge
+    ///   midpoint, so a boundary polyline subdivides to the same limit
+    ///   curve regardless of the interior, keeping seams crack-free.
+    ///
+    /// **Repositioned original vertices** (the even/relaxation mask):
+    ///
+    /// * Interior vertex of valence `n` with one-ring neighbour sum `S`:
+    ///   `P' = (1 − n·β)·V + β·S`, where Warren's weight
+    ///   `β = 3/16` for `n == 3` and `β = 3/(8n)` for `n > 3`. (Warren's
+    ///   choice reproduces Loop's `C²`/`C¹` limit while avoiding the
+    ///   transcendental `β = (1/n)(5/8 − (3/8 + 1/4·cos(2π/n))²)` of the
+    ///   original thesis; both are widely documented and give the same
+    ///   `n ≥ 6` regular weights.)
+    /// * Boundary vertex with the two boundary-edge neighbours `B0`,
+    ///   `B1`: `P' = 3/4·V + 1/8·(B0 + B1)` — the cubic-B-spline curve
+    ///   mask, so the boundary relaxes as a smooth curve independent of
+    ///   the interior. A boundary vertex with other than two boundary
+    ///   neighbours (a corner / pinch) is left in place.
+    ///
+    /// Only **positions** carry the Loop masks. All other attributes
+    /// (`normals`, `tangents`, every `uvs` / `colors` set, `joints`,
+    /// `weights`, and each [`MorphTarget`] delta) are **linearly
+    /// interpolated**: an original vertex keeps its value, and each edge
+    /// vertex takes the arithmetic mean of its two endpoints' values.
+    /// This is the well-defined, attribute-agnostic choice — the Loop
+    /// stencil is a positional limit construction, while UV / colour /
+    /// skin channels have no surface-limit and linear refinement keeps
+    /// them seam-consistent. (`normals` are interpolated rather than
+    /// reconstructed; call [`Primitive::compute_normals`] afterwards for
+    /// a fresh smooth-shaded normal field if exactness matters.)
+    ///
+    /// # Contract
+    ///
+    /// * Output is always [`Topology::Triangles`] with a `U16` /
+    ///   `U32` index buffer (width promoted past `65 536` vertices, like
+    ///   [`Primitive::weld_vertices`]). One step turns `F` triangles
+    ///   into `4F`.
+    /// * The vertex pool is the welded originals (repositioned) followed
+    ///   by the edge vertices in ascending `(min, max)` edge order, so
+    ///   the result is deterministic across runs.
+    /// * Boundaries stay watertight: a hole's rim subdivides along its
+    ///   own midpoint/curve masks, so [`Primitive::boundary_loops`] of
+    ///   the result is the refinement of the input's loops (same loop
+    ///   count, doubled edge count per loop).
+    /// * Degenerate input is robust: out-of-range or duplicate-corner
+    ///   triangles are dropped (same exclusion as `boundary_edges`); a
+    ///   vertex whose mask sum is non-finite is left at its welded
+    ///   position. Non-triangle topologies (lines / points) and empty
+    ///   primitives return a de-stripped empty-index `Triangles`
+    ///   primitive unchanged (nothing to subdivide).
+    /// * **Does not mutate `self`.** `material`, the `targets` roster
+    ///   shape, and `extras` are carried over. Pure; cost
+    ///   `O(F + E + V)` with one `HashMap` over the edges.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // One triangle subdivides into four; the three new edge
+    /// // vertices are the edge midpoints (all edges are boundaries).
+    /// let mut prim = Primitive::new(Topology::Triangles);
+    /// prim.positions = vec![[0.0; 3], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]];
+    /// let s = prim.subdivide_loop();
+    /// assert_eq!(s.triangle_count(), 4);
+    /// assert_eq!(s.positions.len(), 6);
+    /// ```
+    pub fn subdivide_loop(&self) -> Primitive {
+        // Drop malformed triangles against *self* first (in-range, no
+        // duplicate corner — the `boundary_edges` exclusion rule),
+        // rebuild a clean indexed `Triangles` primitive carrying that
+        // subset, then weld. Validating before the weld matters: weld
+        // drops an out-of-range index from the flat index stream, which
+        // would mis-group the remaining corners into triangles — so the
+        // exclusion has to happen on a clean buffer.
+        let sn = self.positions.len();
+        let clean_tris: Vec<[u32; 3]> = self
+            .triangle_indices()
+            .into_iter()
+            .filter(|&[a, b, c]| {
+                (a as usize) < sn
+                    && (b as usize) < sn
+                    && (c as usize) < sn
+                    && a != b
+                    && b != c
+                    && a != c
+            })
+            .collect();
+
+        // Skeleton with self's attribute shape (carries material /
+        // extras / targets roster), Triangles topology, empty index.
+        let empty_out = {
+            let mut o = self.to_triangle_list();
+            o.indices = Some(Indices::U32(Vec::new()));
+            o
+        };
+
+        // Non-triangle / empty / all-degenerate → empty Triangles.
+        if clean_tris.is_empty() || sn == 0 {
+            return empty_out;
+        }
+
+        // Clean indexed primitive (same attribute buffers as self, only
+        // the valid triangles) so weld sees a well-formed index stream.
+        let clean = {
+            let mut c = self.to_triangle_list();
+            let mut flat: Vec<u32> = Vec::with_capacity(clean_tris.len() * 3);
+            for t in &clean_tris {
+                flat.extend_from_slice(t);
+            }
+            c.indices = Some(Indices::U32(flat));
+            c
+        };
+
+        // Weld so neighbourhood masks see shared vertices, not a
+        // per-face soup. The index stream is now well-formed.
+        let welded = clean.weld_vertices();
+        let valid = welded.triangle_indices();
+        let n = welded.positions.len();
+
+        let mut out = welded.clone();
+        out.topology = Topology::Triangles;
+        out.indices = Some(Indices::U32(Vec::new()));
+
+        if valid.is_empty() || n == 0 {
+            return out;
+        }
+
+        // --- Edge bookkeeping ---------------------------------------
+        // For each undirected edge: count of owning triangles and the
+        // set of opposite apexes (for the interior edge mask).
+        struct EdgeInfo {
+            count: u32,
+            apex: [u32; 2],
+            napex: usize,
+        }
+        let ekey = |a: u32, b: u32| -> (u32, u32) {
+            if a < b {
+                (a, b)
+            } else {
+                (b, a)
+            }
+        };
+        let mut edges: HashMap<(u32, u32), EdgeInfo> = HashMap::new();
+        for &[a, b, c] in &valid {
+            for (u, v, w) in [(a, b, c), (b, c, a), (c, a, b)] {
+                let k = ekey(u, v);
+                let e = edges.entry(k).or_insert(EdgeInfo {
+                    count: 0,
+                    apex: [0, 0],
+                    napex: 0,
+                });
+                e.count += 1;
+                if e.napex < 2 {
+                    e.apex[e.napex] = w;
+                    e.napex += 1;
+                }
+            }
+        }
+
+        // --- One-ring neighbour structure for the even mask ----------
+        // Interior neighbours via every triangle edge; boundary
+        // neighbours only along boundary edges. A vertex is on the
+        // boundary iff it touches at least one boundary edge.
+        let mut neighbours: Vec<std::collections::BTreeSet<u32>> =
+            vec![std::collections::BTreeSet::new(); n];
+        let mut boundary_nbrs: Vec<std::collections::BTreeSet<u32>> =
+            vec![std::collections::BTreeSet::new(); n];
+        for (&(a, b), info) in &edges {
+            neighbours[a as usize].insert(b);
+            neighbours[b as usize].insert(a);
+            // count == 1 → boundary; count >= 3 → non-manifold, treated
+            // as boundary for the position masks (finite, crack-free).
+            if info.count != 2 {
+                boundary_nbrs[a as usize].insert(b);
+                boundary_nbrs[b as usize].insert(a);
+            }
+        }
+
+        // Helper: linear blend of two attribute rows into the
+        // edge-vertex slot. We build the output attribute buffers by
+        // first copying the welded originals, then pushing one row per
+        // edge vertex (mean of its two endpoints).
+        let add3 = |x: [f32; 3], y: [f32; 3]| [x[0] + y[0], x[1] + y[1], x[2] + y[2]];
+        let scale3 = |x: [f32; 3], s: f32| [x[0] * s, x[1] * s, x[2] * s];
+
+        // --- Reposition original vertices (even/relaxation mask) -----
+        let mut new_pos: Vec<[f32; 3]> = Vec::with_capacity(n);
+        for v in 0..n {
+            let p = welded.positions[v];
+            let bn = &boundary_nbrs[v];
+            let relaxed = if !bn.is_empty() {
+                // Boundary vertex: cubic-B-spline curve mask iff it has
+                // exactly two boundary neighbours; else leave in place
+                // (corner / non-manifold pinch).
+                if bn.len() == 2 {
+                    let mut it = bn.iter();
+                    let b0 = welded.positions[*it.next().unwrap() as usize];
+                    let b1 = welded.positions[*it.next().unwrap() as usize];
+                    let s = add3(b0, b1);
+                    add3(scale3(p, 0.75), scale3(s, 0.125))
+                } else {
+                    p
+                }
+            } else {
+                // Interior vertex: Warren's β.
+                let ring = &neighbours[v];
+                let deg = ring.len();
+                if deg < 3 {
+                    p
+                } else {
+                    let beta = if deg == 3 {
+                        3.0 / 16.0_f32
+                    } else {
+                        3.0 / (8.0 * deg as f32)
+                    };
+                    let mut sum = [0.0_f32; 3];
+                    for &nb in ring {
+                        sum = add3(sum, welded.positions[nb as usize]);
+                    }
+                    add3(scale3(p, 1.0 - deg as f32 * beta), scale3(sum, beta))
+                }
+            };
+            // Non-finite mask result → fall back to the welded position.
+            let safe = if relaxed[0].is_finite() && relaxed[1].is_finite() && relaxed[2].is_finite()
+            {
+                relaxed
+            } else {
+                p
+            };
+            new_pos.push(safe);
+        }
+
+        // --- Edge vertices ------------------------------------------
+        // Deterministic order: ascending (min, max) edge key.
+        let mut edge_keys: Vec<(u32, u32)> = edges.keys().copied().collect();
+        edge_keys.sort_unstable();
+        // Map edge → its new vertex pool index (offset past originals).
+        let mut edge_vertex: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut edge_pos: Vec<[f32; 3]> = Vec::with_capacity(edge_keys.len());
+        // Per-edge endpoint pairs for the linear attribute interpolation
+        // of every non-position channel.
+        let mut edge_endpoints: Vec<(usize, usize)> = Vec::with_capacity(edge_keys.len());
+        for (i, &(a, b)) in edge_keys.iter().enumerate() {
+            edge_vertex.insert((a, b), (n + i) as u32);
+            let pa = welded.positions[a as usize];
+            let pb = welded.positions[b as usize];
+            let info = &edges[&(a, b)];
+            let ep = if info.count == 2 {
+                // Interior edge: 3/8(A+B) + 1/8(C+D).
+                let pc = welded.positions[info.apex[0] as usize];
+                let pd = welded.positions[info.apex[1] as usize];
+                add3(scale3(add3(pa, pb), 0.375), scale3(add3(pc, pd), 0.125))
+            } else {
+                // Boundary / non-manifold edge: midpoint.
+                scale3(add3(pa, pb), 0.5)
+            };
+            let safe = if ep[0].is_finite() && ep[1].is_finite() && ep[2].is_finite() {
+                ep
+            } else {
+                scale3(add3(pa, pb), 0.5)
+            };
+            edge_pos.push(safe);
+            edge_endpoints.push((a as usize, b as usize));
+        }
+
+        // --- Assemble the output attribute buffers ------------------
+        // Positions: repositioned originals + edge points.
+        out.positions = new_pos;
+        out.positions.extend_from_slice(&edge_pos);
+
+        // Every other attribute: originals unchanged, edge rows = mean
+        // of endpoints. Generic over fixed-width f32 rows; joints
+        // (u16) handled separately by nearest-endpoint copy.
+        fn lerp_n<const K: usize>(
+            orig: &[[f32; K]],
+            endpoints: &[(usize, usize)],
+        ) -> Vec<[f32; K]> {
+            let mut v: Vec<[f32; K]> = orig.to_vec();
+            for &(a, b) in endpoints {
+                let mut row = [0.0_f32; K];
+                if a < orig.len() && b < orig.len() {
+                    for k in 0..K {
+                        row[k] = 0.5 * (orig[a][k] + orig[b][k]);
+                    }
+                }
+                v.push(row);
+            }
+            v
+        }
+
+        if let Some(ns) = &welded.normals {
+            // Interpolate then renormalise so the field stays unit-ish.
+            let mut interp = lerp_n::<3>(ns, &edge_endpoints);
+            for nrm in interp.iter_mut() {
+                let len = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();
+                if len.is_finite() && len > 0.0 {
+                    nrm[0] /= len;
+                    nrm[1] /= len;
+                    nrm[2] /= len;
+                }
+            }
+            out.normals = Some(interp);
+        }
+        if let Some(ts) = &welded.tangents {
+            // Tangent xyz interpolated; handedness w from endpoint a
+            // (sign, not a quantity to average).
+            let mut v: Vec<[f32; 4]> = ts.clone();
+            for &(a, b) in &edge_endpoints {
+                let (ta, tb) = (ts.get(a), ts.get(b));
+                let row = match (ta, tb) {
+                    (Some(ta), Some(tb)) => {
+                        let x = 0.5 * (ta[0] + tb[0]);
+                        let y = 0.5 * (ta[1] + tb[1]);
+                        let z = 0.5 * (ta[2] + tb[2]);
+                        let len = (x * x + y * y + z * z).sqrt();
+                        let (nx, ny, nz) = if len.is_finite() && len > 0.0 {
+                            (x / len, y / len, z / len)
+                        } else {
+                            (1.0, 0.0, 0.0)
+                        };
+                        [nx, ny, nz, ta[3]]
+                    }
+                    _ => [1.0, 0.0, 0.0, 1.0],
+                };
+                v.push(row);
+            }
+            out.tangents = Some(v);
+        }
+        out.uvs = welded
+            .uvs
+            .iter()
+            .map(|set| lerp_n::<2>(set, &edge_endpoints))
+            .collect();
+        out.colors = welded
+            .colors
+            .iter()
+            .map(|set| lerp_n::<4>(set, &edge_endpoints))
+            .collect();
+        if let Some(ws) = &welded.weights {
+            out.weights = Some(lerp_n::<4>(ws, &edge_endpoints));
+        }
+        if let Some(js) = &welded.joints {
+            // Joint *indices* aren't interpolable; copy the lower-index
+            // endpoint's quad (deterministic; the matching weight blend
+            // carries the influence split).
+            let mut v: Vec<[u16; 4]> = js.clone();
+            for &(a, b) in &edge_endpoints {
+                let pick = if a <= b { a } else { b };
+                v.push(js.get(pick).copied().unwrap_or([0; 4]));
+            }
+            out.joints = Some(v);
+        }
+        // Morph deltas: same linear-midpoint rule, per target.
+        out.targets = welded
+            .targets
+            .iter()
+            .map(|t| {
+                let mut nt = t.clone();
+                if let Some(ps) = &t.position {
+                    nt.position = Some(lerp_n::<3>(ps, &edge_endpoints));
+                }
+                if let Some(ns) = &t.normal {
+                    nt.normal = Some(lerp_n::<3>(ns, &edge_endpoints));
+                }
+                if let Some(ts) = &t.tangent {
+                    nt.tangent = Some(lerp_n::<3>(ts, &edge_endpoints));
+                }
+                nt
+            })
+            .collect();
+
+        // --- Emit the 1→4 connectivity ------------------------------
+        // For triangle (a, b, c) with edge vertices on ab, bc, ca:
+        //   (a, mab, mca) (mab, b, mbc) (mca, mbc, c) (mab, mbc, mca)
+        // — the central triangle and three corner triangles, all wound
+        // CCW consistent with the parent.
+        let mut idx: Vec<u32> = Vec::with_capacity(valid.len() * 12);
+        for &[a, b, c] in &valid {
+            let mab = edge_vertex[&ekey(a, b)];
+            let mbc = edge_vertex[&ekey(b, c)];
+            let mca = edge_vertex[&ekey(c, a)];
+            idx.extend_from_slice(&[a, mab, mca]);
+            idx.extend_from_slice(&[mab, b, mbc]);
+            idx.extend_from_slice(&[mca, mbc, c]);
+            idx.extend_from_slice(&[mab, mbc, mca]);
+        }
+        // Width-promote like weld_vertices: U16 when the pool fits.
+        let vcount = out.positions.len();
+        out.indices = Some(if vcount <= 65_536 {
+            Indices::U16(idx.iter().map(|&i| i as u16).collect())
+        } else {
+            Indices::U32(idx)
+        });
+
+        out
+    }
+
     /// Summarise the combinatorial topology of this primitive's triangle
     /// tessellation: the vertex / edge / face counts, the
     /// **Euler characteristic** `χ = V − E + F`, the number of connected

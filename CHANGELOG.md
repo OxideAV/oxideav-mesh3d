@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 324 (Loop subdivision refinement: `Primitive::subdivide_loop`)
+
+- `Primitive::subdivide_loop(&self) -> Primitive` — one step of **Loop
+  subdivision** (Charles Loop, *Smooth Subdivision Surfaces Based on
+  Triangles*, master's thesis, University of Utah, 1987). Welds the
+  input (so the neighbourhood masks see shared vertices, not a per-face
+  soup), then replaces every triangle with the classic `1 → 4` fan: the
+  three corner sub-triangles plus a central one wound CCW-consistent
+  with the parent (glTF 2.0 §3.7.2.1).
+- **Edge vertices** (one new vertex per undirected edge `A–B`):
+  interior edge with opposite apexes `C`, `D` →
+  `3/8·(A+B) + 1/8·(C+D)`; boundary / non-manifold edge → the midpoint
+  `1/2·(A+B)`, so a seam subdivides to the same limit curve regardless
+  of the interior and stays crack-free.
+- **Repositioned original vertices**: interior valence-`n` vertex with
+  one-ring sum `S` → `(1 − n·β)·V + β·S` using Warren's `β = 3/16`
+  (`n == 3`) / `β = 3/(8n)` (`n > 3`); boundary vertex with two
+  boundary neighbours `B0`, `B1` → `3/4·V + 1/8·(B0+B1)` (cubic-B-spline
+  curve mask); corner / pinch boundary vertices stay put.
+- Positions carry the Loop masks; **all other attributes** (`normals`
+  — re-normalised after interpolation, `tangents` — xyz interpolated +
+  re-normalised with the endpoint-`a` handedness `w`, every `uvs` /
+  `colors` set, `weights`, and each `MorphTarget` delta) are **linearly
+  interpolated** at edge midpoints, originals unchanged. `joints` copy
+  the lower-index endpoint's quad (indices aren't interpolable; the
+  blended weights carry the influence split).
+- Robust: malformed triangles (out-of-range / duplicate-corner) are
+  dropped against `self` *before* welding (so the weld never sees a
+  mis-grouped index stream); non-finite mask results fall back to the
+  welded position / midpoint; non-triangle / empty inputs return a
+  de-stripped empty `Triangles` primitive. Output index width promotes
+  `U16 → U32` past 65 536 vertices like `weld_vertices`. Boundaries stay
+  watertight (`boundary_loops` count preserved); closed two-manifolds
+  stay closed. Pure; `material` / `targets` roster / `extras` carried
+  through. (`tests/subdivide_loop.rs`, 25 tests.)
+
 ### Added — Round 316 (Hole-filling cap pass: `Primitive::fill_holes`)
 
 - `Primitive::fill_holes(&self) -> Primitive` — caps every boundary loop
