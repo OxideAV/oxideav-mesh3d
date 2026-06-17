@@ -19,7 +19,9 @@
 //! * Tangents carry handedness in `w` (`±1.0`).
 //! * Materials are metallic-roughness PBR with `base_color`,
 //!   `metallic`, `roughness`, `normal`, `occlusion`, and `emissive`
-//!   slots (see [`Material`]).
+//!   slots (see [`Material`]), refined by a typed [`MaterialExt`]
+//!   surface for the ratified KHR dielectric extensions (emissive
+//!   strength, IOR, specular, unlit).
 //!
 //! Round 1 ships the type model + the trait surface only. No format
 //! support — that lands in dedicated sibling crates.
@@ -94,7 +96,7 @@ pub use error::{Error, Result};
 pub use extrude::Profile2D;
 pub use instance_bvh::{Instance, InstanceBvh, InstanceBvhNode};
 pub use light::Light;
-pub use material::{AlphaMode, Material, TextureRef};
+pub use material::{AlphaMode, Material, MaterialExt, Specular, TextureRef};
 pub use mesh::{
     EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, OrientationReport,
     Primitive, Topology, TopologySummary,

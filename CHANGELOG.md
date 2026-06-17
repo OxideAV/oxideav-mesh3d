@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 329 (typed ratified-KHR material extensions: `Material::ext`)
+
+- `MaterialExt` — a typed surface for the simply-shaped ratified
+  Khronos KHR dielectric material extensions, hung off `Material::ext`
+  (all absent / `false` by default = plain core metallic-roughness):
+  - **`emissive_strength: Option<f32>`** — the unitless multiplier on
+    the core emissive term (`KHR_materials_emissive_strength`), lifting
+    emission out of the core `[0,1]` clamp for HDR bloom. Spec default
+    `1.0`.
+  - **`ior: Option<f32>`** — index of refraction of the dielectric
+    BRDF (`KHR_materials_ior`), replacing the fixed `1.5`. Valid `>= 1`,
+    with the special case `0.0` permanently selecting the legacy
+    specular-glossiness backwards-compatibility mode (effective IOR →
+    +∞). The sentinel `0.0` round-trips verbatim, never normalised.
+  - **`specular: Option<Specular>`** — `KHR_materials_specular`
+    strength + F0 colour; each a constant factor (`factor` default
+    `1.0`, `color_factor` default `[1,1,1]`) optionally modulated by a
+    `TextureRef` (alpha channel for strength, RGB for colour).
+  - **`unlit: bool`** — the `KHR_materials_unlit` flag selecting a
+    constant-shaded, lighting-independent model.
+- Builders `Material::with_emissive_strength` / `with_ior` /
+  `with_specular` / `with_unlit`, and `effective_emissive_strength()` /
+  `effective_ior()` accessors that substitute the normative default
+  when the extension is absent.
+- `Scene3D::validate` now resolves the two `Specular` texture
+  references (`ext.specular.factor_texture` / `color_texture`) against
+  the texture arena, reporting dangling ids alongside the core slots.
+- Re-exports: `MaterialExt`, `Specular`.
+
 ### Added — Round 324 (Loop subdivision refinement: `Primitive::subdivide_loop`)
 
 - `Primitive::subdivide_loop(&self) -> Primitive` — one step of **Loop

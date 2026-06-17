@@ -2350,6 +2350,10 @@ impl Scene3D {
             check("normal_texture", mat.normal_texture);
             check("occlusion_texture", mat.occlusion_texture);
             check("emissive_texture", mat.emissive_texture);
+            if let Some(spec) = &mat.ext.specular {
+                check("ext.specular.factor_texture", spec.factor_texture);
+                check("ext.specular.color_texture", spec.color_texture);
+            }
         }
 
         // Skeletons → nodes + inverse-bind-matrix parity.

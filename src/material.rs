@@ -48,6 +48,92 @@ pub enum AlphaMode {
     Blend,
 }
 
+/// Typed surface for the ratified KHR material extensions that refine
+/// the core metallic-roughness dielectric BRDF.
+///
+/// Every field is `Option`/flag-shaped so the *absence* of an
+/// extension is distinguishable from its spec default — a format crate
+/// only sets a field when the file actually carries that extension, so
+/// an encoder re-emits exactly the extension blocks the source
+/// declared. The doc-comments record each parameter's normative
+/// default so a consumer that wants "the value the renderer should
+/// use" can substitute it for `None`.
+///
+/// The extensions modelled here are the simply-shaped dielectric
+/// refinements — a scalar or a factor-plus-texture — drawn from the
+/// Khronos KHR extension registry:
+///
+/// - **emissive strength** — a unitless multiplier on the core
+///   `emissive_factor` / `emissive_texture` product, lifting emission
+///   out of the core `[0,1]` clamp for HDR bloom.
+/// - **index of refraction** — replaces the fixed dielectric IOR of
+///   1.5 used by the core model.
+/// - **specular** — strength + F0 colour of the dielectric specular
+///   reflection, each a factor optionally modulated by a texture.
+/// - **unlit** — a flag selecting a constant-shaded (lighting-
+///   independent) model that uses only the base-colour term.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MaterialExt {
+    /// Multiplier on the material's emissive value
+    /// (`KHR_materials_emissive_strength`). The shaded emission is
+    /// `emissive_factor * sample(emissive_texture) * strength`. Spec
+    /// default when the extension is absent: `1.0`. Values above `1.0`
+    /// drive bloom / tonemapping in HDR pipelines. Mutually exclusive
+    /// with [`unlit`](Self::unlit) per the extension's exclusions.
+    pub emissive_strength: Option<f32>,
+    /// Index of refraction of the dielectric BRDF
+    /// (`KHR_materials_ior`). Spec default when absent: `1.5`
+    /// (`dielectric_f0 = ((ior-1)/(ior+1))^2 = 0.04`). Valid values
+    /// are `>= 1`, with the special case `0.0` permanently selecting
+    /// the legacy specular-glossiness backwards-compatibility mode
+    /// (effective IOR → +∞, Fresnel ≡ 1).
+    pub ior: Option<f32>,
+    /// Dielectric specular strength + F0 colour
+    /// (`KHR_materials_specular`). `None` ⇒ the core model's implicit
+    /// `specular = 1.0`, `specular_color = [1,1,1]`.
+    pub specular: Option<Specular>,
+    /// `KHR_materials_unlit` flag. When `true` the surface is
+    /// constant-shaded from the base-colour term alone (factor ×
+    /// texture × vertex colour); all lighting-dependent PBR inputs are
+    /// ignored, though alpha coverage and `double_sided` still apply.
+    pub unlit: bool,
+}
+
+/// `KHR_materials_specular` parameters: the strength and F0 colour of
+/// the dielectric specular reflection. Each value is a constant factor
+/// optionally multiplied by a texture sample.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Specular {
+    /// Strength of the specular reflection (`specularFactor`).
+    /// Default `1.0`; `0.0` disables the dielectric specular lobe,
+    /// leaving a pure-diffuse dielectric. The metal BRDF is
+    /// unaffected. Combined with [`factor_texture`](Self::factor_texture)
+    /// by multiplication, sampling its alpha channel.
+    pub factor: f32,
+    /// Strength texture (`specularTexture`); the alpha (`A`) channel
+    /// scales [`factor`](Self::factor).
+    pub factor_texture: Option<TextureRef>,
+    /// F0 colour of the dielectric reflection in linear RGB
+    /// (`specularColorFactor`). Default `[1.0, 1.0, 1.0]`. May exceed
+    /// `1.0`; the renderer clamps the product against IOR-derived F0.
+    pub color_factor: [f32; 3],
+    /// F0-colour texture (`specularColorTexture`); the `RGB` channels
+    /// (sRGB-encoded) multiply [`color_factor`](Self::color_factor).
+    pub color_texture: Option<TextureRef>,
+}
+
+impl Default for Specular {
+    /// The spec defaults: full strength, white F0, no textures.
+    fn default() -> Self {
+        Self {
+            factor: 1.0,
+            factor_texture: None,
+            color_factor: [1.0, 1.0, 1.0],
+            color_texture: None,
+        }
+    }
+}
+
 /// PBR material.
 ///
 /// Defaults match the glTF spec: white base colour, fully metallic /
@@ -77,6 +163,10 @@ pub struct Material {
     pub emissive_texture: Option<TextureRef>,
     pub alpha_mode: AlphaMode,
     pub double_sided: bool,
+    /// Typed ratified-KHR extension refinements (emissive strength,
+    /// IOR, specular, unlit). All absent / `false` by default, meaning
+    /// "plain core metallic-roughness".
+    pub ext: MaterialExt,
     /// Round-trip side-channel for non-glTF data (FBX/USD/OBJ
     /// extensions). Format crates that need to preserve exotic
     /// fields drop them here as `serde_json::Value` and the
@@ -103,6 +193,7 @@ impl Material {
             emissive_texture: None,
             alpha_mode: AlphaMode::Opaque,
             double_sided: false,
+            ext: MaterialExt::default(),
             extras: HashMap::new(),
         }
     }
@@ -117,6 +208,42 @@ impl Material {
     pub fn with_base_color(mut self, rgba: [f32; 4]) -> Self {
         self.base_color = rgba;
         self
+    }
+
+    /// Builder-style `KHR_materials_emissive_strength` setter.
+    pub fn with_emissive_strength(mut self, strength: f32) -> Self {
+        self.ext.emissive_strength = Some(strength);
+        self
+    }
+
+    /// Builder-style `KHR_materials_ior` setter.
+    pub fn with_ior(mut self, ior: f32) -> Self {
+        self.ext.ior = Some(ior);
+        self
+    }
+
+    /// Builder-style `KHR_materials_specular` setter.
+    pub fn with_specular(mut self, specular: Specular) -> Self {
+        self.ext.specular = Some(specular);
+        self
+    }
+
+    /// Builder-style `KHR_materials_unlit` flag setter.
+    pub fn with_unlit(mut self, unlit: bool) -> Self {
+        self.ext.unlit = unlit;
+        self
+    }
+
+    /// The effective emissive strength the renderer should apply —
+    /// the extension value when present, else the spec default `1.0`.
+    pub fn effective_emissive_strength(&self) -> f32 {
+        self.ext.emissive_strength.unwrap_or(1.0)
+    }
+
+    /// The effective index of refraction — the extension value when
+    /// present, else the spec default `1.5`.
+    pub fn effective_ior(&self) -> f32 {
+        self.ext.ior.unwrap_or(1.5)
     }
 }
 

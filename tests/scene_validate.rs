@@ -8,7 +8,7 @@
 use oxideav_mesh3d::{
     Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
     AnimationValues, AudioEmitter, AudioSourceId, Indices, Interpolation, Material, Mesh, MeshId,
-    MorphTarget, Node, NodeId, Primitive, Scene3D, Skeleton, SkeletonId, Skin, TextureId,
+    MorphTarget, Node, NodeId, Primitive, Scene3D, Skeleton, SkeletonId, Skin, Specular, TextureId,
     TextureRef, Topology, ValidationError,
 };
 
@@ -202,6 +202,30 @@ fn dangling_material_base_color_texture_reported() {
             arena: "textures",
             location,
         } if location == "materials[0].base_color_texture"
+    )));
+}
+
+#[test]
+fn dangling_specular_textures_reported() {
+    let mut m = Material::new();
+    m.ext.specular = Some(Specular {
+        factor: 1.0,
+        factor_texture: Some(TextureRef::new(TextureId(7))),
+        color_factor: [1.0, 1.0, 1.0],
+        color_texture: Some(TextureRef::new(TextureId(8))),
+    });
+    let mut s = Scene3D::new();
+    s.add_material(m);
+    let errs = s.validate().unwrap_err();
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId { id: 7, arena: "textures", location }
+            if location == "materials[0].ext.specular.factor_texture"
+    )));
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DanglingId { id: 8, arena: "textures", location }
+            if location == "materials[0].ext.specular.color_texture"
     )));
 }
 

@@ -29,7 +29,13 @@ coverage lives in the workspace umbrella's `oxideav-tests`.
   (U16 or U32). Multi-channel UVs, vertex colours, optional skinning
   joints + weights, and `MorphTarget` delta buffers.
 - `Material` — full glTF 2.0 metallic-roughness PBR slots plus
-  `AlphaMode` and `double_sided`.
+  `AlphaMode` and `double_sided`, refined by a typed `MaterialExt`
+  surface for the ratified KHR dielectric extensions: emissive
+  strength, index of refraction, `Specular` (strength + F0-colour
+  factors and textures), and the unlit flag. Each field is
+  `Option`/flag-shaped so an absent extension stays distinguishable
+  from its spec default; `effective_ior()` /
+  `effective_emissive_strength()` substitute the default on demand.
 - `Texture` / `ImageData { Embedded, Source(Arc<dyn AssetSource>),
   External }` / `Sampler`. `AssetSource` lets format crates pass a
   lazy reader through the model without materialising bytes, with

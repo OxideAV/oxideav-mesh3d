@@ -8,8 +8,9 @@
 
 use oxideav_mesh3d::{
     AlphaMode, Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
-    AnimationValues, Camera, Indices, Interpolation, Light, MagFilter, Material, Mesh, MinFilter,
-    NodeId, Primitive, Sampler, Scene3D, Texture, Topology, WrapMode,
+    AnimationValues, Camera, Indices, Interpolation, Light, MagFilter, Material, MaterialExt, Mesh,
+    MinFilter, NodeId, Primitive, Sampler, Scene3D, Specular, Texture, TextureRef, Topology,
+    WrapMode,
 };
 use serde_json::json;
 
@@ -84,6 +85,67 @@ fn alpha_mode_mask_cutoff() {
         AlphaMode::Mask { cutoff } => assert!((cutoff - 0.5).abs() < f32::EPSILON),
         _ => panic!("expected Mask"),
     }
+}
+
+#[test]
+fn material_ext_absent_by_default() {
+    let mat = Material::new();
+    assert_eq!(mat.ext, MaterialExt::default());
+    assert!(mat.ext.emissive_strength.is_none());
+    assert!(mat.ext.ior.is_none());
+    assert!(mat.ext.specular.is_none());
+    assert!(!mat.ext.unlit);
+    // Effective accessors fall back to the spec defaults.
+    assert_eq!(mat.effective_emissive_strength(), 1.0);
+    assert_eq!(mat.effective_ior(), 1.5);
+}
+
+#[test]
+fn material_ext_builders_set_extensions() {
+    let mat = Material::new()
+        .with_emissive_strength(5.0)
+        .with_ior(1.33)
+        .with_unlit(true);
+    assert_eq!(mat.ext.emissive_strength, Some(5.0));
+    assert_eq!(mat.ext.ior, Some(1.33));
+    assert!(mat.ext.unlit);
+    // Present values win over the defaults.
+    assert_eq!(mat.effective_emissive_strength(), 5.0);
+    assert!((mat.effective_ior() - 1.33).abs() < f32::EPSILON);
+}
+
+#[test]
+fn specular_defaults_match_spec() {
+    let s = Specular::default();
+    assert_eq!(s.factor, 1.0);
+    assert_eq!(s.color_factor, [1.0, 1.0, 1.0]);
+    assert!(s.factor_texture.is_none());
+    assert!(s.color_texture.is_none());
+}
+
+#[test]
+fn specular_carries_factors_and_textures() {
+    let s = Specular {
+        factor: 0.25,
+        factor_texture: Some(TextureRef::new(oxideav_mesh3d::TextureId(0))),
+        color_factor: [0.9, 0.5, 0.1],
+        color_texture: Some(TextureRef::new(oxideav_mesh3d::TextureId(1))),
+    };
+    let mat = Material::new().with_specular(s);
+    let got = mat.ext.specular.expect("specular set");
+    assert!((got.factor - 0.25).abs() < f32::EPSILON);
+    assert_eq!(got.color_factor, [0.9, 0.5, 0.1]);
+    assert_eq!(got.factor_texture.unwrap().texture.0, 0);
+    assert_eq!(got.color_texture.unwrap().texture.0, 1);
+}
+
+#[test]
+fn ior_zero_special_case_preserved() {
+    // IOR == 0 is the legacy spec-gloss backwards-compat sentinel and
+    // must round-trip verbatim, not be normalised to the 1.5 default.
+    let mat = Material::new().with_ior(0.0);
+    assert_eq!(mat.ext.ior, Some(0.0));
+    assert_eq!(mat.effective_ior(), 0.0);
 }
 
 #[test]
