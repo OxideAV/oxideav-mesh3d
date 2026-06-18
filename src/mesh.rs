@@ -3493,6 +3493,488 @@ impl Primitive {
         out
     }
 
+    /// Reduce triangle count by **uniform-grid vertex clustering**: the
+    /// dual of [`Primitive::subdivide_loop`]. Where subdivision splits
+    /// each triangle `1 → 4`, this snaps every vertex to the cell of a
+    /// regular spatial grid laid over the bounding box, collapses all
+    /// vertices that share a cell to one representative, and drops the
+    /// triangles that degenerate (their three corners no longer land in
+    /// three distinct cells). The result is a coarser, watertight-by-
+    /// construction approximation suitable as a level-of-detail proxy or
+    /// a cheap collision hull.
+    ///
+    /// This is the classical clustering decimation: partition space into
+    /// `grid³` axis-aligned boxes, treat each occupied box as a single
+    /// output vertex, and re-emit the connectivity over those boxes (the
+    /// approach of Rossignac and Borrel, "Multi-resolution 3D
+    /// approximations for rendering complex scenes", in *Modeling in
+    /// Computer Graphics*, Springer 1993). It is unconditionally robust —
+    /// no edge-collapse legality tests, no fold-over, no panic path — at
+    /// the cost of being position-quantising rather than error-optimal.
+    ///
+    /// # The grid
+    ///
+    /// `grid` is the number of cells along the **longest** axis of the
+    /// primitive's [`Primitive::bounding_box`]; the other two axes use the
+    /// **same cell edge length**, so cells are cubes and the clustering is
+    /// isotropic (a thin axis simply gets fewer cells). `grid` is clamped
+    /// to at least `1`. A value of `1` collapses the whole mesh to a
+    /// single cell — every triangle degenerates — yielding an empty
+    /// primitive; larger values preserve progressively more detail, and a
+    /// `grid` finer than the model's own vertex spacing reproduces the
+    /// input (welded). A degenerate axis (all vertices share a coordinate)
+    /// contributes a single cell on that axis.
+    ///
+    /// # Representative vertex
+    ///
+    /// Every attribute present on the primitive is **averaged over the
+    /// cell's members**, so the proxy keeps shading data rather than
+    /// picking one arbitrary corner:
+    ///
+    /// * `positions` — arithmetic mean of the member positions (the cell's
+    ///   centroid of contributing vertices, not the cell centre, so the
+    ///   proxy hugs the surface).
+    /// * `normals` / `tangents` `xyz` — mean then re-normalised to unit
+    ///   length (falling back to the unnormalised mean if it is zero or
+    ///   non-finite); the tangent's handedness `w` takes the sign that the
+    ///   majority of the cell's members carry (ties → `+1.0`).
+    /// * every `uvs` / `colors` set, `weights` — arithmetic mean (weights
+    ///   are then re-normalised to sum to 1 when the sum is positive).
+    /// * `joints` — taken from the cell's first-seen member (joint indices
+    ///   are categorical and must not be averaged); the paired averaged
+    ///   `weights` stay meaningful for the dominant influence.
+    /// * each [`MorphTarget`] delta — arithmetic mean, matching the base
+    ///   attribute it perturbs.
+    ///
+    /// # Output
+    ///
+    /// * An indexed [`Topology::Triangles`] primitive over the occupied
+    ///   cells, carrying `material`, the `targets` roster shape, and
+    ///   `extras` from `self`. Index width follows the crate convention
+    ///   ([`Indices::U16`] while the cell count fits, else [`Indices::U32`]).
+    /// * **Faces are de-duplicated**: after the corner→cell remap, two
+    ///   input triangles that collapse onto the same unordered cell triple
+    ///   emit one output face, so a folded sheet does not double up.
+    /// * Triangles whose three corners do not map to three distinct cells
+    ///   are dropped (they have collapsed to an edge or a point).
+    /// * Cells that end up referenced by no surviving face are pruned, so
+    ///   the output vertex pool has no orphan slots.
+    /// * Same triangle feed and exclusion rules as the rest of the
+    ///   toolkit: `Triangles` / `TriangleStrip` (alternating winding) /
+    ///   `TriangleFan` feed through [`Primitive::triangle_indices`];
+    ///   out-of-range or duplicate-corner triangles, non-finite vertex
+    ///   positions, non-triangle topologies, and empty primitives all
+    ///   yield an empty indexed `Triangles` primitive.
+    /// * **Does not mutate `self`.**
+    ///
+    /// Cost is `O(V + triangle_count)` plus the output build; two
+    /// `HashMap`s (cell→slot, face dedup) are allocated.
+    pub fn simplify_cluster(&self, grid: u32) -> Primitive {
+        let grid = grid.max(1);
+
+        // Empty skeleton carrying self's attribute shape (material /
+        // extras / targets roster), Triangles topology, empty index.
+        let empty_out = {
+            let mut o = self.to_triangle_list();
+            o.positions.clear();
+            o.normals = o.normals.as_ref().map(|_| Vec::new());
+            o.tangents = o.tangents.as_ref().map(|_| Vec::new());
+            for s in &mut o.uvs {
+                s.clear();
+            }
+            for s in &mut o.colors {
+                s.clear();
+            }
+            o.joints = o.joints.as_ref().map(|_| Vec::new());
+            o.weights = o.weights.as_ref().map(|_| Vec::new());
+            for t in &mut o.targets {
+                t.position = t.position.as_ref().map(|_| Vec::new());
+                t.normal = t.normal.as_ref().map(|_| Vec::new());
+                t.tangent = t.tangent.as_ref().map(|_| Vec::new());
+            }
+            o.indices = Some(Indices::U16(Vec::new()));
+            o
+        };
+
+        let n = self.positions.len();
+        let faces: Vec<[u32; 3]> = self
+            .triangle_indices()
+            .into_iter()
+            .filter(|&[a, b, c]| {
+                (a as usize) < n
+                    && (b as usize) < n
+                    && (c as usize) < n
+                    && a != b
+                    && b != c
+                    && a != c
+            })
+            .collect();
+        if faces.is_empty() {
+            return empty_out;
+        }
+
+        // Grid frame: the bounding box over vertices referenced by a
+        // surviving face (a stray point cloud should not stretch the
+        // grid). A non-finite vertex is dropped from the frame and
+        // clamped into cell 0 later.
+        let mut referenced = vec![false; n];
+        for &[a, b, c] in &faces {
+            referenced[a as usize] = true;
+            referenced[b as usize] = true;
+            referenced[c as usize] = true;
+        }
+        let bb = BoundingBox::from_points(
+            (0..n)
+                .filter(|&i| referenced[i] && self.positions[i].iter().all(|c| c.is_finite()))
+                .map(|i| self.positions[i]),
+        );
+        let bb = match bb {
+            Some(b) => b,
+            None => return empty_out, // every referenced vertex non-finite
+        };
+
+        // Cube cell edge = longest-axis extent / grid; a zero-extent
+        // model (single point) gets one cell on every axis.
+        let size = bb.size();
+        let longest = size[0].max(size[1]).max(size[2]);
+        let cell = longest / grid as f32;
+
+        // Map a position to its integer cell coordinate. A zero/NaN cell
+        // edge or a non-finite coordinate collapses to cell 0 on that
+        // axis; the upper cell index is clamped to `grid - 1` so a vertex
+        // exactly on the max face is not pushed into a phantom cell.
+        let cell_of = |p: [f32; 3]| -> (u32, u32, u32) {
+            let axis = |v: f32, lo: f32| -> u32 {
+                if !v.is_finite() || !cell.is_finite() || cell <= 0.0 {
+                    return 0;
+                }
+                let idx = ((v - lo) / cell).floor();
+                if !idx.is_finite() || idx < 0.0 {
+                    0
+                } else {
+                    (idx as u32).min(grid - 1)
+                }
+            };
+            (
+                axis(p[0], bb.min[0]),
+                axis(p[1], bb.min[1]),
+                axis(p[2], bb.min[2]),
+            )
+        };
+
+        // Accumulate each occupied cell's member sums in first-seen order.
+        struct Acc {
+            slot: u32,
+            count: u32,
+            pos: [f64; 3],
+            normal: [f64; 3],
+            tangent_xyz: [f64; 3],
+            tangent_w_pos: u32, // votes for +w
+            uvs: Vec<[f64; 2]>,
+            colors: Vec<[f64; 4]>,
+            weights: [f64; 4],
+            joints: [u16; 4], // first-seen member's joints
+            morph: Vec<MorphAcc>,
+        }
+        struct MorphAcc {
+            position: Option<[f64; 3]>,
+            normal: Option<[f64; 3]>,
+            tangent: Option<[f64; 3]>,
+        }
+        let new_morph = || -> Vec<MorphAcc> {
+            self.targets
+                .iter()
+                .map(|t| MorphAcc {
+                    position: t.position.as_ref().map(|_| [0.0; 3]),
+                    normal: t.normal.as_ref().map(|_| [0.0; 3]),
+                    tangent: t.tangent.as_ref().map(|_| [0.0; 3]),
+                })
+                .collect()
+        };
+
+        let mut cells: HashMap<(u32, u32, u32), Acc> = HashMap::new();
+        let mut order: Vec<(u32, u32, u32)> = Vec::new();
+        // Maps source vertex → output cell slot (for the face remap).
+        let mut vtx_slot: Vec<u32> = vec![u32::MAX; n];
+
+        for i in 0..n {
+            if !referenced[i] {
+                continue;
+            }
+            let key = cell_of(self.positions[i]);
+            let entry = cells.entry(key).or_insert_with(|| {
+                let slot = order.len() as u32;
+                order.push(key);
+                Acc {
+                    slot,
+                    count: 0,
+                    pos: [0.0; 3],
+                    normal: [0.0; 3],
+                    tangent_xyz: [0.0; 3],
+                    tangent_w_pos: 0,
+                    uvs: vec![[0.0; 2]; self.uvs.len()],
+                    colors: vec![[0.0; 4]; self.colors.len()],
+                    weights: [0.0; 4],
+                    joints: [0; 4],
+                    morph: new_morph(),
+                }
+            });
+            vtx_slot[i] = entry.slot;
+            if entry.count == 0 {
+                if let Some(js) = &self.joints {
+                    if let Some(v) = js.get(i) {
+                        entry.joints = *v;
+                    }
+                }
+            }
+            entry.count += 1;
+            let p = self.positions[i];
+            for (acc, &c) in entry.pos.iter_mut().zip(p.iter()) {
+                *acc += c as f64;
+            }
+            if let Some(ns) = &self.normals {
+                if let Some(v) = ns.get(i) {
+                    for (acc, &c) in entry.normal.iter_mut().zip(v.iter()) {
+                        *acc += c as f64;
+                    }
+                }
+            }
+            if let Some(ts) = &self.tangents {
+                if let Some(v) = ts.get(i) {
+                    for (acc, &c) in entry.tangent_xyz.iter_mut().zip(v.iter()) {
+                        *acc += c as f64;
+                    }
+                    if v[3] >= 0.0 {
+                        entry.tangent_w_pos += 1;
+                    }
+                }
+            }
+            for (s, set) in self.uvs.iter().enumerate() {
+                if let Some(v) = set.get(i) {
+                    entry.uvs[s][0] += v[0] as f64;
+                    entry.uvs[s][1] += v[1] as f64;
+                }
+            }
+            for (s, set) in self.colors.iter().enumerate() {
+                if let Some(v) = set.get(i) {
+                    for (acc, &c) in entry.colors[s].iter_mut().zip(v.iter()) {
+                        *acc += c as f64;
+                    }
+                }
+            }
+            if let Some(ws) = &self.weights {
+                if let Some(v) = ws.get(i) {
+                    for (acc, &c) in entry.weights.iter_mut().zip(v.iter()) {
+                        *acc += c as f64;
+                    }
+                }
+            }
+            for (ti, t) in self.targets.iter().enumerate() {
+                if let (Some(d), Some(acc)) = (&t.position, entry.morph[ti].position.as_mut()) {
+                    if let Some(v) = d.get(i) {
+                        for k in 0..3 {
+                            acc[k] += v[k] as f64;
+                        }
+                    }
+                }
+                if let (Some(d), Some(acc)) = (&t.normal, entry.morph[ti].normal.as_mut()) {
+                    if let Some(v) = d.get(i) {
+                        for k in 0..3 {
+                            acc[k] += v[k] as f64;
+                        }
+                    }
+                }
+                if let (Some(d), Some(acc)) = (&t.tangent, entry.morph[ti].tangent.as_mut()) {
+                    if let Some(v) = d.get(i) {
+                        for k in 0..3 {
+                            acc[k] += v[k] as f64;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remap + de-duplicate faces. Drop a triangle whose three corners
+        // do not land in three distinct cells.
+        let mut face_seen: HashSet<[u32; 3]> = HashSet::new();
+        let mut out_faces: Vec<[u32; 3]> = Vec::new();
+        for &[a, b, c] in &faces {
+            let (sa, sb, sc) = (
+                vtx_slot[a as usize],
+                vtx_slot[b as usize],
+                vtx_slot[c as usize],
+            );
+            if sa == sb || sb == sc || sa == sc {
+                continue;
+            }
+            // Canonical unordered key (sorted) so a mirrored duplicate of
+            // the same triple is caught regardless of winding.
+            let mut key = [sa, sb, sc];
+            key.sort_unstable();
+            if face_seen.insert(key) {
+                out_faces.push([sa, sb, sc]);
+            }
+        }
+        if out_faces.is_empty() {
+            return empty_out;
+        }
+
+        // Prune cells referenced by no surviving face, compacting slot
+        // ids into a dense 0..k range in first-use order.
+        let mut compact: Vec<u32> = vec![u32::MAX; order.len()];
+        let mut kept_keys: Vec<(u32, u32, u32)> = Vec::new();
+        let remap_face = |s: u32, compact: &mut [u32], kept: &mut Vec<(u32, u32, u32)>| -> u32 {
+            if compact[s as usize] == u32::MAX {
+                compact[s as usize] = kept.len() as u32;
+                kept.push(order[s as usize]);
+            }
+            compact[s as usize]
+        };
+        let final_faces: Vec<[u32; 3]> = out_faces
+            .iter()
+            .map(|&[a, b, c]| {
+                [
+                    remap_face(a, &mut compact, &mut kept_keys),
+                    remap_face(b, &mut compact, &mut kept_keys),
+                    remap_face(c, &mut compact, &mut kept_keys),
+                ]
+            })
+            .collect();
+
+        // Materialise the kept cells' averaged attributes.
+        let k = kept_keys.len();
+        let mut positions = vec![[0.0f32; 3]; k];
+        let mut normals = self.normals.as_ref().map(|_| vec![[0.0f32; 3]; k]);
+        let mut tangents = self.tangents.as_ref().map(|_| vec![[0.0f32; 4]; k]);
+        let mut uvs: Vec<Vec<[f32; 2]>> = self.uvs.iter().map(|_| vec![[0.0f32; 2]; k]).collect();
+        let mut colors: Vec<Vec<[f32; 4]>> =
+            self.colors.iter().map(|_| vec![[0.0f32; 4]; k]).collect();
+        let mut joints = self.joints.as_ref().map(|_| vec![[0u16; 4]; k]);
+        let mut weights = self.weights.as_ref().map(|_| vec![[0.0f32; 4]; k]);
+        let mut targets: Vec<MorphTarget> = self
+            .targets
+            .iter()
+            .map(|t| MorphTarget {
+                position: t.position.as_ref().map(|_| vec![[0.0f32; 3]; k]),
+                normal: t.normal.as_ref().map(|_| vec![[0.0f32; 3]; k]),
+                tangent: t.tangent.as_ref().map(|_| vec![[0.0f32; 3]; k]),
+            })
+            .collect();
+
+        let norm3 = |v: [f64; 3]| -> [f32; 3] {
+            let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            if len.is_finite() && len > 0.0 {
+                [
+                    (v[0] / len) as f32,
+                    (v[1] / len) as f32,
+                    (v[2] / len) as f32,
+                ]
+            } else {
+                [v[0] as f32, v[1] as f32, v[2] as f32]
+            }
+        };
+
+        for ki in 0..k {
+            let acc = &cells[&kept_keys[ki]];
+            let cnt = acc.count.max(1) as f64;
+            positions[ki] = [
+                (acc.pos[0] / cnt) as f32,
+                (acc.pos[1] / cnt) as f32,
+                (acc.pos[2] / cnt) as f32,
+            ];
+            if let Some(out) = normals.as_mut() {
+                out[ki] = norm3(acc.normal);
+            }
+            if let Some(out) = tangents.as_mut() {
+                let xyz = norm3(acc.tangent_xyz);
+                // Majority handedness; ties (incl. all-zero) → +1.0.
+                let w = if acc.tangent_w_pos * 2 >= acc.count {
+                    1.0
+                } else {
+                    -1.0
+                };
+                out[ki] = [xyz[0], xyz[1], xyz[2], w];
+            }
+            for (s, set) in uvs.iter_mut().enumerate() {
+                set[ki] = [(acc.uvs[s][0] / cnt) as f32, (acc.uvs[s][1] / cnt) as f32];
+            }
+            for (s, set) in colors.iter_mut().enumerate() {
+                set[ki] = [
+                    (acc.colors[s][0] / cnt) as f32,
+                    (acc.colors[s][1] / cnt) as f32,
+                    (acc.colors[s][2] / cnt) as f32,
+                    (acc.colors[s][3] / cnt) as f32,
+                ];
+            }
+            if let Some(out) = joints.as_mut() {
+                out[ki] = acc.joints;
+            }
+            if let Some(out) = weights.as_mut() {
+                let mut w = [
+                    (acc.weights[0] / cnt) as f32,
+                    (acc.weights[1] / cnt) as f32,
+                    (acc.weights[2] / cnt) as f32,
+                    (acc.weights[3] / cnt) as f32,
+                ];
+                let sum: f32 = w.iter().sum();
+                if sum.is_finite() && sum > 0.0 {
+                    for c in &mut w {
+                        *c /= sum;
+                    }
+                }
+                out[ki] = w;
+            }
+            for (ti, t) in targets.iter_mut().enumerate() {
+                if let (Some(out), Some(a)) = (t.position.as_mut(), acc.morph[ti].position) {
+                    out[ki] = [
+                        (a[0] / cnt) as f32,
+                        (a[1] / cnt) as f32,
+                        (a[2] / cnt) as f32,
+                    ];
+                }
+                if let (Some(out), Some(a)) = (t.normal.as_mut(), acc.morph[ti].normal) {
+                    out[ki] = [
+                        (a[0] / cnt) as f32,
+                        (a[1] / cnt) as f32,
+                        (a[2] / cnt) as f32,
+                    ];
+                }
+                if let (Some(out), Some(a)) = (t.tangent.as_mut(), acc.morph[ti].tangent) {
+                    out[ki] = [
+                        (a[0] / cnt) as f32,
+                        (a[1] / cnt) as f32,
+                        (a[2] / cnt) as f32,
+                    ];
+                }
+            }
+        }
+
+        let mut flat: Vec<u32> = Vec::with_capacity(final_faces.len() * 3);
+        for f in &final_faces {
+            flat.extend_from_slice(f);
+        }
+        let indices = if k <= u16::MAX as usize + 1 {
+            Indices::U16(flat.iter().map(|&i| i as u16).collect())
+        } else {
+            Indices::U32(flat)
+        };
+
+        Primitive {
+            topology: Topology::Triangles,
+            positions,
+            normals,
+            tangents,
+            uvs,
+            colors,
+            joints,
+            weights,
+            indices: Some(indices),
+            material: self.material,
+            targets,
+            extras: self.extras.clone(),
+        }
+    }
+
     /// Summarise the combinatorial topology of this primitive's triangle
     /// tessellation: the vertex / edge / face counts, the
     /// **Euler characteristic** `χ = V − E + F`, the number of connected

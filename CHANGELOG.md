@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 336 (uniform-grid clustering decimation: `Primitive::simplify_cluster`)
+
+- `Primitive::simplify_cluster(grid)` — the reduction dual of
+  `subdivide_loop`. Lays a cube grid (`grid` cells along the longest
+  bounding-box axis, equal cell edge on every axis) over the primitive,
+  collapses every vertex sharing a cell to one representative, and
+  re-emits the connectivity over the occupied cells. Produces a coarser
+  watertight-by-construction indexed `Triangles` proxy suitable as a
+  level-of-detail / collision hull.
+  - **Robust, no panic path**: out-of-range / duplicate-corner triangles,
+    non-finite vertex positions, non-triangle topologies, and empty
+    primitives all yield an empty indexed `Triangles` primitive; a
+    non-finite vertex is dropped from the grid frame and clamped to
+    cell 0. `grid` is clamped to `>= 1` (`1` → empty; very fine grid →
+    welded input).
+  - **Attribute-aware**: positions and every present attribute
+    (`normals`, `tangents`, all `uvs` / `colors` sets, `weights`, each
+    `MorphTarget` delta) are averaged per cell; normals / tangent `xyz`
+    are re-normalised, tangent handedness `w` takes the cell-majority
+    sign, `weights` re-normalise to sum 1, and `joints` are carried from
+    a member verbatim (categorical, never averaged). `material`,
+    `targets` roster, and `extras` carry over.
+  - **De-duplicated faces**: two input triangles collapsing onto the
+    same unordered cell triple emit one output face; faces spanning
+    fewer than three distinct cells are dropped; orphan cells are
+    pruned so the output pool has no unreferenced slots.
+  - 21 integration tests (`tests/simplify_cluster.rs`).
+
 ### Added — Round 329 (typed ratified-KHR material extensions: `Material::ext`)
 
 - `MaterialExt` — a typed surface for the simply-shaped ratified

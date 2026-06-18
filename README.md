@@ -92,6 +92,18 @@ are skipped or fall back rather than panic), and topology-aware
   attributes (normals/tangents/UVs/colours/joints/weights/morph deltas)
   are linearly interpolated. Boundaries stay watertight; iterate for a
   smooth limit surface from a coarse STL/OBJ/CSG cage.
+- **Decimation** — `simplify_cluster(grid)` (the reduction dual of
+  `subdivide_loop`): lays a cube grid (`grid` cells along the longest
+  bounding-box axis, equal cell edge on every axis), collapses every
+  vertex sharing a cell to one per-cell averaged representative, and
+  re-emits the de-duplicated connectivity over the occupied cells —
+  dropping triangles that no longer span three distinct cells and
+  pruning orphan cells. All attributes are averaged per cell (normals /
+  tangent `xyz` re-normalised, tangent `w` by cell-majority handedness,
+  `weights` re-normalised to sum 1, `joints` carried verbatim). Yields a
+  coarser watertight-by-construction indexed `Triangles` proxy for
+  level-of-detail or a cheap collision hull; robust against degenerate /
+  non-finite / non-triangle input.
 
 ## Sketch
 
