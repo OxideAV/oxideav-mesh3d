@@ -33,7 +33,7 @@
 //! and are returned unchanged by the reordering passes; the analysis
 //! metrics still simulate them as a flat index walk.
 
-use crate::mesh::{Indices, Primitive, Topology};
+use crate::mesh::{Indices, MorphTarget, Primitive, Topology};
 
 /// Result of simulating a fixed-size post-transform vertex cache over an
 /// index stream.
@@ -82,12 +82,10 @@ pub fn simulate_cache(indices: &[u32], cache_size: usize) -> CacheStats {
     let mut cache = vec![u32::MAX; cache_size];
     let mut head = 0usize; // next slot to evict (oldest)
     let mut misses = 0usize;
-    let mut max_index = 0u64;
     let mut any = false;
 
     for &idx in indices {
         any = true;
-        max_index = max_index.max(idx as u64 + 1);
         if cache.contains(&idx) {
             continue; // hit — transform reused
         }
@@ -275,6 +273,158 @@ impl Primitive {
         out.topology = Topology::Triangles;
         out.indices = Some(pack_indices(flat, self.positions.len()));
         out
+    }
+
+    /// Reorder this primitive's **vertex pool** so vertices appear in the
+    /// order the index buffer first references them, returning an
+    /// equivalent primitive whose triangle order (the index sequence) is
+    /// unchanged but whose vertex storage is linearised for fetch
+    /// locality.
+    ///
+    /// # Why
+    ///
+    /// The vertex shader fetches each attribute stream from memory keyed
+    /// by index. If the (possibly cache-optimised) index buffer first
+    /// touches vertex 900, then 12, then 740, those reads scatter across
+    /// the vertex buffer and waste pre-transform fetch bandwidth.
+    /// Re-numbering the pool so the *k*-th distinct index encountered in
+    /// draw order becomes vertex *k* makes the index stream reference a
+    /// gently-increasing run, so the fetch sweeps the buffer roughly
+    /// front-to-back. It is also the recommended companion to index-
+    /// stream compression: a linearised vertex order minimises the
+    /// residual the index codec must store.
+    ///
+    /// Run this **after** [`optimize_vertex_cache`] — the cache pass fixes
+    /// the *triangle* order, then this pass relabels the pool to match
+    /// that final draw order. Running it first is harmless but pointless,
+    /// since the cache pass changes the draw order it linearises against.
+    ///
+    /// # Method
+    ///
+    /// Walk the draw index stream once. The first time each source index
+    /// is seen it is assigned the next free output slot; subsequent
+    /// references reuse that slot. The output index buffer is the source
+    /// stream rewritten through this map; every attribute buffer
+    /// (`positions`, `normals`, `tangents`, each `uvs` / `colors` set,
+    /// `joints`, `weights`) and every [`MorphTarget`] delta is gathered
+    /// into the new slot order. Source vertices that the index buffer
+    /// never references are appended after the referenced ones in their
+    /// original relative order, so no pool data is silently dropped and a
+    /// re-index round-trip is lossless.
+    ///
+    /// # Output
+    ///
+    /// * The index buffer is preserved as a permutation-relabelled copy
+    ///   of the source draw order (an implicit `0..n` order is
+    ///   materialised). Index width follows glTF promotion.
+    /// * `topology`, `material`, `targets` roster shape, and `extras`
+    ///   carry over. The pass is valid for every topology — it relabels
+    ///   the pool, never the stitching rule — so strips / fans keep their
+    ///   topology (their index buffer, if any, is relabelled in place;
+    ///   the implicit order of a non-indexed strip becomes explicit).
+    /// * **Does not mutate `self`.**
+    ///
+    /// [`optimize_vertex_cache`]: Primitive::optimize_vertex_cache
+    pub fn optimize_vertex_fetch(&self) -> Primitive {
+        let n = self.positions.len();
+        let stream = self.draw_index_stream();
+
+        // First-use order: remap[source] = output slot, `perm` lists the
+        // source index that fills each output slot.
+        let mut remap = vec![u32::MAX; n];
+        let mut perm: Vec<usize> = Vec::with_capacity(n);
+        for &raw in &stream {
+            let s = raw as usize;
+            if s >= n {
+                continue; // out-of-range reference: handled below
+            }
+            if remap[s] == u32::MAX {
+                remap[s] = perm.len() as u32;
+                perm.push(s);
+            }
+        }
+        // Append any vertices the stream never touched, original order.
+        for (s, slot) in remap.iter_mut().enumerate() {
+            if *slot == u32::MAX {
+                *slot = perm.len() as u32;
+                perm.push(s);
+            }
+        }
+
+        // Rewrite the index stream through the remap (out-of-range
+        // references are dropped — they cannot survive a relabel).
+        let new_stream: Vec<u32> = stream
+            .iter()
+            .filter_map(|&raw| {
+                let s = raw as usize;
+                if s < n {
+                    Some(remap[s])
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut out = gather_vertices(self, &perm);
+        out.indices = Some(pack_indices(new_stream, perm.len()));
+        out
+    }
+}
+
+/// Gather every per-vertex attribute of `src` into the order given by
+/// `perm` (output vertex `j` takes source vertex `perm[j]`), returning a
+/// new primitive with the same topology / material / extras and the
+/// reordered buffers. The index buffer is **not** set here — the caller
+/// supplies the relabelled stream.
+pub(crate) fn gather_vertices(src: &Primitive, perm: &[usize]) -> Primitive {
+    let g3 = |b: &Vec<[f32; 3]>| -> Vec<[f32; 3]> {
+        perm.iter()
+            .map(|&i| b.get(i).copied().unwrap_or([0.0; 3]))
+            .collect()
+    };
+    let g4 = |b: &Vec<[f32; 4]>| -> Vec<[f32; 4]> {
+        perm.iter()
+            .map(|&i| b.get(i).copied().unwrap_or([0.0; 4]))
+            .collect()
+    };
+
+    let mut out = src.clone();
+    out.positions = g3(&src.positions);
+    out.normals = src.normals.as_ref().map(&g3);
+    out.tangents = src.tangents.as_ref().map(&g4);
+    out.uvs = src
+        .uvs
+        .iter()
+        .map(|set| {
+            perm.iter()
+                .map(|&i| set.get(i).copied().unwrap_or([0.0; 2]))
+                .collect()
+        })
+        .collect();
+    out.colors = src.colors.iter().map(&g4).collect();
+    out.joints = src.joints.as_ref().map(|s| {
+        perm.iter()
+            .map(|&i| s.get(i).copied().unwrap_or([0; 4]))
+            .collect()
+    });
+    out.weights = src.weights.as_ref().map(&g4);
+    out.targets = src.targets.iter().map(|t| permute_morph(t, perm)).collect();
+    out
+}
+
+/// Carry a single `MorphTarget`'s present slots through a vertex
+/// permutation `perm` (output vertex `j` gathers source vertex
+/// `perm[j]`).
+pub(crate) fn permute_morph(t: &MorphTarget, perm: &[usize]) -> MorphTarget {
+    let g3 = |src: &Vec<[f32; 3]>| -> Vec<[f32; 3]> {
+        perm.iter()
+            .map(|&i| src.get(i).copied().unwrap_or([0.0; 3]))
+            .collect()
+    };
+    MorphTarget {
+        position: t.position.as_ref().map(&g3),
+        normal: t.normal.as_ref().map(&g3),
+        tangent: t.tangent.as_ref().map(&g3),
     }
 }
 

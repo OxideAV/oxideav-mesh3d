@@ -31,6 +31,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triangle-set + pool invariance, determinism, disconnected components,
   and a measured ACMR drop (a 24×24 scrambled grid falls below 1.0 ACMR).
 
+### Added — Round 354 (GPU vertex-buffer optimisation, part 2: vertex fetch)
+
+- `Primitive::optimize_vertex_fetch()` — linearises the vertex pool into
+  the order the index buffer first references each vertex, so the
+  pre-transform attribute fetch sweeps the buffer front-to-back. Every
+  attribute stream (`positions`, `normals`, `tangents`, all `uvs` /
+  `colors` sets, `joints`, `weights`) and every `MorphTarget` delta is
+  gathered into the new slot order; the index buffer is relabelled
+  in place (an implicit `0..n` order is materialised). Vertices the index
+  buffer never touches are appended in original order, so a re-index
+  round-trip is lossless. Out-of-range references are dropped. Valid for
+  every topology — it relabels the pool, never the stitching rule, so
+  strips / fans keep their topology.
+- Recommended pipeline: `optimize_vertex_cache().optimize_vertex_fetch()`
+  — fix the triangle order first, then relabel the pool to match that
+  final draw order.
+- 11 integration tests (`tests/optimize_fetch.rs`): first-use relabel,
+  full attribute carry, unreferenced-vertex preservation, fetch-scatter
+  reduction, topology preservation, and a lossless cache→fetch pipeline
+  check asserting contiguous first-use order on the output.
+
 ### Added — Round 336 (uniform-grid clustering decimation: `Primitive::simplify_cluster`)
 
 - `Primitive::simplify_cluster(grid)` — the reduction dual of
