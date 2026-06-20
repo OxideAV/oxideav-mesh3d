@@ -73,6 +73,7 @@ pub mod instance_bvh;
 pub mod light;
 pub mod material;
 pub mod mesh;
+pub mod optimize;
 pub mod ray;
 pub mod registry;
 pub mod scene;
@@ -101,6 +102,7 @@ pub use mesh::{
     EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, OrientationReport,
     Primitive, Topology, TopologySummary,
 };
+pub use optimize::{simulate_cache, CacheStats, DEFAULT_CACHE_SIZE};
 pub use ray::{Ray, RayHit};
 pub use registry::Mesh3DRegistry;
 pub use scene::{

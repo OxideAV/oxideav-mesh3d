@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 354 (GPU vertex-buffer optimisation, part 1: post-transform cache)
+
+- New `optimize` module — triangle/vertex reordering for locality of
+  reference. The rendered result is invariant; only memory order changes.
+- `simulate_cache(indices, cache_size)` + `CacheStats` — a FIFO
+  post-transform vertex-cache simulator yielding `misses`, **ACMR**
+  (`misses / triangles`) and **ATVR** (`misses / vertices`). The
+  measurement primitive that makes the reordering verifiable.
+- `Primitive::cache_stats(cache_size)` — runs the simulator over the
+  de-stripped triangle list (strips / fans expanded); `DEFAULT_CACHE_SIZE
+  = 32` is the optimiser's reference size.
+- `Primitive::optimize_vertex_cache()` (+ `_sized(cache_size)`) — a
+  greedy, near-linear score-driven triangle reordering that maximises
+  post-transform vertex reuse. Each candidate triangle is scored by its
+  vertices' cache residency (recency) plus a low-remaining-valence bias;
+  the best triangle is emitted, its vertices pushed to the cache front,
+  and only incident triangles re-scored. Disconnected components seed
+  from input order. Returns an indexed `Triangles` primitive with the
+  **vertex pool unchanged** — only triangle order is permuted.
+  Out-of-range corners are dropped; non-triangle topologies pass through.
+- 19 integration tests (`tests/optimize_cache.rs`): simulator edge cases,
+  triangle-set + pool invariance, determinism, disconnected components,
+  and a measured ACMR drop (a 24×24 scrambled grid falls below 1.0 ACMR).
+
 ### Added — Round 336 (uniform-grid clustering decimation: `Primitive::simplify_cluster`)
 
 - `Primitive::simplify_cluster(grid)` — the reduction dual of
