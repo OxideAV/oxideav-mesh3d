@@ -92,6 +92,22 @@ are skipped or fall back rather than panic), and topology-aware
   attributes (normals/tangents/UVs/colours/joints/weights/morph deltas)
   are linearly interpolated. Boundaries stay watertight; iterate for a
   smooth limit surface from a coarse STL/OBJ/CSG cage.
+- **GPU vertex-buffer optimisation** — three storage-only reorderings
+  that leave the rendered result exactly invariant (they permute order,
+  never geometry) and double as the recommended pre-processing for
+  index/vertex stream compression. `simulate_cache` / `cache_stats`
+  simulate a FIFO post-transform vertex cache and report **ACMR**
+  (`misses / triangles`) + **ATVR** (`misses / vertices`) so every
+  reorder is measurable. `optimize_vertex_cache` greedily reorders
+  *triangles* to maximise post-transform vertex reuse (cache-recency +
+  low-valence scoring, near-linear, pool untouched).
+  `optimize_vertex_fetch` relabels the *vertex pool* into index-stream
+  first-appearance order so the pre-transform attribute fetch sweeps the
+  buffer front-to-back (lossless: unreferenced vertices kept).
+  `optimize_vertex_spatial(bits)` sorts the pool along a Morton (Z-order)
+  curve for non-indexed / seam-heavy meshes where there is no reused
+  index order to follow. Recommended pipeline:
+  `optimize_vertex_cache().optimize_vertex_fetch()`.
 - **Decimation** — `simplify_cluster(grid)` (the reduction dual of
   `subdivide_loop`): lays a cube grid (`grid` cells along the longest
   bounding-box axis, equal cell edge on every axis), collapses every

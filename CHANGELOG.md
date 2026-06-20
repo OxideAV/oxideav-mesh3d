@@ -52,6 +52,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reduction, topology preservation, and a lossless cache→fetch pipeline
   check asserting contiguous first-use order on the output.
 
+### Added — Round 354 (GPU vertex-buffer optimisation, part 3: spatial Z-order)
+
+- `Primitive::optimize_vertex_spatial(bits)` — sorts the vertex pool
+  along a Morton (Z-order) space-filling curve so spatially-adjacent
+  vertices land at adjacent storage slots. Each position is quantised to
+  a `2^bits`-per-axis lattice over the bounding box (`bits` clamped
+  `1..=10`, a 30-bit code) and bit-interleaved; the stable sort on that
+  code is the permutation. The spatial-locality companion to the two
+  index-driven passes — the right heuristic for **non-indexed** draws
+  (point clouds, triangle soup) and **seam-heavy** meshes where the index
+  buffer reuses almost nothing.
+- All attribute streams + morph deltas are gathered into Z-order; any
+  index buffer is remapped through the permutation so the draw is
+  unchanged. Non-finite positions sort to the end; a degenerate axis
+  collapses to lattice 0; empty primitives round-trip.
+- 11 integration tests (`tests/optimize_spatial.rs`): pool-multiset +
+  geometry invariance, index remap, cluster contiguity, a measured
+  neighbour-distance cut (>40% on a scrambled 16×16 grid), attribute
+  carry, non-finite ordering, bit clamping, and a spatial→cache pipeline.
+
 ### Added — Round 336 (uniform-grid clustering decimation: `Primitive::simplify_cluster`)
 
 - `Primitive::simplify_cluster(grid)` — the reduction dual of

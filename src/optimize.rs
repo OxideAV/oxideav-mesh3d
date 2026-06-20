@@ -369,6 +369,142 @@ impl Primitive {
         out.indices = Some(pack_indices(new_stream, perm.len()));
         out
     }
+
+    /// Reorder this primitive's **vertex pool** so vertices close together
+    /// in space are close together in storage, returning an equivalent
+    /// primitive whose rendered geometry is unchanged but whose attribute
+    /// buffers are sorted along a space-filling curve.
+    ///
+    /// # When to use
+    ///
+    /// [`optimize_vertex_fetch`] linearises the pool against the *index*
+    /// stream — ideal when there is a shared, well-reused index buffer.
+    /// But two cases have no such order to follow:
+    ///
+    /// * **Non-indexed draws** (point clouds, raw triangle soup) — the
+    ///   implicit `0..n` order is already the draw order, so fetch
+    ///   linearisation is a no-op.
+    /// * **Seam-heavy meshes** where almost every triangle has unique
+    ///   vertices (flat-shaded normals, hard UV seams) — the index buffer
+    ///   barely reuses anything, so first-use order carries little spatial
+    ///   signal.
+    ///
+    /// In both cases sorting the pool by *spatial* proximity is the better
+    /// locality heuristic: vertices physically near each other tend to be
+    /// fetched near each other in time, and the sorted order compresses
+    /// well. This is the spatial-locality companion to the two
+    /// index-driven passes (`KHR_meshopt_compression`, "Compressing
+    /// geometry data").
+    ///
+    /// # Method
+    ///
+    /// Each vertex position is quantised to a `2^bits`-per-axis lattice
+    /// over the primitive's bounding box, then the three integer
+    /// coordinates are bit-interleaved into one **Morton (Z-order) code**.
+    /// Sorting vertices by that code traverses space along a Z-order
+    /// curve, so spatially-adjacent vertices land at adjacent storage
+    /// slots. The sort is stable on the code (ties keep original order)
+    /// for determinism. `bits` is clamped to `1..=10` (a 1024³ lattice,
+    /// which a 30-bit code holds); coarser lattices group more vertices
+    /// per cell, finer ones separate near-duplicates.
+    ///
+    /// # Output
+    ///
+    /// * The vertex pool (every attribute stream + morph deltas) is
+    ///   gathered into Z-order. Any index buffer is remapped through the
+    ///   permutation so the draw is unchanged; an implicit order is
+    ///   materialised into an explicit, remapped buffer.
+    /// * `topology`, `material`, `targets` roster, and `extras` carry
+    ///   over. Valid for every topology.
+    /// * Non-finite positions sort to the end deterministically (their
+    ///   code is the max), and a degenerate (zero-extent) bounding box on
+    ///   any axis collapses that axis to lattice 0 — the pass still
+    ///   produces a valid stable order. An empty primitive round-trips.
+    /// * **Does not mutate `self`.**
+    ///
+    /// [`optimize_vertex_fetch`]: Primitive::optimize_vertex_fetch
+    pub fn optimize_vertex_spatial(&self, bits: u32) -> Primitive {
+        let n = self.positions.len();
+        if n == 0 {
+            return self.clone();
+        }
+        let bits = bits.clamp(1, 10);
+        let levels = 1u32 << bits; // cells per axis
+
+        // Bounding box over finite positions.
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for p in &self.positions {
+            for a in 0..3 {
+                if p[a].is_finite() {
+                    lo[a] = lo[a].min(p[a]);
+                    hi[a] = hi[a].max(p[a]);
+                }
+            }
+        }
+        // Per-axis inverse extent (0 when degenerate / no finite values).
+        let mut inv = [0.0f32; 3];
+        for a in 0..3 {
+            let ext = hi[a] - lo[a];
+            if ext.is_finite() && ext > 0.0 {
+                inv[a] = (levels as f32 - 1.0) / ext;
+            }
+        }
+
+        // Morton code per vertex; non-finite positions get the max code so
+        // they sort to the end.
+        let code = |p: &[f32; 3]| -> u64 {
+            if !p.iter().all(|c| c.is_finite()) {
+                return u64::MAX;
+            }
+            let mut c = [0u32; 3];
+            for a in 0..3 {
+                let q = ((p[a] - lo[a]) * inv[a]).round();
+                c[a] = (q.max(0.0) as u32).min(levels - 1);
+            }
+            morton3(c[0], c[1], c[2])
+        };
+
+        let mut perm: Vec<usize> = (0..n).collect();
+        // Stable sort by code (ties keep original order) for determinism.
+        perm.sort_by(|&a, &b| {
+            code(&self.positions[a])
+                .cmp(&code(&self.positions[b]))
+                .then(a.cmp(&b))
+        });
+
+        // Inverse map: old vertex -> new slot, to remap the index buffer.
+        let mut remap = vec![0u32; n];
+        for (new_slot, &old) in perm.iter().enumerate() {
+            remap[old] = new_slot as u32;
+        }
+
+        let mut out = gather_vertices(self, &perm);
+        let stream = self.draw_index_stream();
+        let new_stream: Vec<u32> = stream
+            .iter()
+            .filter_map(|&raw| remap.get(raw as usize).copied())
+            .collect();
+        out.indices = Some(pack_indices(new_stream, n));
+        out
+    }
+}
+
+/// Interleave the low 10 bits of three coordinates into a 30-bit Morton
+/// (Z-order) code: `z y x z y x …` from the most significant pair down.
+fn morton3(x: u32, y: u32, z: u32) -> u64 {
+    part1by2(x) | (part1by2(y) << 1) | (part1by2(z) << 2)
+}
+
+/// Spread the low 10 bits of `v` so each occupies every third bit slot
+/// (`b9 … b1 b0` → `b9 0 0 … b1 0 0 b0`), the standard Morton bit-spread.
+fn part1by2(v: u32) -> u64 {
+    let mut x = (v & 0x3ff) as u64; // keep 10 bits
+    x = (x | (x << 16)) & 0x0000_0000_ff00_00ff;
+    x = (x | (x << 8)) & 0x0000_0000_0f00_f00f;
+    x = (x | (x << 4)) & 0x0000_0000_c30c_30c3;
+    x = (x | (x << 2)) & 0x0000_0000_4924_9249;
+    x
 }
 
 /// Gather every per-vertex attribute of `src` into the order given by
