@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 362 (quadric-error-metric edge-collapse simplification)
+
+- New `simplify` module — **error-optimal** mesh decimation, the
+  high-quality counterpart of the grid-snapping
+  `Primitive::simplify_cluster` and the reduction dual of
+  `Primitive::subdivide_loop`.
+- `Primitive::simplify_quadric(target_triangles)` — greedy
+  quadric-error-metric edge collapse. Each vertex accumulates the sum of
+  the fundamental error quadrics (`Kp = p·pᵀ`) of its incident triangle
+  planes; the reducer repeatedly collapses the edge whose merged residual
+  `v̄ᵀ Q̄ v̄` is smallest, placing the survivor at the error-minimising
+  point (solved from the `3×3` quadric sub-block, with an endpoint /
+  midpoint fallback when singular). A min-heap with per-vertex
+  version-stamp lazy deletion drives the schedule (`~O(E log E)`).
+- Legality guards keep the result a clean, crack-free, same-silhouette
+  approximation: a **fold-over guard** rejects any collapse that would
+  flip or sliver a surviving incident triangle; a **boundary lock**
+  forbids boundary→interior collapse and adds a perpendicular constraint
+  quadric per boundary edge so open seams keep their shape; non-manifold
+  edges (≠ 2 owning faces) and link-condition-violating collapses are
+  left intact.
+- Attributes follow the `subdivide_loop` conventions: position is driven
+  by the metric, every other attribute (`normals`, `tangents`, `uvs`,
+  `colors`, `weights`, morph deltas) is the linear blend of the two
+  endpoints at the optimal split fraction — normals / tangent-`xyz`
+  renormalised, tangent `w` and categorical `joints` from the surviving
+  endpoint, `weights` renormalised to sum 1. Output is an indexed
+  `Triangles` primitive with unreferenced vertices pruned; index width
+  follows the crate convention. Robust against degenerate / non-finite /
+  non-triangle / empty input; does not mutate `self`.
+- 15 integration tests (`tests/simplify_quadric.rs`): empty/degenerate →
+  empty, target-above-input no-op, flat-plane hard reduction staying
+  planar, closed-octahedron lower bound, in-range / non-degenerate
+  output faces, no unreferenced vertices, `self` immutability, attribute
+  carry-through + weight renormalisation, strip-input flattening,
+  NaN-vertex exclusion, and a raised-apex grid whose high-curvature peak
+  survives.
+
 ### Added — Round 354 (GPU vertex-buffer optimisation, part 1: post-transform cache)
 
 - New `optimize` module — triangle/vertex reordering for locality of

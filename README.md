@@ -108,18 +108,32 @@ are skipped or fall back rather than panic), and topology-aware
   curve for non-indexed / seam-heavy meshes where there is no reused
   index order to follow. Recommended pipeline:
   `optimize_vertex_cache().optimize_vertex_fetch()`.
-- **Decimation** — `simplify_cluster(grid)` (the reduction dual of
-  `subdivide_loop`): lays a cube grid (`grid` cells along the longest
-  bounding-box axis, equal cell edge on every axis), collapses every
-  vertex sharing a cell to one per-cell averaged representative, and
-  re-emits the de-duplicated connectivity over the occupied cells —
-  dropping triangles that no longer span three distinct cells and
-  pruning orphan cells. All attributes are averaged per cell (normals /
-  tangent `xyz` re-normalised, tangent `w` by cell-majority handedness,
-  `weights` re-normalised to sum 1, `joints` carried verbatim). Yields a
-  coarser watertight-by-construction indexed `Triangles` proxy for
-  level-of-detail or a cheap collision hull; robust against degenerate /
-  non-finite / non-triangle input.
+- **Decimation** — two reducers, both duals of `subdivide_loop`:
+  - `simplify_cluster(grid)` lays a cube grid (`grid` cells along the
+    longest bounding-box axis, equal cell edge on every axis), collapses
+    every vertex sharing a cell to one per-cell averaged representative,
+    and re-emits the de-duplicated connectivity over the occupied cells —
+    dropping triangles that no longer span three distinct cells and
+    pruning orphan cells. All attributes are averaged per cell (normals /
+    tangent `xyz` re-normalised, tangent `w` by cell-majority handedness,
+    `weights` re-normalised to sum 1, `joints` carried verbatim).
+    Unconditionally robust (no legality tests) but position-quantising.
+  - `simplify_quadric(target_triangles)` is the **error-optimal**
+    counterpart: each vertex accumulates the sum of the fundamental error
+    quadrics (`Kp = p·pᵀ`) of its incident triangle planes, and a greedy
+    min-heap collapses the edge whose merged residual `v̄ᵀ Q̄ v̄` is
+    smallest, re-positioning the survivor at the error-minimising point
+    (solved from the `3×3` quadric sub-block, endpoint/midpoint fallback
+    when singular). A fold-over guard rejects collapses that would flip or
+    sliver a triangle; a boundary lock + per-seam constraint quadric keep
+    open silhouettes; non-manifold and link-condition-violating edges are
+    left intact. Position is metric-driven; other attributes blend the
+    endpoints at the optimal split (same conventions as `subdivide_loop`).
+    `~O(E log E)`; far truer to the original shape at a given triangle
+    budget than clustering.
+  Both yield a coarser indexed `Triangles` proxy for level-of-detail or a
+  cheap collision hull; robust against degenerate / non-finite /
+  non-triangle input; neither mutates `self`.
 
 ## Sketch
 

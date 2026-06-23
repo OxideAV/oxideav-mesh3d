@@ -77,6 +77,7 @@ pub mod optimize;
 pub mod ray;
 pub mod registry;
 pub mod scene;
+pub mod simplify;
 pub mod skin;
 pub mod texture;
 
