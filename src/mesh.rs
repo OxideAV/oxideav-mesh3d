@@ -5249,6 +5249,52 @@ impl Mesh {
         }
         best
     }
+
+    /// Quadric-error-metric simplify **every** primitive in this mesh to
+    /// approximately `target_triangles` triangles each, returning a new
+    /// mesh with the reduced primitives.
+    ///
+    /// This is the additive [`Mesh`] roll-up of
+    /// [`Primitive::simplify_quadric`]: the target is applied
+    /// **per primitive** (each is decimated independently to the budget),
+    /// not split across the mesh's primitives — primitives carry distinct
+    /// materials and attribute layouts and are not merged. The mesh's
+    /// `name` and morph-blend `weights` carry over unchanged; each output
+    /// primitive is the [`Topology::Triangles`] result of the per-
+    /// primitive collapse (empty / non-triangle primitives become empty
+    /// indexed `Triangles`). **Does not mutate `self`.**
+    pub fn simplify_quadric(&self, target_triangles: usize) -> Mesh {
+        Mesh {
+            name: self.name.clone(),
+            primitives: self
+                .primitives
+                .iter()
+                .map(|p| p.simplify_quadric(target_triangles))
+                .collect(),
+            weights: self.weights.clone(),
+        }
+    }
+
+    /// Error-bounded quadric simplify **every** primitive in this mesh
+    /// under the shared `max_error` squared-distance budget, returning a
+    /// new mesh with the reduced primitives.
+    ///
+    /// The additive [`Mesh`] roll-up of
+    /// [`Primitive::simplify_quadric_error`]: the same budget is applied
+    /// per primitive (each independently, never merged across materials).
+    /// `name` and `weights` carry over unchanged. **Does not mutate
+    /// `self`.**
+    pub fn simplify_quadric_error(&self, max_error: f64) -> Mesh {
+        Mesh {
+            name: self.name.clone(),
+            primitives: self
+                .primitives
+                .iter()
+                .map(|p| p.simplify_quadric_error(max_error))
+                .collect(),
+            weights: self.weights.clone(),
+        }
+    }
 }
 
 /// Triangulate a single (possibly non-planar) 3D boundary loop into a fan

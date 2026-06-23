@@ -137,7 +137,9 @@ are skipped or fall back rather than panic), and topology-aware
     coplanar collapses).
   Both yield a coarser indexed `Triangles` proxy for level-of-detail or a
   cheap collision hull; robust against degenerate / non-finite /
-  non-triangle input; neither mutates `self`.
+  non-triangle input; neither mutates `self`. `simplify_quadric` /
+  `simplify_quadric_error` additionally lift to `Mesh` roll-ups that
+  reduce every primitive independently to the same per-primitive budget.
 
 ## Sketch
 

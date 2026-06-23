@@ -1,7 +1,7 @@
 //! Quadric-error-metric edge-collapse simplification
 //! (`Primitive::simplify_quadric`).
 
-use oxideav_mesh3d::{Indices, Primitive, Topology};
+use oxideav_mesh3d::{Indices, Mesh, Primitive, Topology};
 
 /// Build an indexed `Triangles` primitive.
 fn tri_prim(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> Primitive {
@@ -380,4 +380,59 @@ fn error_bound_output_well_formed() {
         assert!(a < n && b < n && c < n);
         assert!(a != b && b != c && a != c);
     }
+}
+
+// --- Mesh roll-ups ----------------------------------------------------
+
+#[test]
+fn mesh_rollup_reduces_each_primitive() {
+    // Two grid primitives in one mesh; each must be reduced to the
+    // per-primitive budget independently.
+    let mesh = Mesh::new(Some("two".to_owned()))
+        .with_primitive(grid(8)) // 128 tris
+        .with_primitive(grid(6)) // 72 tris
+        .with_weights(vec![0.5]);
+    let before: usize = mesh.primitives.iter().map(|p| p.triangle_count()).sum();
+    assert_eq!(before, 128 + 72);
+
+    let out = mesh.simplify_quadric(16);
+    assert_eq!(out.primitives.len(), 2);
+    // Name + weights carry through.
+    assert_eq!(out.name.as_deref(), Some("two"));
+    assert_eq!(out.weights, vec![0.5]);
+    for p in &out.primitives {
+        let c = p.triangle_count();
+        assert!(c <= 24, "each primitive hit its own budget, got {c}");
+        assert_eq!(p.topology, Topology::Triangles);
+    }
+}
+
+#[test]
+fn mesh_rollup_error_bound() {
+    let mesh = Mesh::new(None::<String>).with_primitive(grid(6));
+    let out = mesh.simplify_quadric_error(0.0);
+    // Flat-grid primitive reduces under a zero error bound, stays planar.
+    let p = &out.primitives[0];
+    assert!(p.triangle_count() < 72);
+    for v in &p.positions {
+        assert!(v[2].abs() < 1e-4);
+    }
+}
+
+#[test]
+fn mesh_rollup_empty_mesh() {
+    let mesh = Mesh::new(None::<String>);
+    let out = mesh.simplify_quadric(4);
+    assert!(out.primitives.is_empty());
+    let out2 = mesh.simplify_quadric_error(1.0);
+    assert!(out2.primitives.is_empty());
+}
+
+#[test]
+fn mesh_rollup_does_not_mutate_self() {
+    let mesh = Mesh::new(Some("m".to_owned())).with_primitive(grid(5));
+    let before = mesh.primitives[0].positions.clone();
+    let _ = mesh.simplify_quadric(4);
+    let _ = mesh.simplify_quadric_error(0.1);
+    assert_eq!(mesh.primitives[0].positions, before);
 }

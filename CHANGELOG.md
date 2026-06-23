@@ -46,7 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `simplify_quadric(0)`). The stop test reads the monotone heap key, and
   a collapse whose re-validated cost rose above its key is re-queued
   rather than applied out of order, keeping the bound sound.
-- 21 integration tests (`tests/simplify_quadric.rs`): empty/degenerate →
+- `Mesh::simplify_quadric(target_triangles)` / `Mesh::
+  simplify_quadric_error(max_error)` — the additive `Mesh` roll-ups:
+  simplify every contained primitive independently to the same
+  per-primitive budget (primitives carry distinct materials / attribute
+  layouts and are never merged), carrying `name` + morph `weights`
+  through unchanged. Neither mutates `self`.
+- 25 integration tests (`tests/simplify_quadric.rs`): empty/degenerate →
   empty, target-above-input no-op, flat-plane hard reduction staying
   planar, closed-octahedron lower bound, in-range / non-degenerate
   output faces, no unreferenced vertices, `self` immutability, attribute
@@ -55,7 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   survives, plus error-bound coverage (zero-bound planar-only reduction,
   zero-bound apex preservation, monotonicity in the budget, infinite ≡
   `simplify_quadric(0)`, negative/NaN ≡ no-bound, empty input, well-formed
-  output).
+  output), and the `Mesh` roll-ups (per-primitive reduction, name/weights
+  carry-through, error-bound, empty mesh, `self` immutability).
 
 ### Added — Round 354 (GPU vertex-buffer optimisation, part 1: post-transform cache)
 
