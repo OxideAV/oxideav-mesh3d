@@ -290,3 +290,94 @@ fn bunny_like_bumpy_grid_preserves_shape() {
         bb_before.max[2]
     );
 }
+
+// --- error-bounded variant -------------------------------------------
+
+#[test]
+fn error_bound_zero_only_collapses_planar() {
+    // A flat grid: every collapse is zero-error, so a 0.0 bound still
+    // reduces it (coplanar merges change nothing geometrically). The
+    // result must stay perfectly planar.
+    let g = grid(6); // 72 tris, flat
+    let out = g.simplify_quadric_error(0.0);
+    assert!(out.triangle_count() < 72, "planar grid should reduce");
+    for p in &out.positions {
+        assert!(p[2].abs() < 1e-4, "stayed flat, z={}", p[2]);
+    }
+}
+
+#[test]
+fn error_bound_zero_preserves_curved_features() {
+    // A grid with a raised apex: a 0.0 error bound must NOT collapse the
+    // apex (that costs > 0), so the peak height is preserved exactly.
+    let n = 6;
+    let mut g = grid(n);
+    let row = n + 1;
+    let apex = n / 2 * row + n / 2;
+    g.positions[apex][2] = 3.0;
+    let out = g.simplify_quadric_error(0.0);
+    let bb = out.bounding_box().unwrap();
+    assert!(
+        (bb.max[2] - 3.0).abs() < 1e-3,
+        "zero-error bound must keep the apex, got {}",
+        bb.max[2]
+    );
+}
+
+#[test]
+fn error_bound_monotone_in_budget() {
+    // Larger error budgets never yield MORE triangles than smaller ones.
+    let n = 8;
+    let mut g = grid(n);
+    // A gentle bump so collapses carry a range of costs.
+    let row = n + 1;
+    for j in 0..=n {
+        for i in 0..=n {
+            let dx = i as f32 - n as f32 / 2.0;
+            let dy = j as f32 - n as f32 / 2.0;
+            g.positions[j * row + i][2] = (-(dx * dx + dy * dy) / 8.0).exp();
+        }
+    }
+    let mut last = usize::MAX;
+    for &budget in &[0.0_f64, 0.001, 0.01, 0.1, 1.0, 100.0] {
+        let c = g.simplify_quadric_error(budget).triangle_count();
+        assert!(
+            c <= last,
+            "budget {budget} gave {c} tris, more than the previous {last}"
+        );
+        last = c;
+    }
+}
+
+#[test]
+fn error_bound_infinite_matches_target_zero() {
+    // An unbounded error budget reduces exactly as far as the legality
+    // guards allow — the same floor as simplify_quadric(0).
+    let oct = octahedron();
+    let a = oct.simplify_quadric_error(f64::INFINITY).triangle_count();
+    let b = oct.simplify_quadric(0).triangle_count();
+    assert_eq!(a, b);
+
+    // Negative / NaN budgets are treated as "no bound".
+    let c = oct.simplify_quadric_error(-1.0).triangle_count();
+    let d = oct.simplify_quadric_error(f64::NAN).triangle_count();
+    assert_eq!(c, a);
+    assert_eq!(d, a);
+}
+
+#[test]
+fn error_bound_empty_input_yields_empty() {
+    let empty = Primitive::new(Topology::Triangles);
+    assert_eq!(empty.simplify_quadric_error(1.0).triangle_count(), 0);
+}
+
+#[test]
+fn error_bound_output_well_formed() {
+    let g = grid(6);
+    let out = g.simplify_quadric_error(0.5);
+    let n = out.positions.len() as u32;
+    for [a, b, c] in out.triangle_indices() {
+        assert!(a < n && b < n && c < n);
+        assert!(a != b && b != c && a != c);
+    }
+}

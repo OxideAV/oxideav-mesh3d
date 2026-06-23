@@ -130,7 +130,11 @@ are skipped or fall back rather than panic), and topology-aware
     left intact. Position is metric-driven; other attributes blend the
     endpoints at the optimal split (same conventions as `subdivide_loop`).
     `~O(E log E)`; far truer to the original shape at a given triangle
-    budget than clustering.
+    budget than clustering. `simplify_quadric_error(max_error)` is the
+    error-bounded companion — it stops when the cheapest remaining collapse
+    would exceed a squared-distance budget instead of a triangle count, so
+    the surface never deviates past the budget at any step (`0.0` does only
+    coplanar collapses).
   Both yield a coarser indexed `Triangles` proxy for level-of-detail or a
   cheap collision hull; robust against degenerate / non-finite /
   non-triangle input; neither mutates `self`.

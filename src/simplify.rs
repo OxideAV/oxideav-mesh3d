@@ -276,6 +276,44 @@ impl Primitive {
     ///   yield an empty indexed `Triangles` primitive.
     /// * **Does not mutate `self`.**
     pub fn simplify_quadric(&self, target_triangles: usize) -> Primitive {
+        self.simplify_qem(target_triangles, f64::INFINITY)
+    }
+
+    /// Simplify by greedy quadric-error edge collapse until the next
+    /// cheapest legal collapse would add more than `max_error`
+    /// squared-distance error to the surface — an **error-bounded** budget
+    /// instead of [`Primitive::simplify_quadric`]'s triangle-count budget.
+    ///
+    /// `max_error` is a threshold on the collapse cost `v̄ᵀ Q̄ v̄`, i.e. the
+    /// sum of squared distances from the merged vertex to the planes it
+    /// replaced (units: squared model-space length). It scales with the
+    /// model's coordinate magnitude — a value of `0.0` performs only
+    /// zero-cost collapses (coplanar / colinear merges that change nothing
+    /// geometrically), and larger values trade fidelity for fewer
+    /// triangles. The pass stops as soon as the cheapest remaining legal
+    /// collapse exceeds the bound, so the surface never deviates more than
+    /// the budget allows at any single step. A non-finite or negative
+    /// `max_error` is treated as "no bound" (reduces as far as the
+    /// legality guards permit, like `simplify_quadric(0)`).
+    ///
+    /// All other behaviour — the metric, the fold-over / boundary /
+    /// non-manifold legality guards, attribute blending, output shape, and
+    /// `self`-immutability — matches [`Primitive::simplify_quadric`].
+    pub fn simplify_quadric_error(&self, max_error: f64) -> Primitive {
+        let bound = if max_error.is_finite() && max_error >= 0.0 {
+            max_error
+        } else {
+            f64::INFINITY
+        };
+        // Error-bounded reduction has no triangle floor of its own; the
+        // legality guards provide the only lower bound.
+        self.simplify_qem(0, bound)
+    }
+
+    /// Shared core: collapse until the live triangle count reaches
+    /// `target_triangles` **or** the cheapest legal collapse would exceed
+    /// `max_error`, whichever binds first.
+    fn simplify_qem(&self, target_triangles: usize, max_error: f64) -> Primitive {
         // Empty skeleton carrying self's attribute shape (material /
         // extras / targets roster), Triangles topology, empty index.
         let empty_out = {
@@ -340,7 +378,7 @@ impl Primitive {
         }
 
         let mut state = QemState::new(&welded, faces0);
-        state.run(target_triangles);
+        state.run(target_triangles, max_error);
         state.into_primitive(&welded, empty_out)
     }
 }
@@ -658,7 +696,7 @@ impl QemState {
         s.into_iter().collect()
     }
 
-    fn run(&mut self, target_triangles: usize) {
+    fn run(&mut self, target_triangles: usize, max_error: f64) {
         // Seed the heap with every undirected edge once.
         let mut heap: BinaryHeap<Candidate> = BinaryHeap::new();
         let mut seen: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
@@ -690,12 +728,30 @@ impl QemState {
             {
                 continue;
             }
+            // Error-bounded stop: the heap key `cand.cost` is monotone
+            // non-decreasing across pops, so once the cheapest live key
+            // exceeds the budget every remaining one does too — we are
+            // done. (Checking the heap key, not the re-validated cost,
+            // keeps the bound sound even if a neighbourhood shift made
+            // this particular edge more expensive: a still-cheaper edge
+            // would have a smaller key and pop first.)
+            if cand.cost > max_error {
+                break;
+            }
             // Re-validate legality at apply time (the neighbourhood may
             // have shifted) and recompute the exact target.
             let fresh = match self.make_candidate(cand.u, cand.v) {
                 Some(c) => c,
                 None => continue,
             };
+            // If re-validation made this edge more expensive than its heap
+            // key, it may no longer be the cheapest option — re-push with
+            // the corrected cost and let the heap re-order instead of
+            // applying an out-of-order collapse.
+            if fresh.cost > cand.cost + 1e-12 {
+                heap.push(fresh);
+                continue;
+            }
             // Apply the collapse: v collapses into u.
             let (u, v) = (fresh.u, fresh.v);
             let (np, _cost, t) = self.collapse_target(u, v);
