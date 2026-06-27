@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 376 (affine geometry baking + winding reversal)
+
+- New `transform` module: bake a transform into the vertex data (the
+  complement to `Scene3D::bake_transforms`, which bakes into per-node
+  matrices).
+- `Primitive::transformed(m)` / `Mesh::transformed(m)` — apply an affine
+  4×4: positions by the full affine, normals by the inverse-transpose of
+  the linear part (renormalised, so they stay perpendicular to the
+  surface under non-uniform scale), tangent directions by the linear
+  part (renormalised) with handedness `w` negated on a mirroring
+  (negative-determinant) transform. A singular / non-finite linear part
+  leaves normals untouched while positions still transform. Topology,
+  indices, and all non-geometric attributes are preserved.
+- `Primitive::reverse_winding()` — flip triangle orientation (swap the
+  last two corners per triangle), negate stored normals, and invert
+  tangent `w`, for importing clockwise / left-handed sources or turning
+  a surface inside-out. Both are pure (no `self` mutation).
+
 ### Added — Round 376 (scene composition / append)
 
 - New `compose` module: `Scene3D::append(other)` splices every resource

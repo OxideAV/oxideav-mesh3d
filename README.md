@@ -112,6 +112,18 @@ are skipped or fall back rather than panic), and topology-aware
   intersect_ray` / `any_ray_intersection`, an object-median per-
   primitive `Bvh`, a scene-level `InstanceBvh`, and a world-space
   `Scene3D::intersect_ray` returning `SceneRayHit`.
+- **Geometry transform** — `Primitive::transformed(m)` /
+  `Mesh::transformed(m)` bake an affine 4×4 into the vertex data:
+  positions move by the full affine, normals by the **inverse-transpose**
+  of the linear part (so they stay perpendicular to the surface under
+  non-uniform scale), tangent directions by the linear part with
+  handedness `w` flipped on a mirroring (negative-determinant) transform;
+  a singular linear part leaves normals untouched but still moves points.
+  `Primitive::reverse_winding` flips triangle orientation (swap two
+  corners, negate normals, invert tangent `w`) for importing
+  clockwise / left-handed sources. The vertex-data complement to
+  `Scene3D::bake_transforms` — together they let an exporter flatten
+  into a transform-free, hierarchy-free target.
 - **Consolidation** — `Primitive::merge` concatenates two primitives
   into one indexed `Triangles` primitive, re-basing the second's
   indices onto the end of the first's vertex pool and reconciling

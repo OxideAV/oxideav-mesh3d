@@ -85,6 +85,7 @@ pub mod simplify;
 pub mod skin;
 pub mod smooth;
 pub mod texture;
+pub mod transform;
 
 pub use animation::{
     Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
