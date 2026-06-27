@@ -524,6 +524,59 @@ impl Material {
     pub fn effective_ior(&self) -> f32 {
         self.ext.ior.unwrap_or(1.5)
     }
+
+    /// Rewrite **every** [`TextureId`](crate::TextureId) this material
+    /// references through `f`, in place.
+    ///
+    /// Walks all texture slots — the core metallic-roughness maps
+    /// (`base_color`, `metallic_roughness`, `normal`, `occlusion`,
+    /// `emissive`) *and* every extension map on [`MaterialExt`]
+    /// (specular, clearcoat, sheen, transmission, volume, iridescence,
+    /// anisotropy). The `uv_set` of each [`TextureRef`] is left
+    /// untouched; only the texture index is remapped.
+    ///
+    /// This is the building block for re-indexing a material when its
+    /// textures move to a new arena (scene composition / append), so a
+    /// caller never has to enumerate the slot list by hand and risk
+    /// missing a newly-added extension map.
+    pub fn map_texture_ids(&mut self, f: impl Fn(crate::TextureId) -> crate::TextureId) {
+        let remap = |r: &mut Option<TextureRef>| {
+            if let Some(tr) = r {
+                tr.texture = f(tr.texture);
+            }
+        };
+        remap(&mut self.base_color_texture);
+        remap(&mut self.metallic_roughness_texture);
+        remap(&mut self.normal_texture);
+        remap(&mut self.occlusion_texture);
+        remap(&mut self.emissive_texture);
+        if let Some(s) = &mut self.ext.specular {
+            remap(&mut s.factor_texture);
+            remap(&mut s.color_texture);
+        }
+        if let Some(c) = &mut self.ext.clearcoat {
+            remap(&mut c.factor_texture);
+            remap(&mut c.roughness_texture);
+            remap(&mut c.normal_texture);
+        }
+        if let Some(sh) = &mut self.ext.sheen {
+            remap(&mut sh.color_texture);
+            remap(&mut sh.roughness_texture);
+        }
+        if let Some(t) = &mut self.ext.transmission {
+            remap(&mut t.factor_texture);
+        }
+        if let Some(v) = &mut self.ext.volume {
+            remap(&mut v.thickness_texture);
+        }
+        if let Some(ir) = &mut self.ext.iridescence {
+            remap(&mut ir.factor_texture);
+            remap(&mut ir.thickness_texture);
+        }
+        if let Some(an) = &mut self.ext.anisotropy {
+            remap(&mut an.texture);
+        }
+    }
 }
 
 impl Default for Material {

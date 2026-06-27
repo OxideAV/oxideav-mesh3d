@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 376 (scene composition / append)
+
+- New `compose` module: `Scene3D::append(other)` splices every resource
+  of a source scene onto the end of `self`'s arenas, remapping all
+  cross-arena ids so the relocated resources reference each other — the
+  primitive behind importing several files into one world or instancing
+  a decoded asset. Remaps node→{children, mesh, camera, light, skin,
+  audio_emitter}, mesh.primitive→material, material→all texture slots,
+  skin→{skeleton, root_node}, skeleton→joint nodes, animation
+  target→node, and audio emitter→source; the source's roots are
+  remapped and appended. Returns an `AppendOffsets` recording each
+  arena's starting index. Destination coordinate metadata is kept;
+  `other` is not mutated.
+- `Material::map_texture_ids(f)` — rewrite every `TextureId` the
+  material references (core metallic-roughness maps + all extension
+  maps) through a closure in one call; the building block the append
+  uses to re-index materials onto a relocated texture arena.
+
 ### Added — Round 376 (n-gon polygon triangulation)
 
 - `Primitive::from_polygons(positions, faces)` — builds an indexed

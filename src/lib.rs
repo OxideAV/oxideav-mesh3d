@@ -66,6 +66,7 @@ pub mod audio;
 pub mod bvh;
 pub mod camera;
 pub mod combine;
+pub mod compose;
 pub mod curvature;
 pub mod decoder;
 pub mod encoder;
@@ -96,6 +97,7 @@ pub use audio::{
 };
 pub use bvh::{Bvh, BvhNode};
 pub use camera::Camera;
+pub use compose::AppendOffsets;
 pub use curvature::CurvatureReport;
 pub use decoder::Mesh3DDecoder;
 pub use encoder::Mesh3DEncoder;

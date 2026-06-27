@@ -23,6 +23,14 @@ coverage lives in the workspace umbrella's `oxideav-tests`.
   materials, textures, skeletons, skins, animations, cameras, lights,
   audio sources/emitters, plus `up_axis` / `front_axis` / `unit`
   metadata and a free-form `extras` round-trip side-channel.
+  `Scene3D::append` splices another scene's every arena onto the end of
+  this one's, rewriting all internal ids (node↔mesh↔material↔texture,
+  skin↔skeleton↔joint-node, animation-target nodes, audio
+  emitter↔source) so the relocated resources still reference each other
+  — the primitive behind multi-file import / instancing — returning an
+  `AppendOffsets` recording where each source arena landed.
+  `Material::map_texture_ids` remaps every texture slot (core + all
+  extensions) in one call.
 - `Node` + `Transform { Matrix, Trs }` with matrix↔TRS decompose.
 - `Mesh` / `Primitive` / `Topology` (Triangles, TriangleStrip,
   TriangleFan, Lines, LineStrip, LineLoop, Points) / `Indices`
