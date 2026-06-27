@@ -85,6 +85,18 @@ are skipped or fall back rather than panic), and topology-aware
   intersect_ray` / `any_ray_intersection`, an object-median per-
   primitive `Bvh`, a scene-level `InstanceBvh`, and a world-space
   `Scene3D::intersect_ray` returning `SceneRayHit`.
+- **Consolidation** — `Primitive::merge` concatenates two primitives
+  into one indexed `Triangles` primitive, re-basing the second's
+  indices onto the end of the first's vertex pool and reconciling
+  optional attributes by *union with spec-neutral fill* (an attribute
+  present on either input survives; the side that lacked it gets a
+  default row — `[0,0,1]` normal, white colour, origin UV, …). UV/colour
+  set counts take the max; morph deltas are dropped.
+  `Mesh::merge_primitives_by_material` partitions a mesh's primitives by
+  their material reference (with the unmaterialled `None` group kept
+  separate) and fuses each group, collapsing an N-primitive mesh to at
+  most one draw call per distinct material — the standard batching /
+  pre-compression pass for an OBJ-`g`-split or per-accessor glTF import.
 - **Parametric solids** — `extrude::Profile2D` with ear-clip
   `triangulate` and watertight `extrude`.
 - **Refinement** — `subdivide_loop` (one step of Loop subdivision):

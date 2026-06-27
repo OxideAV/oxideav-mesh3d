@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 376 (primitive merge + material consolidation)
+
+- New `combine` module: geometry-preserving primitive fusion.
+- `Primitive::merge(other)` — concatenates two primitives into one
+  indexed `Triangles` primitive, re-basing `other`'s indices onto the
+  end of `self`'s vertex pool. Optional attributes are reconciled by
+  *union with spec-neutral fill*: an attribute present on either input
+  survives, and the side that lacked it contributes a default row
+  (`[0,0,1]` normal, `[1,0,0,1]` tangent, `[0,0]` UV, white colour,
+  zero joints/weights). UV/colour set counts take the max; out-of-range
+  triangles are dropped; morph targets are dropped.
+- `Mesh::merge_primitives_by_material()` — partitions primitives by
+  their material reference (the `None`/unmaterialled group kept
+  separate), fuses each group, and emits one indexed primitive per
+  distinct material in first-appearance order. Mesh `name`/`weights`
+  preserved; neither entry point mutates its receiver.
+
 ### Added — Round 376 (Laplacian + Taubin mesh fairing)
 
 - New `smooth` module: position-only mesh smoothing that preserves

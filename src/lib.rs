@@ -65,6 +65,7 @@ pub mod asset;
 pub mod audio;
 pub mod bvh;
 pub mod camera;
+pub mod combine;
 pub mod decoder;
 pub mod encoder;
 pub mod error;
