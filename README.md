@@ -78,6 +78,17 @@ are skipped or fall back rather than panic), and topology-aware
   (`world_surface_area`, `world_surface_centroid`,
   `world_signed_volume`, `world_volume_centroid`,
   `world_inertia_tensor`).
+- **Curvature** — `Primitive::curvature` returns a `CurvatureReport`
+  carrying per-vertex discrete **Gaussian** curvature (Gauss-Bonnet
+  angle defect `2π − Σθ` / `π − Σθ` on boundary, normalised by the mixed
+  Voronoi area), **mean** curvature (`½‖Δp‖` from the cotangent
+  Laplace-Beltrami operator), and the per-vertex mixed area itself —
+  parallel to the welded vertex pool (also returned). The discrete
+  Gauss-Bonnet identity `Σ defect = 2π·χ` holds to machine precision on
+  closed meshes (`total_angle_defect` exposes it as a cheap topological
+  check), and the mixed areas sum to the surface area exactly. The
+  signal feeds feature-preserving decimation, adaptive remeshing, and
+  decoded-mesh quality metrics.
 - **Scene graph** — `world_node_transforms`, `world_node_bounds`,
   `bounding_box`.
 - **Ray queries** — `Ray` / `RayHit`, `ray::intersect_triangle`

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 376 (discrete per-vertex curvature)
+
+- New `curvature` module: `Primitive::curvature()` returns a
+  `CurvatureReport` with per-vertex discrete **Gaussian** curvature
+  (Gauss-Bonnet angle defect `2π − Σθ`, `π − Σθ` on boundary vertices,
+  divided by the mixed Voronoi area), **mean** curvature (`½‖Δp‖` from
+  the cotangent Laplace-Beltrami operator), and the mixed Voronoi area
+  per vertex — all parallel to the welded vertex pool the report also
+  carries.
+- `CurvatureReport::total_angle_defect()` — the integrated Gaussian
+  curvature, which equals `2π·χ` for a closed mesh (discrete
+  Gauss-Bonnet), a cheap embedding-independent topological check.
+- Robust by construction: degenerate triangles contribute nothing, a
+  vertex with no finite incident area yields `0.0` curvature (never an
+  infinity), and the mixed areas partition the total surface area
+  exactly. Weld-first, non-mutating; non-triangle / empty input yields
+  an empty report.
+
 ### Added — Round 376 (primitive merge + material consolidation)
 
 - New `combine` module: geometry-preserving primitive fusion.
