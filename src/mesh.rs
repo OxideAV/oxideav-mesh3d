@@ -3063,6 +3063,84 @@ impl Primitive {
         out
     }
 
+    /// Build an indexed [`Topology::Triangles`] primitive from a shared
+    /// vertex pool plus a list of **polygon faces**, triangulating every
+    /// face of more than three corners.
+    ///
+    /// This is the bridge from the polygon-face formats — Wavefront OBJ
+    /// (`f` lines may list 4, 5, … corners), FBX polygon meshes, USD
+    /// `faceVertexIndices` / `faceVertexCounts` — into the engine's
+    /// triangle-only [`Primitive`]. Each face is an index list into
+    /// `positions`; the face is triangulated by the same Newell-projected
+    /// ear-clip used by [`fill_holes`](Primitive::fill_holes), so a
+    /// non-planar or concave polygon is handled correctly (a naïve fan
+    /// would self-overlap on a concave face). Triangles inherit the
+    /// face's own winding: a face wound counter-clockwise about its
+    /// Newell normal triangulates to front-facing CCW triangles.
+    ///
+    /// `positions` becomes the output vertex pool verbatim (no welding,
+    /// no reordering — vertex indices are preserved so a caller's own
+    /// attribute buffers stay aligned and can be attached afterward).
+    /// The returned primitive carries **only positions**; attach
+    /// `normals` / `uvs` / etc. on the result if the source provided
+    /// them (they index the same pool).
+    ///
+    /// # Robustness
+    ///
+    /// * A face with fewer than 3 corners contributes nothing.
+    /// * A triangle face (exactly 3 distinct corners) is emitted as a
+    ///   single triangle preserving its winding (the corner triple may
+    ///   be cyclically rotated by the ear clip's start cursor, never
+    ///   reversed).
+    /// * A face referencing an out-of-range or non-finite vertex is
+    ///   skipped (not panicked) — the rest of the mesh still builds.
+    /// * A degenerate face (all-collinear, zero-area) the ear-clip
+    ///   cannot triangulate is skipped.
+    /// * Faces are processed in order, so the triangle list is
+    ///   deterministic.
+    ///
+    /// Cost is `O(Σ face_len²)` (the ear clip is quadratic per face,
+    /// fine for the small faces real assets carry). Pure constructor;
+    /// allocates the output pool + index buffer.
+    pub fn from_polygons(positions: Vec<[f32; 3]>, faces: &[Vec<u32>]) -> Primitive {
+        let n = positions.len();
+        let mut flat: Vec<u32> = Vec::new();
+        for face in faces {
+            if face.len() < 3 {
+                continue;
+            }
+            // Gather the face's 3D positions; skip the face on any
+            // out-of-range or non-finite corner.
+            let mut pts3: Vec<[f64; 3]> = Vec::with_capacity(face.len());
+            let mut ok = true;
+            for &vi in face {
+                let i = vi as usize;
+                if i >= n {
+                    ok = false;
+                    break;
+                }
+                let p = positions[i];
+                if !p[0].is_finite() || !p[1].is_finite() || !p[2].is_finite() {
+                    ok = false;
+                    break;
+                }
+                pts3.push([f64::from(p[0]), f64::from(p[1]), f64::from(p[2])]);
+            }
+            if !ok {
+                continue;
+            }
+            if let Some(tris) = triangulate_loop_3d(&pts3, face) {
+                for [a, b, c] in tris {
+                    flat.extend_from_slice(&[a, b, c]);
+                }
+            }
+        }
+        let mut out = Primitive::new(Topology::Triangles);
+        out.positions = positions;
+        out.indices = Some(Indices::U32(flat));
+        out
+    }
+
     /// Refine this triangle mesh by **one step of Loop subdivision**,
     /// returning a new [`Topology::Triangles`] primitive with four
     /// sub-triangles in place of every original triangle and smoothed

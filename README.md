@@ -116,6 +116,17 @@ are skipped or fall back rather than panic), and topology-aware
   separate) and fuses each group, collapsing an N-primitive mesh to at
   most one draw call per distinct material — the standard batching /
   pre-compression pass for an OBJ-`g`-split or per-accessor glTF import.
+- **Polygon triangulation** — `Primitive::from_polygons(positions,
+  faces)` builds an indexed `Triangles` primitive from a shared vertex
+  pool plus a list of n-gon faces (each an index list), triangulating
+  every >3-corner face with the same Newell-projected ear-clip
+  `fill_holes` uses — so concave and non-planar faces are handled
+  correctly (a naïve fan would self-overlap). The bridge from the
+  polygon-face formats (OBJ `f`, FBX/USD face lists). Vertex indices
+  are preserved (no welding/reorder) so the caller can attach its own
+  attribute buffers afterward; each n-gon yields `n−2` triangles
+  inheriting the face's winding; out-of-range / degenerate faces are
+  skipped.
 - **Parametric solids** — `extrude::Profile2D` with ear-clip
   `triangulate` and watertight `extrude`.
 - **Refinement** — `subdivide_loop` (one step of Loop subdivision):

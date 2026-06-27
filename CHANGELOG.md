@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 376 (n-gon polygon triangulation)
+
+- `Primitive::from_polygons(positions, faces)` — builds an indexed
+  `Triangles` primitive from a shared vertex pool plus a list of
+  polygon faces (each an index list into `positions`), triangulating
+  every face of more than three corners. Uses the same Newell-projected
+  ear-clip as `fill_holes`, so concave and non-planar faces triangulate
+  without the self-overlap a naïve fan produces — the bridge from the
+  polygon-face formats (Wavefront OBJ `f` lines, FBX/USD face-vertex
+  lists) into the triangle-only `Primitive`. Vertex indices are
+  preserved (no welding/reordering) so the caller's attribute buffers
+  stay aligned; each n-gon yields n−2 triangles inheriting the face's
+  winding; out-of-range, non-finite, sub-triangle, and degenerate faces
+  are skipped rather than panicking.
+
 ### Added — Round 376 (scene-graph navigation + transform baking)
 
 - New `graph` module of `Scene3D` helpers, all sharing the
