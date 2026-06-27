@@ -79,6 +79,7 @@ pub mod registry;
 pub mod scene;
 pub mod simplify;
 pub mod skin;
+pub mod smooth;
 pub mod texture;
 
 pub use animation::{
@@ -114,4 +115,5 @@ pub use scene::{
     SkeletonId, SkinId, TextureId, Transform, Unit, ValidationError,
 };
 pub use skin::{Skeleton, Skin};
+pub use smooth::SmoothOptions;
 pub use texture::{ImageData, MagFilter, MinFilter, Sampler, Texture, WrapMode};

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 376 (Laplacian + Taubin mesh fairing)
+
+- New `smooth` module: position-only mesh smoothing that preserves
+  connectivity (only points move; UVs / materials / triangle roster
+  survive).
+- `Primitive::smooth_laplacian(lambda, options)` — uniform umbrella
+  Laplacian relaxation, `vᵢ' = vᵢ + λ·(centroid(N(i)) − vᵢ)`, computed
+  Jacobi-style from a per-sweep snapshot so the result is independent
+  of vertex order. `lambda` clamped to `[0,1]`.
+- `Primitive::smooth_taubin(lambda, mu, options)` — Taubin λ\|μ
+  smoothing: a positive shrink pass followed by a negative inflate pass
+  (`μ < −λ < 0`) removes high-frequency noise without the volume
+  shrinkage of repeated Laplacian sweeps.
+- `SmoothOptions { iterations, preserve_boundary }` — boundary vertices
+  (on single-owner or non-manifold edges) are pinned by default to
+  preserve the silhouette; non-finite candidates are skipped. Both
+  smoothers weld first and never mutate `self`; non-triangle / empty
+  input yields an empty `Triangles` primitive.
+
 ### Added — Round 376 (layered KHR material extensions)
 
 - `MaterialExt` gains six layered ratified-KHR refinement slots, each an

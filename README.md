@@ -95,6 +95,17 @@ are skipped or fall back rather than panic), and topology-aware
   attributes (normals/tangents/UVs/colours/joints/weights/morph deltas)
   are linearly interpolated. Boundaries stay watertight; iterate for a
   smooth limit surface from a coarse STL/OBJ/CSG cage.
+- **Fairing** — `smooth_laplacian(lambda, opts)` relaxes every vertex a
+  fraction `λ` of the way toward its one-ring centroid (the uniform
+  umbrella Laplacian `vᵢ' = vᵢ + λ·(centroid(N(i)) − vᵢ)`), a Jacobi
+  sweep so the result is order-independent; `smooth_taubin(lambda, mu,
+  opts)` alternates a positive shrink pass with a negative inflate pass
+  (`μ < −λ < 0`) for the same noise removal **without the volume
+  shrinkage** of the plain Laplacian. Both weld first, preserve the
+  connectivity exactly (only positions move; all other attributes pass
+  through), pin boundary vertices by default
+  (`SmoothOptions::preserve_boundary`), and skip any vertex whose
+  smoothed position would be non-finite.
 - **GPU vertex-buffer optimisation** — three storage-only reorderings
   that leave the rendered result exactly invariant (they permute order,
   never geometry) and double as the recommended pre-processing for
