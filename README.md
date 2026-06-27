@@ -90,7 +90,15 @@ are skipped or fall back rather than panic), and topology-aware
   signal feeds feature-preserving decimation, adaptive remeshing, and
   decoded-mesh quality metrics.
 - **Scene graph** — `world_node_transforms`, `world_node_bounds`,
-  `bounding_box`.
+  `bounding_box`. Navigation + flattening: `Scene3D::parents`
+  (first-parent spanning-forest map), `ancestors` (root→parent chain),
+  `descendants` (DFS subtree incl. self), `is_ancestor_of`, and
+  `Node::local_matrix`. `Scene3D::bake_transforms` collapses the
+  hierarchy into a flat root list — every reachable node carries its
+  full world matrix as `Transform::Matrix` with cleared children, node
+  indices preserved, draws identically — exactly what a
+  hierarchy-free target (STL/OBJ) needs. All navigation shares the
+  first-arrival DFS semantics of `world_node_transforms`.
 - **Ray queries** — `Ray` / `RayHit`, `ray::intersect_triangle`
   (Möller-Trumbore) / `intersect_aabb` (slab), `Primitive::
   intersect_ray` / `any_ray_intersection`, an object-median per-

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 376 (scene-graph navigation + transform baking)
+
+- New `graph` module of `Scene3D` helpers, all sharing the
+  first-arrival depth-first semantics of `world_node_transforms`:
+  - `parents()` — first-parent spanning-forest map (`None` for
+    roots / unreachable).
+  - `ancestors(node)` — root→parent chain (excludes the node).
+  - `descendants(node)` — DFS subtree including the node.
+  - `is_ancestor_of(a, n)` — proper-ancestor test.
+  - `bake_transforms()` — collapse the hierarchy into a flat scene:
+    every reachable node gets its world matrix as `Transform::Matrix`,
+    children cleared, reachable nodes promoted to roots in DFS order,
+    node indices preserved, world transforms unchanged. Unreachable
+    nodes keep their local transform and are not promoted. Exactly the
+    pass a hierarchy-free target format (STL/OBJ) needs.
+- `Node::local_matrix()` — convenience for `transform.to_matrix()`.
+
 ### Added — Round 376 (discrete per-vertex curvature)
 
 - New `curvature` module: `Primitive::curvature()` returns a
