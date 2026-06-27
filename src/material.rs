@@ -97,6 +97,249 @@ pub struct MaterialExt {
     /// texture × vertex colour); all lighting-dependent PBR inputs are
     /// ignored, though alpha coverage and `double_sided` still apply.
     pub unlit: bool,
+    /// `KHR_materials_clearcoat` — a thin glossy lacquer layer over the
+    /// base material. `None` ⇒ no clearcoat layer (factor `0.0`).
+    pub clearcoat: Option<Clearcoat>,
+    /// `KHR_materials_sheen` — a retroreflective cloth/fabric layer.
+    /// `None` ⇒ no sheen layer (colour `[0,0,0]`).
+    pub sheen: Option<Sheen>,
+    /// `KHR_materials_transmission` — the fraction of light passing
+    /// through the (thin) surface. `None` ⇒ opaque (factor `0.0`).
+    pub transmission: Option<Transmission>,
+    /// `KHR_materials_volume` — turns the surface into the boundary of
+    /// a homogeneous absorbing medium (requires a manifold mesh).
+    /// `None` ⇒ infinitely thin wall (thickness `0.0`).
+    pub volume: Option<Volume>,
+    /// `KHR_materials_iridescence` — a thin-film interference layer
+    /// producing a view-dependent colour shift. `None` ⇒ no
+    /// iridescence (factor `0.0`).
+    pub iridescence: Option<Iridescence>,
+    /// `KHR_materials_anisotropy` — direction-dependent roughness for
+    /// brushed-metal / hair highlights. `None` ⇒ isotropic
+    /// (strength `0.0`).
+    pub anisotropy: Option<Anisotropy>,
+}
+
+/// `KHR_materials_clearcoat` parameters: a thin, glossy isotropic
+/// lacquer layer applied on top of the base material. The clearcoat
+/// has its own intensity, roughness, and (optionally) a dedicated
+/// normal map so the lacquer can read as smooth over a bumpy base.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Clearcoat {
+    /// Clearcoat layer intensity (`clearcoatFactor`). Default `0.0`
+    /// (no clearcoat); `1.0` is a full lacquer layer. Multiplied by
+    /// the red channel of [`factor_texture`](Self::factor_texture).
+    pub factor: f32,
+    /// Clearcoat intensity texture (`clearcoatTexture`), sampled from
+    /// the `R` channel.
+    pub factor_texture: Option<TextureRef>,
+    /// Clearcoat layer roughness (`clearcoatRoughnessFactor`). Default
+    /// `0.0` (mirror-smooth lacquer). Multiplied by the green channel
+    /// of [`roughness_texture`](Self::roughness_texture).
+    pub roughness: f32,
+    /// Clearcoat roughness texture (`clearcoatRoughnessTexture`),
+    /// sampled from the `G` channel.
+    pub roughness_texture: Option<TextureRef>,
+    /// Dedicated clearcoat normal map (`clearcoatNormalTexture`);
+    /// independent of the base material's normal map so a smooth coat
+    /// can sit over a detailed base. Modulated by
+    /// [`normal_scale`](Self::normal_scale).
+    pub normal_texture: Option<TextureRef>,
+    /// Scale applied to the clearcoat normal map's XY components
+    /// (`clearcoatNormalTexture.scale`). Default `1.0`.
+    pub normal_scale: f32,
+}
+
+impl Default for Clearcoat {
+    fn default() -> Self {
+        Self {
+            factor: 0.0,
+            factor_texture: None,
+            roughness: 0.0,
+            roughness_texture: None,
+            normal_texture: None,
+            normal_scale: 1.0,
+        }
+    }
+}
+
+/// `KHR_materials_sheen` parameters: a retroreflective microfibre
+/// layer modelling cloth, velvet, and fabric. The sheen colour fades
+/// the silhouette and the roughness controls the width of the
+/// grazing-angle rim.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sheen {
+    /// Sheen colour in linear RGB (`sheenColorFactor`). Default
+    /// `[0,0,0]` — black sheen means no effect. Multiplied by the
+    /// `RGB` of [`color_texture`](Self::color_texture).
+    pub color_factor: [f32; 3],
+    /// Sheen colour texture (`sheenColorTexture`), `RGB` channels.
+    pub color_texture: Option<TextureRef>,
+    /// Sheen roughness (`sheenRoughnessFactor`). Default `0.0`.
+    /// Multiplied by the alpha channel of
+    /// [`roughness_texture`](Self::roughness_texture).
+    pub roughness: f32,
+    /// Sheen roughness texture (`sheenRoughnessTexture`), `A` channel.
+    pub roughness_texture: Option<TextureRef>,
+}
+
+impl Default for Sheen {
+    fn default() -> Self {
+        Self {
+            color_factor: [0.0, 0.0, 0.0],
+            color_texture: None,
+            roughness: 0.0,
+            roughness_texture: None,
+        }
+    }
+}
+
+/// `KHR_materials_transmission` parameters: the fraction of light that
+/// passes through the surface, modelling thin transparent dielectrics
+/// (glass, water films) that still respect Fresnel and roughness —
+/// distinct from alpha blending, which fades the whole BRDF.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transmission {
+    /// Base fraction of light transmitted through the surface
+    /// (`transmissionFactor`). Default `0.0` (opaque). Multiplied by
+    /// the red channel of [`factor_texture`](Self::factor_texture).
+    pub factor: f32,
+    /// Transmission texture (`transmissionTexture`), `R` channel.
+    pub factor_texture: Option<TextureRef>,
+}
+
+impl Default for Transmission {
+    fn default() -> Self {
+        Self {
+            factor: 0.0,
+            factor_texture: None,
+        }
+    }
+}
+
+/// `KHR_materials_volume` parameters: turns the surface from an
+/// infinitely thin wall into the boundary of a homogeneous absorbing
+/// medium. Light travelling through the medium is attenuated towards
+/// [`attenuation_color`](Self::attenuation_color) over
+/// [`attenuation_distance`](Self::attenuation_distance). Requires a
+/// manifold mesh and is typically paired with a non-zero
+/// [`Transmission`] / [`MaterialExt::ior`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Volume {
+    /// Thickness of the volume beneath the surface in the mesh's
+    /// coordinate space (`thicknessFactor`). Default `0.0` —
+    /// thin-walled, i.e. the extension has no effect until thickness
+    /// is positive. Multiplied by the green channel of
+    /// [`thickness_texture`](Self::thickness_texture).
+    pub thickness: f32,
+    /// Thickness texture (`thicknessTexture`), `G` channel.
+    pub thickness_texture: Option<TextureRef>,
+    /// Average distance light travels in the medium before interacting
+    /// with a particle, in world space (`attenuationDistance`). The
+    /// spec default is `+Infinity` (no absorption); represented here
+    /// as `None` so the special "infinite" case stays distinct from a
+    /// finite distance. See [`effective_attenuation_distance`].
+    ///
+    /// [`effective_attenuation_distance`]: Volume::effective_attenuation_distance
+    pub attenuation_distance: Option<f32>,
+    /// Colour white light turns into after travelling
+    /// [`attenuation_distance`](Self::attenuation_distance) through the
+    /// medium (`attenuationColor`), linear RGB. Default `[1,1,1]` (no
+    /// tint).
+    pub attenuation_color: [f32; 3],
+}
+
+impl Volume {
+    /// The effective attenuation distance — the stored value when
+    /// finite, else `f32::INFINITY` (the spec default).
+    pub fn effective_attenuation_distance(&self) -> f32 {
+        self.attenuation_distance.unwrap_or(f32::INFINITY)
+    }
+}
+
+impl Default for Volume {
+    fn default() -> Self {
+        Self {
+            thickness: 0.0,
+            thickness_texture: None,
+            attenuation_distance: None,
+            attenuation_color: [1.0, 1.0, 1.0],
+        }
+    }
+}
+
+/// `KHR_materials_iridescence` parameters: a thin-film interference
+/// layer whose perceived colour shifts with view angle, modelling soap
+/// bubbles, oil films, and insect carapaces. The film's optical
+/// thickness varies between [`thickness_min`](Self::thickness_min) and
+/// [`thickness_max`](Self::thickness_max) nanometres.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Iridescence {
+    /// Iridescence intensity (`iridescenceFactor`). Default `0.0`
+    /// (extension has no effect). Multiplied by
+    /// [`factor_texture`](Self::factor_texture).
+    pub factor: f32,
+    /// Iridescence intensity texture (`iridescenceTexture`), single
+    /// linear channel.
+    pub factor_texture: Option<TextureRef>,
+    /// Index of refraction of the thin-film layer (`iridescenceIor`).
+    /// Default `1.3`.
+    pub ior: f32,
+    /// Minimum film thickness in nanometres
+    /// (`iridescenceThicknessMinimum`). Default `100.0`. Selected
+    /// where the thickness texture reads `0`.
+    pub thickness_min: f32,
+    /// Maximum film thickness in nanometres
+    /// (`iridescenceThicknessMaximum`). Default `400.0`. Selected
+    /// where the thickness texture reads `1`.
+    pub thickness_max: f32,
+    /// Thickness texture (`iridescenceThicknessTexture`), single linear
+    /// channel interpolating min→max.
+    pub thickness_texture: Option<TextureRef>,
+}
+
+impl Default for Iridescence {
+    fn default() -> Self {
+        Self {
+            factor: 0.0,
+            factor_texture: None,
+            ior: 1.3,
+            thickness_min: 100.0,
+            thickness_max: 400.0,
+            thickness_texture: None,
+        }
+    }
+}
+
+/// `KHR_materials_anisotropy` parameters: direction-dependent
+/// roughness producing stretched highlights along the tangent frame,
+/// modelling brushed metal, hair, and vinyl records. Requires the
+/// primitive to carry (or be able to synthesise) a tangent basis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Anisotropy {
+    /// Anisotropy strength in `[0,1]` (`anisotropyStrength`). Default
+    /// `0.0` (isotropic). When the texture is present this is
+    /// multiplied by the texture's blue channel.
+    pub strength: f32,
+    /// Rotation of the anisotropy direction in tangent/bitangent
+    /// space, radians counter-clockwise from the tangent
+    /// (`anisotropyRotation`). Default `0.0`. Additive with the
+    /// per-texel direction when the texture is present.
+    pub rotation: f32,
+    /// Anisotropy texture (`anisotropyTexture`): `RG` encode the
+    /// tangent-space direction in `[-1,1]`, `B` the strength in
+    /// `[0,1]`.
+    pub texture: Option<TextureRef>,
+}
+
+impl Default for Anisotropy {
+    fn default() -> Self {
+        Self {
+            strength: 0.0,
+            rotation: 0.0,
+            texture: None,
+        }
+    }
 }
 
 /// `KHR_materials_specular` parameters: the strength and F0 colour of
@@ -231,6 +474,42 @@ impl Material {
     /// Builder-style `KHR_materials_unlit` flag setter.
     pub fn with_unlit(mut self, unlit: bool) -> Self {
         self.ext.unlit = unlit;
+        self
+    }
+
+    /// Builder-style `KHR_materials_clearcoat` setter.
+    pub fn with_clearcoat(mut self, clearcoat: Clearcoat) -> Self {
+        self.ext.clearcoat = Some(clearcoat);
+        self
+    }
+
+    /// Builder-style `KHR_materials_sheen` setter.
+    pub fn with_sheen(mut self, sheen: Sheen) -> Self {
+        self.ext.sheen = Some(sheen);
+        self
+    }
+
+    /// Builder-style `KHR_materials_transmission` setter.
+    pub fn with_transmission(mut self, transmission: Transmission) -> Self {
+        self.ext.transmission = Some(transmission);
+        self
+    }
+
+    /// Builder-style `KHR_materials_volume` setter.
+    pub fn with_volume(mut self, volume: Volume) -> Self {
+        self.ext.volume = Some(volume);
+        self
+    }
+
+    /// Builder-style `KHR_materials_iridescence` setter.
+    pub fn with_iridescence(mut self, iridescence: Iridescence) -> Self {
+        self.ext.iridescence = Some(iridescence);
+        self
+    }
+
+    /// Builder-style `KHR_materials_anisotropy` setter.
+    pub fn with_anisotropy(mut self, anisotropy: Anisotropy) -> Self {
+        self.ext.anisotropy = Some(anisotropy);
         self
     }
 

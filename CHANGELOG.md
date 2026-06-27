@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 376 (layered KHR material extensions)
+
+- `MaterialExt` gains six layered ratified-KHR refinement slots, each an
+  `Option`-shaped block so an absent extension stays distinguishable from
+  its spec default, and each carrying its own `Default` that reproduces
+  the extension's normative defaults:
+  - `Clearcoat` (`KHR_materials_clearcoat`) — factor, roughness, and a
+    dedicated normal map (with `normal_scale`), each factor optionally
+    texture-driven.
+  - `Sheen` (`KHR_materials_sheen`) — linear sheen colour + roughness
+    with their textures (defaults to black, i.e. no effect).
+  - `Transmission` (`KHR_materials_transmission`) — thin-surface light
+    transmission fraction + texture.
+  - `Volume` (`KHR_materials_volume`) — thickness, attenuation colour,
+    and an `Option<f32>` attenuation distance whose `None` encodes the
+    spec's `+Infinity` default; `effective_attenuation_distance()`
+    substitutes it on demand.
+  - `Iridescence` (`KHR_materials_iridescence`) — thin-film factor, IOR
+    (default `1.3`), and min/max thickness in nanometres (`100`/`400`).
+  - `Anisotropy` (`KHR_materials_anisotropy`) — strength, tangent-space
+    rotation, and direction/strength texture.
+- Builder setters on `Material`: `with_clearcoat`, `with_sheen`,
+  `with_transmission`, `with_volume`, `with_iridescence`,
+  `with_anisotropy`. New public re-exports for all six structs.
+
 ### Added — Round 362 (quadric-error-metric edge-collapse simplification)
 
 - New `simplify` module — **error-optimal** mesh decimation, the

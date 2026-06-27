@@ -98,7 +98,10 @@ pub use error::{Error, Result};
 pub use extrude::Profile2D;
 pub use instance_bvh::{Instance, InstanceBvh, InstanceBvhNode};
 pub use light::Light;
-pub use material::{AlphaMode, Material, MaterialExt, Specular, TextureRef};
+pub use material::{
+    AlphaMode, Anisotropy, Clearcoat, Iridescence, Material, MaterialExt, Sheen, Specular,
+    TextureRef, Transmission, Volume,
+};
 pub use mesh::{
     EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, OrientationReport,
     Primitive, Topology, TopologySummary,
