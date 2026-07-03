@@ -1,5 +1,7 @@
 # oxideav-mesh3d
 
+[![CI](https://github.com/OxideAV/oxideav-mesh3d/actions/workflows/ci.yml/badge.svg)](https://github.com/OxideAV/oxideav-mesh3d/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/oxideav-mesh3d.svg)](https://crates.io/crates/oxideav-mesh3d) [![docs.rs](https://docs.rs/oxideav-mesh3d/badge.svg)](https://docs.rs/oxideav-mesh3d) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Pure-Rust 3D scene + mesh typed model.
 
 The shared data model that every OxideAV 3D-format crate
