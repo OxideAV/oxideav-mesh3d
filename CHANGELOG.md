@@ -35,6 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and morph targets are dropped from the output (skinning bakes a static
   mesh; morphs apply *before* skinning). Pure — no `self` mutation.
 
+### Added — Round 401 (scene instantiation — `world_mesh`)
+
+- `Scene3D::world_mesh(node)` / `world_mesh_with(node, worlds)` — the
+  glTF 2.0 §3.7.4 instantiation pipeline baked into one static
+  world-space mesh: default morph weights folded into the base
+  attributes first, then either linear-blend skinning (node carries a
+  skin — output already world space, node transform ignored) or the
+  node's world matrix baked into the vertex data. Morph targets and
+  default weights are cleared in the output; the skin path consumes
+  `joints`/`weights`. A primitive without influence data inside a
+  skinned mesh (invalid per §3.7.3.3) falls back to the node's world
+  matrix so every output vertex shares one space; a skinned node whose
+  palette cannot be built is `None`, not a silent rigid fallback.
+  Unreachable / mesh-less / dangling nodes yield `None`. Node-level
+  morph-weight overrides (glTF `node.weights`) are not representable on
+  `Node` yet — documented limitation.
+
 ### Added — Round 376 (affine geometry baking + winding reversal)
 
 - New `transform` module: bake a transform into the vertex data (the

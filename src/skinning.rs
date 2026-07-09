@@ -208,6 +208,90 @@ impl Scene3D {
     }
 }
 
+impl Scene3D {
+    /// Render-ready world-space geometry for one node — the full glTF
+    /// 2.0 §3.7.4 instantiation pipeline in one call:
+    ///
+    /// 1. **Morph.** When the mesh has morph targets and default
+    ///    weights ([`Mesh::weights`](crate::Mesh::weights)), each
+    ///    primitive's base attributes are blended via
+    ///    [`Primitive::apply_morph_weights`]. An empty weight list
+    ///    instantiates the non-morphed state (§3.7.4: all weights
+    ///    zero).
+    /// 2. **Skin.** When the node carries a
+    ///    [`Node::skin`](crate::Node::skin), the palette from
+    ///    [`Scene3D::joint_matrices`] deforms every influenced
+    ///    primitive via [`Primitive::skinned`] — the result is already
+    ///    world space, the node's own transform being ignored per
+    ///    §3.7.3.2.
+    /// 3. **Transform.** Otherwise the node's world matrix is baked
+    ///    into the vertex data via [`Mesh::transformed`]
+    ///    ([`Primitive::transformed`] rules for positions / normals /
+    ///    tangents).
+    ///
+    /// The output is a static bake: morph targets and default morph
+    /// weights are cleared (their contribution is folded in), and the
+    /// skin path consumes the `joints`/`weights` buffers. A primitive
+    /// *without* influence data inside a skinned mesh (invalid per
+    /// §3.7.3.3 but seen in the wild) falls back to the node's world
+    /// transform, so every output vertex lives in one space.
+    ///
+    /// Returns `None` when `node` is out of range, carries no mesh,
+    /// the mesh id dangles, the node is unreachable from
+    /// [`Scene3D::roots`] (no world transform — the node is not
+    /// instantiated in this scene), or — on the skin path — the joint
+    /// palette cannot be built (see [`Scene3D::joint_matrices`]).
+    ///
+    /// The rest pose is used; to instantiate under an animated pose,
+    /// sample the animation into posed world matrices and call
+    /// [`Scene3D::world_mesh_with`]. This models the *mesh*'s default
+    /// morph weights only — a node-level morph-weight override (glTF
+    /// `node.weights`) is not currently representable on
+    /// [`Node`](crate::Node).
+    pub fn world_mesh(&self, node: NodeId) -> Option<Mesh> {
+        self.world_mesh_with(node, &self.world_node_transforms())
+    }
+
+    /// [`Scene3D::world_mesh`] against caller-supplied world matrices
+    /// (indexed by `NodeId.0`, `None` = unreachable) — one
+    /// [`Scene3D::world_node_transforms`] walk can serve every node,
+    /// and animated poses supply their own matrices.
+    pub fn world_mesh_with(&self, node: NodeId, worlds: &[Option<[[f32; 4]; 4]>]) -> Option<Mesh> {
+        let n = self.node(node)?;
+        let mesh = self.meshes.get(n.mesh?.0 as usize)?;
+        let world = (*worlds.get(node.0 as usize)?)?;
+        let palette = if n.skin.is_some() {
+            // A skinned node whose palette can't be built is an error,
+            // not a fall-through to rigid instancing.
+            Some(self.joint_matrices_with(node, worlds)?)
+        } else {
+            None
+        };
+
+        let mut out = mesh.clone();
+        for prim in &mut out.primitives {
+            // 1. Fold the default morph weights into the base
+            //    attributes (no-op when either side is empty).
+            if !prim.targets.is_empty() && !mesh.weights.is_empty() {
+                let morphed = prim.apply_morph_weights(&mesh.weights);
+                prim.positions = morphed.positions;
+                prim.normals = morphed.normals;
+                prim.tangents = morphed.tangents;
+            }
+            prim.targets = Vec::new();
+
+            // 2./3. Skin (world space) or bake the world matrix.
+            let has_influences = prim.joints.is_some() && prim.weights.is_some();
+            *prim = match &palette {
+                Some(p) if has_influences => prim.skinned(p),
+                _ => prim.transformed(world),
+            };
+        }
+        out.weights = Vec::new();
+        Some(out)
+    }
+}
+
 impl Primitive {
     /// Deform this primitive by linear-blend skinning against a joint
     /// matrix palette (usually [`Scene3D::joint_matrices`]), returning
