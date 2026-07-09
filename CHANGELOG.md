@@ -52,6 +52,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   morph-weight overrides (glTF `node.weights`) are not representable on
   `Node` yet — documented limitation.
 
+### Added — Round 401 (skinning data hygiene)
+
+- `Primitive::normalize_joint_weights()` — pure per-row repair of the
+  joint-weight buffer: negative / non-finite components clamp to 0,
+  positive-sum rows renormalise to sum exactly 1, all-zero rows (the
+  spec shape for an unskinned vertex) stay all-zero. Makes skinning
+  invariant to uniform weight scaling (quantisation off-by-ones, lossy
+  import rounding). Idempotent up to one float ulp.
+- `Scene3D::validate` skinning checks (new `ValidationError` variants):
+  - `JointWeightInvalid` — a vertex joint weight is negative or
+    non-finite (§3.7.3.3); first offender per primitive.
+  - `JointIndexOutOfRange` — a primitive bound to a skin (via a node
+    carrying both mesh + skin) references a joint index at/beyond the
+    bound skeleton's joint count (§3.7.3.3); checked per binding since
+    one mesh can be bound to differently-sized skeletons.
+  - `AnimationMorphStrideMismatch` — a `MorphWeights` sampler's
+    per-keyframe weight-vector stride disagrees with the morph-target
+    count of the mesh its target node instantiates (§3.6).
+
+### Fixed — Round 401
+
+- `Scene3D::validate` no longer rejects a skeleton storing *more*
+  inverse-bind matrices than joints: glTF 2.0 §3.7.3.1 requires the
+  IBM count to be greater than **or equal to** the joint count, so
+  extra trailing matrices are conforming (and ignored by the skinning
+  math). A shortfall is still `SkeletonBindMatrixCountMismatch`.
+
 ### Added — Round 376 (affine geometry baking + winding reversal)
 
 - New `transform` module: bake a transform into the vertex data (the

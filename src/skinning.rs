@@ -45,8 +45,8 @@
 //! weights to be non-negative and sum to 1, and this module does not
 //! silently repair data that violates that (a vertex whose weights sum
 //! to `s ≠ 1` deforms toward `s·M̄` exactly as the numbers dictate).
-//! [`Primitive::normalize_weights`](crate::Primitive::normalize_weights)
-//! is the explicit fixer, and [`Scene3D::validate`](crate::Scene3D::validate)
+//! [`Primitive::normalize_joint_weights`] is the explicit fixer, and
+//! [`Scene3D::validate`](crate::Scene3D::validate)
 //! reports out-of-range joints and negative weights. Two safety rails
 //! keep malformed rows from poisoning the output:
 //!
@@ -328,7 +328,7 @@ impl Primitive {
     ///
     /// Weights are used as stored (no renormalisation) — see the
     /// [module docs](crate::skinning) and
-    /// [`Primitive::normalize_weights`].
+    /// [`Primitive::normalize_joint_weights`].
     pub fn skinned(&self, palette: &[[[f32; 4]; 4]]) -> Primitive {
         let (Some(joints), Some(weights)) = (self.joints.as_ref(), self.weights.as_ref()) else {
             return self.clone();
@@ -394,6 +394,51 @@ impl Primitive {
         out.joints = None;
         out.weights = None;
         out.targets = Vec::new();
+        out
+    }
+
+    /// Repair this primitive's per-vertex joint-weight rows so each
+    /// influenced vertex's weights sum to exactly 1, returning the
+    /// repaired copy. Pure — `self` is untouched.
+    ///
+    /// Per weight row (glTF 2.0 §3.7.3.3 requires non-negative weights
+    /// whose linear sum is as close as reasonably possible to 1):
+    ///
+    /// 1. every negative or non-finite component is clamped to `0.0`
+    ///    (matching the influences [`Primitive::skinned`] would skip
+    ///    anyway);
+    /// 2. when the cleaned row's sum is positive, each component is
+    ///    divided by the sum;
+    /// 3. an all-zero row is left all-zero — that is the spec shape
+    ///    for an unskinned vertex, and inventing an influence for it
+    ///    would deform geometry the author pinned to the rest pose.
+    ///
+    /// After this call, [`Primitive::skinned`] and a hypothetical
+    /// renormalising skinner agree on every vertex: quantised weights
+    /// (bytes/shorts summing to 254/255-style off-by-one), lossy
+    /// import rounding, and hand-authored sloppy rigs all bake to the
+    /// convex blend the author intended. Joint indices and every other
+    /// attribute are preserved; a primitive without a `weights` buffer
+    /// is returned unchanged. Idempotent up to one float rounding step
+    /// (a repaired row sums to 1 within one ulp, so a second pass
+    /// divides by ≈1 and can nudge components by at most one ulp).
+    pub fn normalize_joint_weights(&self) -> Primitive {
+        let mut out = self.clone();
+        if let Some(weights) = out.weights.as_mut() {
+            for row in weights.iter_mut() {
+                for w in row.iter_mut() {
+                    if !w.is_finite() || *w < 0.0 {
+                        *w = 0.0;
+                    }
+                }
+                let sum: f32 = row.iter().sum();
+                if sum > 0.0 {
+                    for w in row.iter_mut() {
+                        *w /= sum;
+                    }
+                }
+            }
+        }
         out
     }
 }

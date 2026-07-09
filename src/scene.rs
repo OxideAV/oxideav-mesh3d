@@ -2126,7 +2126,16 @@ impl Scene3D {
     ///   targets and `weights` is empty).
     /// * Every `Skeleton::inverse_bind_matrices` entry has its fourth
     ///   row set to `[0, 0, 0, 1]` (glTF 2.0 §5.28.1 affine-IBM
-    ///   constraint).
+    ///   constraint), and at least as many entries as joints exist
+    ///   when the list is non-empty (§3.7.3.1 count >= joints; extra
+    ///   trailing entries are conforming).
+    /// * Per-vertex joint weights are finite and non-negative
+    ///   (§3.7.3.3), and — for every node binding a mesh to a skin —
+    ///   every joint index stays within the bound skeleton's joint
+    ///   count.
+    /// * `MorphWeights` animation samplers carry exactly one weight
+    ///   per morph target of the mesh their target node instantiates
+    ///   (§3.6), when that node → mesh chain resolves.
     ///
     /// This is a defensive check for fuzzers and codec authors —
     /// production decoders are expected to produce valid scenes
@@ -2268,6 +2277,21 @@ impl Scene3D {
                             actual: v.len(),
                         });
                     }
+                    // glTF 2.0 §3.7.3.3: joint weights MUST NOT be
+                    // negative (and NaN/Inf would poison the blend).
+                    // Report the first offending component only — one
+                    // corrupt buffer would otherwise flood the report.
+                    'weights: for (vi, row) in v.iter().enumerate() {
+                        for (ci, w) in row.iter().enumerate() {
+                            if !w.is_finite() || *w < 0.0 {
+                                errors.push(ValidationError::JointWeightInvalid {
+                                    location: here(&format!("weights[{vi}][{ci}]")),
+                                    value: *w,
+                                });
+                                break 'weights;
+                            }
+                        }
+                    }
                 }
                 if let Some(idx) = &prim.indices {
                     let max_ok = n_pos as u32;
@@ -2367,8 +2391,14 @@ impl Scene3D {
                     });
                 }
             }
+            // glTF 2.0 §3.7.3.1: the inverse-bind element count MUST
+            // be greater than *or equal to* the joint count — extra
+            // trailing matrices are conforming (the skinning math
+            // ignores them); only a shortfall is an error. Empty stays
+            // the "identity for every joint" escape hatch (§5.28's
+            // documented default when the accessor is omitted).
             if !skel.inverse_bind_matrices.is_empty()
-                && skel.inverse_bind_matrices.len() != skel.joints.len()
+                && skel.inverse_bind_matrices.len() < skel.joints.len()
             {
                 errors.push(ValidationError::SkeletonBindMatrixCountMismatch {
                     location: format!("skeletons[{si}]"),
@@ -2410,6 +2440,51 @@ impl Scene3D {
                         id: r.0,
                         arena: "nodes",
                     });
+                }
+            }
+        }
+
+        // Skinned nodes: every joint index used by the mesh's
+        // primitives must stay within the bound skeleton's joint list
+        // (glTF 2.0 §3.7.3.3: "All joint values MUST be within the
+        // range of joints in the skin"). This is the only check that
+        // needs the node → skin → skeleton binding, since the same
+        // mesh could be bound to differently-sized skeletons by
+        // different nodes.
+        for (ni, node) in self.nodes.iter().enumerate() {
+            let (Some(mesh_id), Some(skin_id)) = (node.mesh, node.skin) else {
+                continue;
+            };
+            let Some(mesh) = self.meshes.get(mesh_id.0 as usize) else {
+                continue; // dangling mesh already reported above
+            };
+            let Some(skin) = self.skins.get(skin_id.0 as usize) else {
+                continue; // dangling skin already reported above
+            };
+            let Some(skel) = self.skeletons.get(skin.skeleton.0 as usize) else {
+                continue; // dangling skeleton already reported above
+            };
+            let joint_count = skel.joints.len();
+            for (pi, prim) in mesh.primitives.iter().enumerate() {
+                let Some(joints) = &prim.joints else {
+                    continue;
+                };
+                // First offender per primitive, same anti-flood shape
+                // as the weight scan.
+                'joints: for (vi, row) in joints.iter().enumerate() {
+                    for (ci, j) in row.iter().enumerate() {
+                        if (*j as usize) >= joint_count {
+                            errors.push(ValidationError::JointIndexOutOfRange {
+                                location: format!(
+                                    "nodes[{ni}] -> meshes[{mi}].primitives[{pi}].joints[{vi}][{ci}]",
+                                    mi = mesh_id.0
+                                ),
+                                joint: *j,
+                                joint_count,
+                            });
+                            break 'joints;
+                        }
+                    }
                 }
             }
         }
@@ -2511,6 +2586,33 @@ impl Scene3D {
                                 crate::animation::Interpolation::CubicSpline => "CubicSpline",
                             },
                         });
+                    } else if ch.target.property == P::MorphWeights
+                        && matches!(ch.sampler.values, V::Scalar(_))
+                    {
+                        // The per-frame weight-vector stride must equal
+                        // the morph-target count of the mesh the target
+                        // node instantiates (glTF 2.0 §3.6: a weights
+                        // sampler carries count(targets) floats per
+                        // keyframe). Only checkable when the node →
+                        // mesh chain resolves; dangling links are
+                        // already reported above.
+                        let stride = v / (k * expected_factor);
+                        let targets = self
+                            .nodes
+                            .get(ch.target.node.0 as usize)
+                            .and_then(|n| n.mesh)
+                            .and_then(|m| self.meshes.get(m.0 as usize))
+                            .and_then(|mesh| mesh.primitives.first())
+                            .map(|prim| prim.targets.len());
+                        if let Some(targets) = targets {
+                            if stride != targets {
+                                errors.push(ValidationError::AnimationMorphStrideMismatch {
+                                    location: loc(".sampler"),
+                                    stride,
+                                    targets,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -2609,6 +2711,30 @@ pub enum ValidationError {
         values: usize,
         interpolation: &'static str,
     },
+    /// A `MorphWeights` sampler's per-keyframe weight-vector stride
+    /// disagrees with the morph-target count of the mesh instantiated
+    /// by the channel's target node (glTF 2.0 §3.6: one weight per
+    /// morph target per keyframe).
+    AnimationMorphStrideMismatch {
+        location: String,
+        stride: usize,
+        targets: usize,
+    },
+    /// A primitive bound to a skin (via a node carrying both `mesh`
+    /// and `skin`) references a joint index at or beyond the bound
+    /// skeleton's joint count (glTF 2.0 §3.7.3.3: all joint values
+    /// MUST be within the range of joints in the skin). Only the
+    /// first offending component per primitive is reported.
+    JointIndexOutOfRange {
+        location: String,
+        joint: u16,
+        joint_count: usize,
+    },
+    /// A vertex joint weight is negative or non-finite (glTF 2.0
+    /// §3.7.3.3: weights MUST NOT be negative; NaN/Inf would poison
+    /// the linear blend). Only the first offending component per
+    /// primitive is reported.
+    JointWeightInvalid { location: String, value: f32 },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -2683,6 +2809,25 @@ impl std::fmt::Display for ValidationError {
                 f,
                 "{location}: interpolation {interpolation} with {keyframes} keyframes expects matching values, got {values}"
             ),
+            Self::AnimationMorphStrideMismatch {
+                location,
+                stride,
+                targets,
+            } => write!(
+                f,
+                "{location}: sampler carries {stride} weights per keyframe but the target mesh has {targets} morph targets"
+            ),
+            Self::JointIndexOutOfRange {
+                location,
+                joint,
+                joint_count,
+            } => write!(
+                f,
+                "{location}: joint index {joint} is out of range for a {joint_count}-joint skeleton"
+            ),
+            Self::JointWeightInvalid { location, value } => {
+                write!(f, "{location}: joint weight {value} is negative or non-finite")
+            }
         }
     }
 }
