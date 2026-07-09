@@ -95,6 +95,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   equals `posed_node_transforms(&a.sample_pose(t, …))`; animations are
   carried over unchanged.
 
+### Added — Round 401 (property-test sweep + Mesh weight-repair lift)
+
+- `Mesh::normalize_joint_weights()` — the per-primitive weight repair
+  lifted to the mesh (morph `weights` and name preserved).
+- Seeded-LCG property suite (`tests/skinning_props.rs`, deterministic,
+  no new dependencies) pinning the pipeline's algebraic invariants over
+  randomized rigs, palettes, and animations: identity palettes are
+  no-ops; rigid single-joint skinning equals `transformed()` on
+  positions, normals, and handedness; skinning is invariant under
+  uniform weight scaling after repair; repaired rows sum to 1 or stay
+  all-zero; sampled rotations are always unit quaternions (Linear +
+  CubicSpline with wild tangents); empty poses walk the exact rest
+  world transforms on random forests; sampling and posed walks are
+  deterministic; `skinned` preserves buffer shapes, pass-through
+  attributes, and normal unit length.
+
 ### Added — Round 401 (skinning data hygiene)
 
 - `Primitive::normalize_joint_weights()` — pure per-row repair of the

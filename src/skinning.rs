@@ -471,4 +471,16 @@ impl Mesh {
         out.weights = Vec::new();
         out
     }
+
+    /// [`Primitive::normalize_joint_weights`] applied to every
+    /// primitive, returning the repaired copy. Everything else
+    /// (name, morph `weights`, primitive order) is preserved; `self`
+    /// is not mutated.
+    pub fn normalize_joint_weights(&self) -> Mesh {
+        let mut out = self.clone();
+        for prim in &mut out.primitives {
+            *prim = prim.normalize_joint_weights();
+        }
+        out
+    }
 }
