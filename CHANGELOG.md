@@ -52,6 +52,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   morph-weight overrides (glTF `node.weights`) are not representable on
   `Node` yet — documented limitation.
 
+### Added — Round 401 (animation pose evaluation)
+
+- New `pose` module: evaluate an `Animation` at a timestamp into a
+  scene pose.
+- `Pose` — sparse per-node snapshot (sampled translation / rotation /
+  scale overrides + morph-weight vectors, indexed by `NodeId.0`), with
+  `new`, `node_count`, `is_empty`.
+- `Animation::duration()` — largest keyframe timestamp across channels.
+- `Animation::sample_pose(t, node_count)` — every channel sampled per
+  Appendix C (clamp / Step / Linear-SLERP / cubic-spline Hermite),
+  with rotation quaternions **renormalised** after sampling (the
+  Appendix C.5 implementation note; the raw sampler deliberately
+  returns the unnormalised cubic blend). Malformed channels
+  (variant/property mismatch, empty keyframes, out-of-range target
+  node) are skipped — `validate()` reports them; a zero-norm rotation
+  sample is skipped rather than poisoning the pose. Duplicate targets:
+  later channel wins (out-of-spec input; §5.6 forbids it).
+- `Pose::local_transform(node, base)` — component-wise merge of the
+  overrides into the node's rest TRS; undriven components keep their
+  rest values; a `Matrix` rest transform is decomposed first
+  (best-effort for shear); undriven nodes return the rest transform
+  verbatim.
+- `Scene3D::posed_node_transforms(&pose)` — posed counterpart of
+  `world_node_transforms` (same DFS/first-arrival contract), feeding
+  `joint_matrices_with` / `world_mesh_with` for animated deformation.
+
 ### Added — Round 401 (skinning data hygiene)
 
 - `Primitive::normalize_joint_weights()` — pure per-row repair of the
