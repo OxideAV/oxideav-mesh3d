@@ -349,14 +349,14 @@ fn ear_clip(ring: &[RingVertex], area_eps: f64) -> Option<Vec<[u32; 3]>> {
                 }
                 if let Some(d) = degenerate {
                     clip!(d, false);
-                } else if let Some(c) = convex {
+                } else {
                     // …otherwise force-clip a convex corner so the
                     // loop always terminates (only reachable on
                     // non-simple input, where the output is already
-                    // documented as unspecified).
+                    // documented as unspecified). Every corner reflex
+                    // means this is not a CCW ring: bail (`?`).
+                    let c = convex?;
                     clip!(c, true);
-                } else {
-                    return None; // every corner reflex: not a CCW ring
                 }
             }
         }
