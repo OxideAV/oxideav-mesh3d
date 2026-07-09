@@ -219,6 +219,47 @@ are skipped or fall back rather than panic), and topology-aware
   `simplify_quadric_error` additionally lift to `Mesh` roll-ups that
   reduce every primitive independently to the same per-primitive budget.
 
+## Rigging & animation evaluation
+
+The runtime half of the `Skeleton`/`Skin`/`Animation` type model —
+glTF 2.0 §3.7.3 (skins), §3.6 + Appendix C (animation), §3.7.4
+(instantiation), all pure and rest-scene-preserving:
+
+- **Joint matrices** — `Scene3D::joint_matrices(node)` builds the
+  skinning palette `globalTransform(joint) · inverseBindMatrix` per
+  joint of the skin bound to a node; the skinned-mesh node's own
+  transform is ignored (§3.7.3.2), so deformed vertices land directly
+  in scene world space. Empty IBM list ⇒ identity per joint; extra
+  trailing IBMs conforming (§3.7.3.1 count ≥ joints), fewer malformed.
+  `joint_matrices_with(node, worlds)` runs against caller-supplied
+  (shared or posed) world matrices.
+- **Linear-blend skinning** — `Primitive::skinned(palette)` /
+  `Mesh::skinned(palette)`: per-vertex `M = Σ wᵢ·palette[jᵢ]`;
+  positions by the blended affine, normals by its per-vertex
+  inverse-transpose (renormalised, singular ⇒ untouched), tangents by
+  its linear part with handedness flipped on mirroring blends.
+  Invalid influences contribute nothing; all-zero-weight vertices
+  keep rest pose; weights used as stored.
+  `normalize_joint_weights()` (both levels) is the explicit repair —
+  clamp negatives/NaN to 0, renormalise rows to sum 1, keep all-zero
+  rows — making skinning invariant to uniform weight scaling.
+  `validate()` reports out-of-range joints (per node→skin→skeleton
+  binding), negative/non-finite weights, and IBM shortfalls.
+- **Pose evaluation** — `Animation::sample_pose(t, n)` evaluates every
+  channel per Appendix C (clamp / Step / Linear-SLERP / cubic Hermite)
+  into a sparse `Pose` (per-node T/R/S + morph-weight overrides),
+  renormalising rotations per the C.5 note. `Pose::local_transform`
+  merges overrides component-wise into rest TRS;
+  `Scene3D::posed_node_transforms(&pose)` walks posed world matrices
+  with the `world_node_transforms` contract. `Animation::duration()`.
+- **Instantiation** — `Scene3D::world_mesh(node)` bakes the §3.7.4
+  pipeline (default morph weights folded in, then skin-or-transform)
+  into one static world-space mesh; `world_mesh_at(anim, t, node)` is
+  the animated frame (animated morph weights beat static defaults);
+  `Scene3D::posed(anim, t)` bakes a whole frame into a scene copy for
+  exporter flattening. Broken palettes yield `None`, never a silent
+  rigid fallback.
+
 ## Sketch
 
 ```rust
