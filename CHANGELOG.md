@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 401 (linear-blend skinning: joint matrices + vertex blend)
+
+- New `skinning` module implementing glTF 2.0 §3.7.3 linear-blend
+  skinning.
+- `Scene3D::joint_matrices(node)` — the skinning matrix palette for the
+  skin bound to a node: `globalTransform(joint_j) · inverseBindMatrix(j)`
+  per joint, in `Skeleton::joints` order. The skinned-mesh node's own
+  transform is ignored per §3.7.3.2, so deformed vertices land directly
+  in scene world space. Empty `inverse_bind_matrices` defaults every IBM
+  to identity (the accessor's documented default); extra trailing IBMs
+  beyond the joint count are allowed (§3.7.3.1 requires count >= joints);
+  fewer is malformed (`None`). Dangling skin/skeleton/joint references
+  and unreachable joint nodes also yield `None`.
+- `Scene3D::joint_matrices_with(node, worlds)` — the same palette
+  against caller-supplied world matrices, for batch skinning (one
+  world-transform walk shared across skins) and for animated poses.
+- `Primitive::skinned(palette)` / `Mesh::skinned(palette)` — per-vertex
+  weighted linear blend `M = Σ wᵢ·palette[jᵢ]` over the four influences:
+  positions by the blended affine, normals by its per-vertex
+  inverse-transpose (renormalised; singular blend leaves the normal
+  untouched), tangent directions by its linear part with handedness `w`
+  flipped on a mirroring blend. Influences with non-finite / non-positive
+  weight or out-of-palette joint index contribute nothing; an
+  all-zero-weight vertex keeps its rest pose. Weights are used as stored
+  (no silent renormalisation). The consumed `joints`/`weights` buffers
+  and morph targets are dropped from the output (skinning bakes a static
+  mesh; morphs apply *before* skinning). Pure — no `self` mutation.
+
 ### Added — Round 376 (affine geometry baking + winding reversal)
 
 - New `transform` module: bake a transform into the vertex data (the

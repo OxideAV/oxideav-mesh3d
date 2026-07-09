@@ -83,6 +83,7 @@ pub mod registry;
 pub mod scene;
 pub mod simplify;
 pub mod skin;
+pub mod skinning;
 pub mod smooth;
 pub mod texture;
 pub mod transform;
