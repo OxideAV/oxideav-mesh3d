@@ -257,9 +257,23 @@ impl Scene3D {
     /// [`Scene3D::world_node_transforms`] walk can serve every node,
     /// and animated poses supply their own matrices.
     pub fn world_mesh_with(&self, node: NodeId, worlds: &[Option<[[f32; 4]; 4]>]) -> Option<Mesh> {
+        self.world_mesh_impl(node, worlds, None)
+    }
+
+    /// Shared instantiation body. `weight_override` replaces the
+    /// mesh's default morph weights when supplied — the runtime /
+    /// node-level override slot of glTF §3.7.4's weight-precedence
+    /// chain, used by [`Scene3D::world_mesh_at`].
+    pub(crate) fn world_mesh_impl(
+        &self,
+        node: NodeId,
+        worlds: &[Option<[[f32; 4]; 4]>],
+        weight_override: Option<&[f32]>,
+    ) -> Option<Mesh> {
         let n = self.node(node)?;
         let mesh = self.meshes.get(n.mesh?.0 as usize)?;
         let world = (*worlds.get(node.0 as usize)?)?;
+        let weights: &[f32] = weight_override.unwrap_or(&mesh.weights);
         let palette = if n.skin.is_some() {
             // A skinned node whose palette can't be built is an error,
             // not a fall-through to rigid instancing.
@@ -270,10 +284,10 @@ impl Scene3D {
 
         let mut out = mesh.clone();
         for prim in &mut out.primitives {
-            // 1. Fold the default morph weights into the base
-            //    attributes (no-op when either side is empty).
-            if !prim.targets.is_empty() && !mesh.weights.is_empty() {
-                let morphed = prim.apply_morph_weights(&mesh.weights);
+            // 1. Fold the morph weights into the base attributes
+            //    (no-op when either side is empty).
+            if !prim.targets.is_empty() && !weights.is_empty() {
+                let morphed = prim.apply_morph_weights(weights);
                 prim.positions = morphed.positions;
                 prim.normals = morphed.normals;
                 prim.tangents = morphed.tangents;

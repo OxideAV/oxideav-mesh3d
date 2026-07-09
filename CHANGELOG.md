@@ -78,6 +78,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `world_node_transforms` (same DFS/first-arrival contract), feeding
   `joint_matrices_with` / `world_mesh_with` for animated deformation.
 
+### Added — Round 401 (animated instantiation)
+
+- `Scene3D::world_mesh_at(animation, t, node)` — the animated
+  counterpart of `world_mesh`: sample the pose, walk posed world
+  matrices, instantiate against them; a `MorphWeights` channel
+  targeting the node overrides the mesh's static default weights
+  (glTF weight precedence). Skinned nodes deform by the posed joints;
+  unskinned nodes bake their posed world matrix; sampling clamps
+  outside `0.0..=duration()`.
+- `Scene3D::posed(animation, t)` — bake one frame into a scene copy:
+  driven nodes get their `Pose::local_transform` (undriven nodes keep
+  their rest transform bit-for-bit), and animated morph-weight vectors
+  are written into the instantiated meshes (documented last-wins when
+  two nodes share one mesh). `posed(a, t).world_node_transforms()`
+  equals `posed_node_transforms(&a.sample_pose(t, …))`; animations are
+  carried over unchanged.
+
 ### Added — Round 401 (skinning data hygiene)
 
 - `Primitive::normalize_joint_weights()` — pure per-row repair of the

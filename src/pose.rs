@@ -31,6 +31,7 @@
 //! best-effort per [`Transform::from_matrix`]).
 
 use crate::animation::{Animation, AnimationProperty, SampledValue};
+use crate::mesh::Mesh;
 use crate::scene::{mat4_mul, NodeId, Scene3D, Transform};
 
 /// One animation evaluated at one timestamp — per-node TRS overrides
@@ -229,6 +230,87 @@ impl Scene3D {
             for child in node.children.iter().rev() {
                 stack.push((*child, world));
             }
+        }
+        out
+    }
+
+    /// Render-ready world-space geometry for one node under an
+    /// animation at time `t` — the animated counterpart of
+    /// [`Scene3D::world_mesh`], running the full frame pipeline:
+    ///
+    /// 1. `animation.sample_pose(t)` — evaluate every channel;
+    /// 2. [`Scene3D::posed_node_transforms`] — posed world matrices;
+    /// 3. [`Scene3D::world_mesh_with`]-style instantiation against
+    ///    those matrices, except that a `MorphWeights` channel
+    ///    targeting `node` **overrides** the mesh's default weights
+    ///    (glTF 2.0 weight precedence: animated weights beat the
+    ///    static defaults).
+    ///
+    /// Skinned nodes deform by the posed joints (their own transform
+    /// ignored per §3.7.3.2); unskinned nodes bake their posed world
+    /// matrix. The `None` conditions of [`Scene3D::world_mesh`]
+    /// apply. Sampling outside `0.0..=animation.duration()` clamps
+    /// per Appendix C.1.
+    ///
+    /// Instantiating many nodes at one timestamp? Build the pose and
+    /// posed worlds once and drive [`Scene3D::world_mesh_with`] /
+    /// [`Scene3D::joint_matrices_with`] yourself — this convenience
+    /// resamples per call. Note the manual route uses the mesh's
+    /// *default* morph weights; the per-node animated override is
+    /// what this method adds on top.
+    pub fn world_mesh_at(&self, animation: &Animation, t: f32, node: NodeId) -> Option<Mesh> {
+        let pose = animation.sample_pose(t, self.nodes.len());
+        let worlds = self.posed_node_transforms(&pose);
+        let weight_override = pose
+            .morph_weights
+            .get(node.0 as usize)
+            .and_then(|w| w.as_deref());
+        self.world_mesh_impl(node, &worlds, weight_override)
+    }
+
+    /// Bake an animation frame into a copy of the scene: every node's
+    /// transform becomes its [`Pose::local_transform`] under
+    /// `animation` at time `t`, and every mesh instantiated by a node
+    /// with an animated `MorphWeights` channel gets that sampled
+    /// vector written to [`Mesh::weights`](crate::Mesh::weights).
+    /// `self` is untouched.
+    ///
+    /// This is the exporter's flatten: the returned scene *is* the
+    /// frame — `posed(anim, t).world_node_transforms()` equals
+    /// `posed_node_transforms(&anim.sample_pose(t, …))`, and the
+    /// downstream rest-pose tooling ([`Scene3D::world_mesh`],
+    /// [`Scene3D::bake_transforms`], metrics, exporters) now sees the
+    /// animated frame as its rest pose.
+    ///
+    /// Two structural caveats, both inherent to baking:
+    ///
+    /// * Driven nodes get `Trs` transforms (a `Matrix` rest transform
+    ///   is decomposed first — see [`Pose::local_transform`]);
+    ///   undriven nodes keep their rest transform bit-for-bit.
+    /// * [`Mesh::weights`](crate::Mesh::weights) lives on the *mesh*,
+    ///   so when two nodes with different animated weight vectors
+    ///   share one mesh, the higher-indexed node wins (the same
+    ///   last-wins rule as duplicate channels). Per-node divergence
+    ///   needs per-node instantiation — [`Scene3D::world_mesh_at`].
+    ///
+    /// Animations (including `animation` itself) are carried over
+    /// unchanged: they still describe motion relative to the original
+    /// rest pose, so re-baking a baked scene compounds only if the
+    /// caller asks it to.
+    pub fn posed(&self, animation: &Animation, t: f32) -> Scene3D {
+        let pose = animation.sample_pose(t, self.nodes.len());
+        let mut out = self.clone();
+        for (i, node) in out.nodes.iter_mut().enumerate() {
+            node.transform = pose.local_transform(NodeId(i as u32), &node.transform);
+        }
+        for (i, weights) in pose.morph_weights.iter().enumerate() {
+            let (Some(w), Some(node)) = (weights, self.nodes.get(i)) else {
+                continue;
+            };
+            let Some(mesh) = node.mesh.and_then(|m| out.meshes.get_mut(m.0 as usize)) else {
+                continue;
+            };
+            mesh.weights = w.clone();
         }
         out
     }
