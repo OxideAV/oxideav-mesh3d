@@ -90,12 +90,29 @@ impl Primitive {
     /// inverse-transpose of the linear part (renormalised); tangent
     /// directions by the linear part (renormalised) with handedness
     /// flipped when `m` mirrors (negative determinant). Topology,
-    /// indices, UVs, colours, joints, weights, morph deltas, material,
-    /// and extras are unchanged. See the [module
-    /// docs](crate::transform) for the derivation.
+    /// indices, UVs, colours, joints, weights, material, and extras
+    /// are unchanged. See the [module docs](crate::transform) for the
+    /// derivation.
     ///
-    /// When the linear part is singular / non-finite the normals are
-    /// left as-is (finite fallback) while positions still transform.
+    /// Morph-target **deltas** are displacement vectors, not points,
+    /// so they move by the direction rules (round 401 — previously
+    /// they were passed through untouched, which left a re-based
+    /// morphable mesh deforming along the *old* axes): position and
+    /// tangent deltas by the linear part, normal deltas by the
+    /// inverse-transpose — with **no renormalisation** on any delta
+    /// (deltas are not unit-length; scaling them would change the
+    /// morph amplitude the author stored). This makes morphing and
+    /// transforming commute exactly on positions:
+    /// `transformed(m).apply_morph_weights(w)` equals
+    /// `apply_morph_weights(w)` then `transformed(m)` — because
+    /// `M·(p + Σ wᵢdᵢ) = M·p + Σ wᵢ·(L·dᵢ)`. (For normals the
+    /// equivalence is approximate: the base normal is renormalised at
+    /// transform time, the runtime renormalises again after adding
+    /// deltas.)
+    ///
+    /// When the linear part is singular / non-finite the normals and
+    /// normal deltas are left as-is (finite fallback) while positions,
+    /// position deltas, and tangent data still transform.
     /// Does not mutate `self`.
     pub fn transformed(&self, m: [[f32; 4]; 4]) -> Primitive {
         let mut out = self.clone();
@@ -141,6 +158,27 @@ impl Primitive {
                 }
                 if mirror {
                     tg[3] = -tg[3];
+                }
+            }
+        }
+
+        // Morph deltas are displacements: position/tangent deltas by
+        // L, normal deltas by the inverse-transpose. NO renormalising
+        // — a delta's length is the stored morph amplitude.
+        for target in &mut out.targets {
+            if let Some(dp) = target.position.as_mut() {
+                for d in dp.iter_mut() {
+                    *d = transform_dir(l, *d);
+                }
+            }
+            if let (Some(nm), Some(dn)) = (normal_mat, target.normal.as_mut()) {
+                for d in dn.iter_mut() {
+                    *d = transform_dir(nm, *d);
+                }
+            }
+            if let Some(dt) = target.tangent.as_mut() {
+                for d in dt.iter_mut() {
+                    *d = transform_dir(l, *d);
                 }
             }
         }

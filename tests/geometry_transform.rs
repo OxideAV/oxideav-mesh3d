@@ -173,3 +173,94 @@ fn transformed_preserves_topology_and_indices() {
     assert_eq!(out.topology, Topology::Triangles);
     assert_eq!(out.triangle_indices(), prim.triangle_indices());
 }
+
+// --- morph deltas under transform (round 401) --------------------------
+
+/// The triangle plus one morph target with position/normal/tangent
+/// deltas of known non-unit length.
+fn tri_with_morph() -> Primitive {
+    let mut p = tri_with_normal();
+    p.targets = vec![oxideav_mesh3d::MorphTarget {
+        position: Some(vec![[0.0, 0.0, 2.0]; 3]),
+        normal: Some(vec![[0.5, 0.0, 0.0]; 3]),
+        tangent: Some(vec![[0.0, 3.0, 0.0]; 3]),
+    }];
+    p
+}
+
+#[test]
+fn morph_position_deltas_rotate_with_the_linear_part_not_the_translation() {
+    // Deltas are displacements: translation must not leak in.
+    let out = tri_with_morph().transformed(translate(10.0, 20.0, 30.0));
+    let d = out.targets[0].position.as_ref().unwrap();
+    assert_eq!(d[0], [0.0, 0.0, 2.0], "translation-invariant");
+
+    // +90° about X (column-vector): ẑ → -ŷ... check: R·(0,0,2) with
+    // rows [[1,0,0],[0,0,-1],[0,1,0]] gives (0, -2, 0).
+    let rot_x_90 = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    let out = tri_with_morph().transformed(rot_x_90);
+    let d = out.targets[0].position.as_ref().unwrap();
+    for v in d {
+        assert!(
+            (v[0]).abs() < 1e-6 && (v[1] + 2.0).abs() < 1e-6 && v[2].abs() < 1e-6,
+            "delta should rotate to (0,-2,0): {v:?}"
+        );
+    }
+}
+
+#[test]
+fn morph_delta_lengths_are_not_renormalised() {
+    // Scale x2: position delta doubles (amplitude is data, not a unit
+    // direction); normal delta transforms by inverse-transpose
+    // (halves); tangent delta doubles.
+    let out = tri_with_morph().transformed(scale(2.0, 2.0, 2.0));
+    let t = &out.targets[0];
+    assert_eq!(t.position.as_ref().unwrap()[0], [0.0, 0.0, 4.0]);
+    assert_eq!(t.normal.as_ref().unwrap()[0], [0.25, 0.0, 0.0]);
+    assert_eq!(t.tangent.as_ref().unwrap()[0], [0.0, 6.0, 0.0]);
+}
+
+#[test]
+fn morph_then_transform_commutes_on_positions() {
+    // M·(p + Σ wᵢdᵢ) == M·p + Σ wᵢ(L·dᵢ) exactly for affine M.
+    let prim = tri_with_morph();
+    let m = scale(2.0, 0.5, 3.0);
+    let w = [0.7f32];
+
+    // morph → transform
+    let morphed = prim.apply_morph_weights(&w);
+    let mut morphed_prim = prim.clone();
+    morphed_prim.positions = morphed.positions;
+    morphed_prim.targets = Vec::new();
+    let a = morphed_prim.transformed(m);
+
+    // transform → morph
+    let b = prim.transformed(m).apply_morph_weights(&w);
+
+    for (pa, pb) in a.positions.iter().zip(b.positions.iter()) {
+        for i in 0..3 {
+            assert!((pa[i] - pb[i]).abs() < 1e-5, "{pa:?} vs {pb:?}");
+        }
+    }
+}
+
+#[test]
+fn singular_transform_keeps_normal_deltas_but_moves_position_deltas() {
+    let out = tri_with_morph().transformed(scale(0.0, 1.0, 1.0));
+    let t = &out.targets[0];
+    assert_eq!(
+        t.normal.as_ref().unwrap()[0],
+        [0.5, 0.0, 0.0],
+        "no inverse-transpose exists: delta kept"
+    );
+    assert_eq!(
+        t.position.as_ref().unwrap()[0],
+        [0.0, 0.0, 2.0],
+        "z-delta survives the x-collapse"
+    );
+}

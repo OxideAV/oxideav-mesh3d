@@ -144,6 +144,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — Round 401
 
+- `Primitive::transformed` now transforms **morph-target deltas**
+  (previously passed through untouched, leaving a re-based morphable
+  mesh — e.g. a Z-up→Y-up converted import — deforming along the old
+  axes). Deltas are displacements: position and tangent deltas move by
+  the linear part, normal deltas by the inverse-transpose, none of
+  them renormalised (a delta's length is the stored morph amplitude).
+  Morphing and transforming now commute exactly on positions. The
+  singular-linear-part fallback keeps normal deltas untouched, like
+  base normals.
 - `Scene3D::validate` no longer rejects a skeleton storing *more*
   inverse-bind matrices than joints: glTF 2.0 §3.7.3.1 requires the
   IBM count to be greater than **or equal to** the joint count, so
