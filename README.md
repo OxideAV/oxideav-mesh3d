@@ -252,6 +252,11 @@ glTF 2.0 §3.7.3 (skins), §3.6 + Appendix C (animation), §3.7.4
   merges overrides component-wise into rest TRS;
   `Scene3D::posed_node_transforms(&pose)` walks posed world matrices
   with the `world_node_transforms` contract. `Animation::duration()`.
+- **Skin root** — `Scene3D::skin_root(skin)`: the explicit
+  `Skin::root_node` when stored, else the lowest common ancestor of
+  the joint set over the first-parent spanning forest (§3.7.3.2's
+  documented fallback); pairs with `descendants` for one-subtree rig
+  culling.
 - **Instantiation** — `Scene3D::world_mesh(node)` bakes the §3.7.4
   pipeline (default morph weights folded in, then skin-or-transform)
   into one static world-space mesh; `world_mesh_at(anim, t, node)` is

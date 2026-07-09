@@ -95,6 +95,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   equals `posed_node_transforms(&a.sample_pose(t, …))`; animations are
   carried over unchanged.
 
+### Added — Round 401 (skin common root)
+
+- `Scene3D::skin_root(skin)` — the scene-graph root of a skin's joint
+  hierarchy: the explicit `Skin::root_node` when stored (verbatim,
+  range-checked — the author's pivot wins), otherwise the **lowest
+  common ancestor** of every joint over the first-parent spanning
+  forest, per glTF 2.0 §3.7.3.2 ("client implementations find the
+  lowest common ancestor themselves"). The LCA may itself be a joint;
+  joints in disjoint trees (out-of-spec) yield `None`, as do dangling
+  ids and empty joint lists. Pairs with `Scene3D::descendants` for
+  one-subtree rig culling / re-rooting.
+
 ### Added — Round 401 (property-test sweep + Mesh weight-repair lift)
 
 - `Mesh::normalize_joint_weights()` — the per-primitive weight repair

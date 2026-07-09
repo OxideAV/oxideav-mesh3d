@@ -252,6 +252,98 @@ impl Scene3D {
         self.world_mesh_with(node, &self.world_node_transforms())
     }
 
+    /// The scene-graph root of a skin's joint hierarchy — the
+    /// explicit [`Skin::root_node`](crate::Skin::root_node) when the
+    /// source format stored one, otherwise the **lowest common
+    /// ancestor** of every joint in the bound skeleton, computed over
+    /// the first-parent spanning forest ([`Scene3D::parents`]).
+    ///
+    /// glTF 2.0 §3.7.3.2 requires each skin's joints to share a common
+    /// root (which may or may not be a joint itself); the optional
+    /// `skeleton` property names it, and "client implementations find
+    /// the lowest common ancestor themselves" is the documented
+    /// fallback this method implements. The result is the natural
+    /// pivot for the skinned geometry (re-rooting, retargeting, or
+    /// culling the whole rig as one subtree via
+    /// [`Scene3D::descendants`]).
+    ///
+    /// Returns `None` when:
+    ///
+    /// * `skin` is out of range, its skeleton dangles, or the skeleton
+    ///   has no joints;
+    /// * a joint `NodeId` is out of range;
+    /// * the joints do not share a root — they live in different trees
+    ///   of the forest (out-of-spec: §3.7.3.2 says they MUST share
+    ///   one).
+    ///
+    /// An explicit `root_node` is returned verbatim (only range-checked
+    /// against the node arena) — the format author's pivot choice wins
+    /// over the computed LCA, which per spec may legitimately be any
+    /// ancestor of (or exactly) the true common root.
+    pub fn skin_root(&self, skin: crate::scene::SkinId) -> Option<NodeId> {
+        let skin = self.skins.get(skin.0 as usize)?;
+        if let Some(r) = skin.root_node {
+            return ((r.0 as usize) < self.nodes.len()).then_some(r);
+        }
+        let skeleton = self.skeletons.get(skin.skeleton.0 as usize)?;
+        let joints = &skeleton.joints;
+        if joints.is_empty() {
+            return None;
+        }
+        let n = self.nodes.len();
+        let parents = self.parents();
+        // Depth of a node in the spanning forest (root = 0), None when
+        // out of range.
+        let depth = |mut node: NodeId| -> Option<usize> {
+            if (node.0 as usize) >= n {
+                return None;
+            }
+            let mut d = 0usize;
+            // ancestors() guard shape: a malformed residual cycle
+            // cannot loop more than n times.
+            while let Some(p) = parents.get(node.0 as usize).copied().flatten() {
+                node = p;
+                d += 1;
+                if d > n {
+                    break;
+                }
+            }
+            Some(d)
+        };
+        let mut lca = *joints.first()?;
+        let mut lca_depth = depth(lca)?;
+        for &joint in &joints[1..] {
+            let mut a = lca;
+            let mut da = lca_depth;
+            let mut b = joint;
+            let mut db = depth(joint)?;
+            // Classic two-pointer LCA: lift the deeper node to the
+            // shallower depth, then walk both up in lockstep.
+            while da > db {
+                a = parents[a.0 as usize]?;
+                da -= 1;
+            }
+            while db > da {
+                b = parents[b.0 as usize]?;
+                db -= 1;
+            }
+            while a != b {
+                match (parents[a.0 as usize], parents[b.0 as usize]) {
+                    (Some(pa), Some(pb)) => {
+                        a = pa;
+                        b = pb;
+                        da -= 1;
+                    }
+                    // Both hit distinct roots: no common ancestor.
+                    _ => return None,
+                }
+            }
+            lca = a;
+            lca_depth = da;
+        }
+        Some(lca)
+    }
+
     /// [`Scene3D::world_mesh`] against caller-supplied world matrices
     /// (indexed by `NodeId.0`, `None` = unreachable) — one
     /// [`Scene3D::world_node_transforms`] walk can serve every node,
