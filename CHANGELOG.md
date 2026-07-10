@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.3...v0.0.4) - 2026-07-10
+
+### Other
+
+- hygiene — neutralize application names in two module docs
+- Primitive::material_for_variant — the variants activation rule
+- KHR_materials_variants — scene variant roster + per-primitive mappings
+- docs — README + rustdoc refresh for the expanded MaterialExt surface
+- IOR-derived dielectric F0 helpers — dielectric_f0 + dielectric_f0_rgb
+- typed KHR_materials_diffuse_transmission — DiffuseTransmission on MaterialExt
+- typed KHR_materials_dispersion — MaterialExt::dispersion + rgb_iors helper
+- Material::texture_refs slot enumeration; validate() covers all extension texture slots
+- transform morph-target deltas in Primitive::transformed
+- skin common root — Scene3D::skin_root (explicit pivot or joint-set LCA)
+- README — document the rigging & animation evaluation subsystem
+- skinning/pose property suite + Mesh::normalize_joint_weights lift
+- animated instantiation — world_mesh_at + posed frame baking
+- animation pose evaluation — Pose + sample_pose + posed world transforms
+- satisfy clippy 1.97 question_mark lint in extrude ear-clip fallback
+- skinning data hygiene — weight repair + three validate() checks + IBM >= fix
+- scene instantiation — Scene3D::world_mesh (morph → skin/transform bake)
+- linear-blend skinning — joint matrices + vertex blend (skinning module)
+- add CI / crates.io / docs.rs / MIT-license badges
+- affine geometry baking + winding reversal (transform module)
+- scene composition with cross-arena id remapping (compose module)
+- n-gon polygon triangulation — Primitive::from_polygons
+- scene-graph navigation + transform baking (graph module)
+- discrete per-vertex curvature (curvature module)
+- primitive merge + material-grouped consolidation (combine module)
+- Laplacian + Taubin mesh fairing (smooth module)
+- six layered KHR material extensions on MaterialExt
+- lift quadric simplification to Mesh roll-ups
+- error-bounded quadric simplification variant
+- quadric-error-metric edge-collapse simplification
+- GPU vertex-buffer optimisation part 3 — spatial Z-order pool sort + README rollup
+- GPU vertex-buffer optimisation part 2 — vertex fetch linearisation
+- GPU vertex-buffer optimisation part 1 — post-transform cache analysis + greedy triangle reorder
+- Round 336: uniform-grid clustering decimation — Primitive::simplify_cluster
+- Round 329: typed ratified-KHR material extensions — Material::ext (MaterialExt + Specular)
+- Round 324: Loop subdivision refinement — Primitive::subdivide_loop
+- Round 316: Primitive::fill_holes — boundary-loop hole-filling cap pass
+- winding-consistency repair via face-dual flood-fill (orient_consistent)
+- refresh to current status, drop per-round changelog cruft
+- mesh3d r305: face-dual adjacency graph (triangle_adjacency)
+- mesh3d r299: combinatorial-topology summary — Euler characteristic, components, genus
+- Round 292: transform-aware inertia tensor — world_inertia_tensor
+- point the extrude watertightness link at EdgeManifoldReport::is_closed_manifold
+- Round 285: parametric extruded solids — Profile2D triangulation + closed-manifold extrusion
+- Round 275: boundary-loop chaining — Primitive::boundary_loops
+- add Primitive::boundary_edges extractor (r267)
+- Round 259: unit-density inertia tensor — Primitive / Mesh / Scene3D
+- Round 256: transform-aware volume-weighted centroid — Primitive / Mesh / Scene3D
+- drop release-plz.toml — use release-plz defaults across the workspace
+- Round 247: volume-weighted centroid / centre of mass — Primitive / Mesh / Scene3D
+- Round 234: transform-aware area-weighted world surface centroid
+- Round 227: area-weighted surface centroid — Primitive / Mesh / Scene3D
+- Round 220: InstanceBvh — scene-level BVH-of-instances on top of `world_node_bounds`
+- Round 216: Scene3D::world_node_bounds — per-instance world-space AABB snapshot
+- Round 210: Scene3D::intersect_ray + any_ray_intersection — world-space ray queries over reachable node-mesh instances
+- Round 204: Bvh ray-acceleration tree — median-split AABB hierarchy + stack traversal
+
 ### Added — Round 408 (KHR_materials_variants)
 
 - `Scene3D::material_variants` — the asset-level variant-name roster,
