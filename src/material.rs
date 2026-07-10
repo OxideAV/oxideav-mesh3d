@@ -609,6 +609,48 @@ impl Material {
         self.ext.dispersion.unwrap_or(0.0)
     }
 
+    /// Normal-incidence reflectance (F0) of the dielectric specular
+    /// lobe derived from the effective IOR, per the
+    /// `KHR_materials_ior` formula:
+    ///
+    /// ```text
+    /// dielectric_f0 = ((ior − 1) / (ior + 1))²
+    /// ```
+    ///
+    /// This is `0.04` at the default IOR of `1.5`. The legacy
+    /// `ior == 0` specular-glossiness sentinel evaluates to `1.0`
+    /// through the same formula — exactly the "full specular-colour
+    /// control" F0 that compatibility mode calls for (the extension
+    /// notes both `ior = 0` and `ior = ∞` yield `f0 = 1`).
+    pub fn dielectric_f0(&self) -> f32 {
+        let ior = self.effective_ior();
+        let r = (ior - 1.0) / (ior + 1.0);
+        r * r
+    }
+
+    /// Per-channel F0 of the dielectric specular lobe with
+    /// `KHR_materials_specular` folded in, per that extension's
+    /// combination rule with `KHR_materials_ior`:
+    ///
+    /// ```text
+    /// f0 = min(dielectric_f0 · specular_color, 1.0) · specular_factor
+    /// ```
+    ///
+    /// componentwise, where `dielectric_f0` comes from
+    /// [`dielectric_f0`](Self::dielectric_f0) and the specular values
+    /// are the extension's constant factors (an absent extension means
+    /// factor `1.0`, colour `[1, 1, 1]`). Texture modulation is the
+    /// renderer's business — only the constant factors are combined
+    /// here.
+    pub fn dielectric_f0_rgb(&self) -> [f32; 3] {
+        let f0 = self.dielectric_f0();
+        let (factor, color) = match &self.ext.specular {
+            Some(s) => (s.factor, s.color_factor),
+            None => (1.0, [1.0, 1.0, 1.0]),
+        };
+        color.map(|c| (f0 * c).min(1.0) * factor)
+    }
+
     /// Per-channel `[red, green, blue]` indices of refraction with
     /// `KHR_materials_dispersion` applied, following the extension's
     /// documented rendering guidance.

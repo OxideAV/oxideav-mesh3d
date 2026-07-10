@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 408 (IOR-derived F0 helpers)
+
+- `Material::dielectric_f0()` — normal-incidence dielectric
+  reflectance from the effective IOR per the `KHR_materials_ior`
+  formula `((ior − 1)/(ior + 1))²` (`0.04` at the default `1.5`; the
+  legacy `ior == 0` sentinel evaluates to `1.0` as the extension
+  documents).
+- `Material::dielectric_f0_rgb()` — per-channel F0 with the
+  `KHR_materials_specular` constant factors folded in per that
+  extension's combination rule:
+  `min(dielectric_f0 · specular_color, 1.0) · specular_factor`.
+
 ### Added — Round 408 (KHR_materials_diffuse_transmission)
 
 - `DiffuseTransmission` — typed `KHR_materials_diffuse_transmission`

@@ -149,6 +149,49 @@ fn ior_zero_special_case_preserved() {
 }
 
 #[test]
+fn dielectric_f0_from_effective_ior() {
+    // Default IOR 1.5 -> the canonical 0.04.
+    let mat = Material::new();
+    assert!((mat.dielectric_f0() - 0.04).abs() < 1e-6);
+    // Water-ish IOR 1.33 -> ((0.33)/(2.33))^2.
+    let water = Material::new().with_ior(1.33);
+    let expect = (0.33_f32 / 2.33).powi(2);
+    assert!((water.dielectric_f0() - expect).abs() < 1e-6);
+    // The legacy ior == 0 sentinel evaluates to full reflectance.
+    let legacy = Material::new().with_ior(0.0);
+    assert_eq!(legacy.dielectric_f0(), 1.0);
+}
+
+#[test]
+fn dielectric_f0_rgb_folds_in_specular_factors() {
+    // No specular extension: plain scalar F0 on all channels.
+    let mat = Material::new();
+    let [r, g, b] = mat.dielectric_f0_rgb();
+    assert!((r - 0.04).abs() < 1e-6);
+    assert_eq!(r, g);
+    assert_eq!(g, b);
+
+    // Specular colour + strength scale per channel.
+    let mat = Material::new().with_specular(Specular {
+        factor: 0.5,
+        color_factor: [1.0, 0.5, 0.0],
+        ..Default::default()
+    });
+    let [r, g, b] = mat.dielectric_f0_rgb();
+    assert!((r - 0.04 * 0.5).abs() < 1e-6);
+    assert!((g - 0.02 * 0.5).abs() < 1e-6);
+    assert_eq!(b, 0.0);
+
+    // The colour product clamps at 1.0 *before* the strength factor.
+    let mat = Material::new().with_specular(Specular {
+        factor: 0.5,
+        color_factor: [100.0, 100.0, 100.0],
+        ..Default::default()
+    });
+    assert_eq!(mat.dielectric_f0_rgb(), [0.5, 0.5, 0.5]);
+}
+
+#[test]
 fn dispersion_absent_by_default_with_zero_effective() {
     let mat = Material::new();
     assert!(mat.ext.dispersion.is_none());
