@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 408 (KHR_materials_dispersion)
+
+- `MaterialExt::dispersion` — typed `KHR_materials_dispersion`
+  surface: chromatic dispersion strength in the spec's
+  `20 / Abbe-number` parameterization, `Option`-shaped so absence
+  stays distinguishable from the `0.0` (no dispersion) default.
+- `Material::with_dispersion(f32)` builder and
+  `Material::effective_dispersion()` (extension value or the `0.0`
+  spec default).
+- `Material::rgb_iors()` — per-channel `[r, g, b]` indices of
+  refraction per the extension's rendering guidance: green carries the
+  effective IOR (`n_d`), red/green/blue are separated by
+  `(ior − 1) · 0.025 · dispersion`, red clamped to `>= 1.0`; the
+  legacy `ior == 0` sentinel passes through un-spread.
+
 ### Added — Round 408 (material texture-slot enumeration)
 
 - `Material::texture_refs()` — enumerate every occupied texture slot

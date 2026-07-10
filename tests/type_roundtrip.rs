@@ -149,6 +149,55 @@ fn ior_zero_special_case_preserved() {
 }
 
 #[test]
+fn dispersion_absent_by_default_with_zero_effective() {
+    let mat = Material::new();
+    assert!(mat.ext.dispersion.is_none());
+    assert_eq!(mat.effective_dispersion(), 0.0);
+    // No dispersion: all three channels carry the effective IOR.
+    assert_eq!(mat.rgb_iors(), [1.5, 1.5, 1.5]);
+}
+
+#[test]
+fn dispersion_builder_and_effective_value() {
+    // Polycarbonate from the extension's Abbe table: V_d = 32,
+    // dispersion = 20/32 = 0.625.
+    let mat = Material::new().with_dispersion(0.625);
+    assert_eq!(mat.ext.dispersion, Some(0.625));
+    assert!((mat.effective_dispersion() - 0.625).abs() < f32::EPSILON);
+}
+
+#[test]
+fn rgb_iors_spread_matches_spec_formula() {
+    // ior = 1.5, dispersion = 1.0 (V_d = 20):
+    // half_spread = (1.5 - 1) * 0.025 * 1.0 = 0.0125.
+    let mat = Material::new().with_ior(1.5).with_dispersion(1.0);
+    let [r, g, b] = mat.rgb_iors();
+    assert!((g - 1.5).abs() < 1e-6);
+    assert!((r - 1.4875).abs() < 1e-6);
+    assert!((b - 1.5125).abs() < 1e-6);
+    // Red always carries the smallest index.
+    assert!(r < g && g < b);
+}
+
+#[test]
+fn rgb_iors_red_channel_clamped_at_one() {
+    // Exaggerated dispersion on a near-1 IOR would push red below
+    // 1.0; the extension advises clamping in extreme cases.
+    let mat = Material::new().with_ior(1.01).with_dispersion(4000.0);
+    let [r, _, _] = mat.rgb_iors();
+    assert_eq!(r, 1.0);
+}
+
+#[test]
+fn rgb_iors_preserves_legacy_ior_zero_sentinel() {
+    // IOR == 0 selects the legacy specular-glossiness compatibility
+    // mode, which the dispersion extension is excluded from — the
+    // triple must come back un-spread, not clamped to 1.
+    let mat = Material::new().with_ior(0.0).with_dispersion(0.5);
+    assert_eq!(mat.rgb_iors(), [0.0, 0.0, 0.0]);
+}
+
+#[test]
 fn perspective_camera_defaults_have_infinite_far() {
     let c = Camera::perspective(std::f32::consts::FRAC_PI_3, 0.1);
     match c {

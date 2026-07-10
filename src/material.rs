@@ -70,6 +70,8 @@ pub enum AlphaMode {
 ///   1.5 used by the core model.
 /// - **specular** — strength + F0 colour of the dielectric specular
 ///   reflection, each a factor optionally modulated by a texture.
+/// - **dispersion** — chromatic dispersion strength (`20/Abbe-number`)
+///   spreading the per-wavelength IOR through a transmissive volume.
 /// - **unlit** — a flag selecting a constant-shaded (lighting-
 ///   independent) model that uses only the base-colour term.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -118,6 +120,17 @@ pub struct MaterialExt {
     /// brushed-metal / hair highlights. `None` ⇒ isotropic
     /// (strength `0.0`).
     pub anisotropy: Option<Anisotropy>,
+    /// Strength of chromatic dispersion through a transmissive volume
+    /// (`KHR_materials_dispersion`), stored as `20 / Abbe-number` so
+    /// `1.0` corresponds to Abbe number 20 (about the lowest for
+    /// normal materials — realistic values fall in `[0, 1]`, larger is
+    /// legal exaggeration). Spec default when absent: `0.0`, meaning
+    /// no dispersion. Builds on [`Volume`](MaterialExt::volume) /
+    /// [`Transmission`](MaterialExt::transmission) — it spreads the
+    /// per-wavelength IOR around [`ior`](MaterialExt::ior). Mutually
+    /// exclusive with [`unlit`](Self::unlit) per the extension's
+    /// exclusions.
+    pub dispersion: Option<f32>,
 }
 
 /// `KHR_materials_clearcoat` parameters: a thin, glossy isotropic
@@ -513,6 +526,13 @@ impl Material {
         self
     }
 
+    /// Builder-style `KHR_materials_dispersion` setter. The value is
+    /// the spec's `20 / Abbe-number` parameterization.
+    pub fn with_dispersion(mut self, dispersion: f32) -> Self {
+        self.ext.dispersion = Some(dispersion);
+        self
+    }
+
     /// The effective emissive strength the renderer should apply —
     /// the extension value when present, else the spec default `1.0`.
     pub fn effective_emissive_strength(&self) -> f32 {
@@ -523,6 +543,46 @@ impl Material {
     /// present, else the spec default `1.5`.
     pub fn effective_ior(&self) -> f32 {
         self.ext.ior.unwrap_or(1.5)
+    }
+
+    /// The effective dispersion strength — the extension value when
+    /// present, else the spec default `0.0` (no dispersion).
+    pub fn effective_dispersion(&self) -> f32 {
+        self.ext.dispersion.unwrap_or(0.0)
+    }
+
+    /// Per-channel `[red, green, blue]` indices of refraction with
+    /// `KHR_materials_dispersion` applied, following the extension's
+    /// documented rendering guidance.
+    ///
+    /// The material's IOR (`KHR_materials_ior` value or the `1.5`
+    /// default) is taken as the central wavelength's index `n_d` and
+    /// assigned to the green channel. The extension defines the stored
+    /// `dispersion` as `20 / V_d` (Abbe number `V_d`), and the full
+    /// blue-to-red IOR spread as `n_F − n_C = (n_d − 1) / V_d`; half
+    /// that spread — `(ior − 1) · 0.025 · dispersion` — separates
+    /// green from each of red and blue:
+    ///
+    /// ```text
+    /// half_spread = (ior − 1) · 0.025 · dispersion
+    /// [ior − half_spread, ior, ior + half_spread]
+    /// ```
+    ///
+    /// The red channel always gets the smallest value; it is clamped
+    /// to `>= 1.0` as the extension advises for extreme cases. With
+    /// dispersion absent or `0.0` all three channels equal
+    /// [`effective_ior`](Self::effective_ior). An IOR below `1.0` —
+    /// notably the legacy `0.0` specular-glossiness sentinel, a mode
+    /// the dispersion extension is excluded from — is returned
+    /// un-spread on all three channels.
+    pub fn rgb_iors(&self) -> [f32; 3] {
+        let ior = self.effective_ior();
+        let dispersion = self.effective_dispersion();
+        if dispersion == 0.0 || ior < 1.0 {
+            return [ior; 3];
+        }
+        let half_spread = (ior - 1.0) * 0.025 * dispersion;
+        [(ior - half_spread).max(1.0), ior, ior + half_spread]
     }
 
     /// Every texture slot this material currently references, as
