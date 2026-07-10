@@ -11,9 +11,11 @@
 //!   `Triangles` primitive, re-basing the second's indices onto the end
 //!   of the first's vertex pool.
 //! - [`Mesh::merge_primitives_by_material`] groups a mesh's primitives
-//!   by their [`material`](Primitive::material) reference and fuses each
-//!   group, collapsing an N-primitive mesh into at most one primitive
-//!   per distinct material.
+//!   by their [`material`](Primitive::material) reference (plus their
+//!   [`variant_mappings`](Primitive::variant_mappings), which are part
+//!   of the draw state) and fuses each group, collapsing an
+//!   N-primitive mesh into at most one primitive per distinct draw
+//!   state.
 //!
 //! # Attribute reconciliation
 //!
@@ -42,11 +44,13 @@
 //! The merged `material` is the first input's when both agree (or one
 //! is `None`); a genuine material conflict keeps the *first* input's
 //! reference (the grouping helpers never create such a conflict because
-//! they pre-partition by material). `extras` are taken from the first
-//! input. Neither entry point mutates its receiver.
+//! they pre-partition by material). `extras` and
+//! `variant_mappings` are taken from the first input — the grouping
+//! helpers also partition on the variant mappings, so a fused group is
+//! always mapping-homogeneous. Neither entry point mutates its
+//! receiver.
 
 use crate::mesh::{Indices, Mesh, Primitive, Topology};
-use crate::scene::MaterialId;
 
 /// Default fill rows for absent optional attributes (see the module
 /// table).
@@ -95,6 +99,7 @@ fn merge_all(rest: &[&Primitive], base: &Primitive) -> Primitive {
 
     let mut out = Primitive::new(Topology::Triangles);
     out.material = base.material;
+    out.variant_mappings = base.variant_mappings.clone();
     out.extras = base.extras.clone();
     if want_normals {
         out.normals = Some(Vec::new());
@@ -190,34 +195,41 @@ fn append_or_fill<T: Copy>(dst: &mut Vec<T>, src: &[T], vcount: usize, fill: T) 
 }
 
 impl Mesh {
-    /// Fuse this mesh's primitives so each distinct material is drawn by
-    /// at most one primitive.
+    /// Fuse this mesh's primitives so each distinct draw state —
+    /// material reference plus `KHR_materials_variants` mappings — is
+    /// drawn by at most one primitive.
     ///
     /// Primitives are partitioned by their
     /// [`material`](Primitive::material) reference (with `None` — the
-    /// unmaterialled group — kept as its own bucket), and each bucket
-    /// is concatenated via the same union-with-fill rule as
-    /// [`Primitive::merge`]. A material referenced by a single primitive
-    /// is still rewritten into an indexed `Triangles` primitive (its
-    /// `to_triangle_list` form) so the output is uniform.
+    /// unmaterialled group — kept as its own bucket) **and** their
+    /// [`variant_mappings`](Primitive::variant_mappings) (primitives
+    /// whose materials diverge under an active variant must keep
+    /// separate draw calls), and each bucket is concatenated via the
+    /// same union-with-fill rule as [`Primitive::merge`]. A material
+    /// referenced by a single primitive is still rewritten into an
+    /// indexed `Triangles` primitive (its `to_triangle_list` form) so
+    /// the output is uniform.
     ///
-    /// Group order follows first appearance of each material in
+    /// Group order follows first appearance of each draw state in
     /// [`Mesh::primitives`], so the result is deterministic. The mesh's
     /// `name` and `weights` are preserved; morph targets are dropped
     /// from the fused primitives (consistent with `merge`).
     /// Does not mutate `self`. A mesh with no primitives returns a clone
     /// with an empty primitive list.
     pub fn merge_primitives_by_material(&self) -> Mesh {
-        let mut order: Vec<Option<MaterialId>> = Vec::new();
         let mut groups: Vec<Vec<&Primitive>> = Vec::new();
 
         for p in &self.primitives {
-            match order.iter().position(|m| *m == p.material) {
+            // Draw-state key: the base material AND the variant
+            // mappings. Two primitives with the same base material
+            // but different `KHR_materials_variants` mappings render
+            // differently once a variant is active, so they must not
+            // fuse.
+            match groups.iter().position(|g| {
+                g[0].material == p.material && g[0].variant_mappings == p.variant_mappings
+            }) {
                 Some(idx) => groups[idx].push(p),
-                None => {
-                    order.push(p.material);
-                    groups.push(vec![p]);
-                }
+                None => groups.push(vec![p]),
             }
         }
 

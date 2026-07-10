@@ -15,7 +15,7 @@
 //! and leave geometry untouched — the orientation metadata is
 //! authoritative, no implicit rotation is applied.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     animation::Animation,
@@ -52,6 +52,10 @@ id_newtype!(
 id_newtype!(
     /// Index into [`Scene3D::textures`].
     TextureId
+);
+id_newtype!(
+    /// Index into [`Scene3D::material_variants`].
+    MaterialVariantId
 );
 id_newtype!(
     /// Index into [`Scene3D::skeletons`].
@@ -665,6 +669,13 @@ pub struct Scene3D {
     pub roots: Vec<NodeId>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<Material>,
+    /// `KHR_materials_variants` variant names, addressed by
+    /// [`MaterialVariantId`]. The asset-level roster of switchable
+    /// material configurations (e.g. product colourways); primitives
+    /// opt in via
+    /// [`Primitive::variant_mappings`](crate::Primitive::variant_mappings).
+    /// Empty means the scene has no material variants.
+    pub material_variants: Vec<String>,
     pub textures: Vec<Texture>,
     pub skeletons: Vec<Skeleton>,
     pub skins: Vec<Skin>,
@@ -690,6 +701,7 @@ impl Scene3D {
             roots: Vec::new(),
             meshes: Vec::new(),
             materials: Vec::new(),
+            material_variants: Vec::new(),
             textures: Vec::new(),
             skeletons: Vec::new(),
             skins: Vec::new(),
@@ -724,6 +736,27 @@ impl Scene3D {
         let id = MaterialId(self.materials.len() as u32);
         self.materials.push(material);
         id
+    }
+
+    /// Push a `KHR_materials_variants` variant name and return its id.
+    /// No name dedup is performed — use
+    /// [`find_or_add_material_variant`](Self::find_or_add_material_variant)
+    /// when merging rosters.
+    pub fn add_material_variant(&mut self, name: impl Into<String>) -> MaterialVariantId {
+        let id = MaterialVariantId(self.material_variants.len() as u32);
+        self.material_variants.push(name.into());
+        id
+    }
+
+    /// Id of the variant named `name`, adding it to the roster if
+    /// absent. This is the name-unification primitive used by
+    /// [`append`](Self::append) so two scenes sharing variant names
+    /// (e.g. "Red" in both) end up with one merged roster entry.
+    pub fn find_or_add_material_variant(&mut self, name: &str) -> MaterialVariantId {
+        match self.material_variants.iter().position(|v| v == name) {
+            Some(i) => MaterialVariantId(i as u32),
+            None => self.add_material_variant(name),
+        }
     }
 
     /// Push a texture and return its id.
@@ -2315,6 +2348,35 @@ impl Scene3D {
                         });
                     }
                 }
+                // KHR_materials_variants mappings: material + variant
+                // ids must be live, and across the whole mappings list
+                // each variant may be claimed by at most one mapping.
+                let n_variants = self.material_variants.len();
+                let mut seen_variants: HashSet<u32> = HashSet::new();
+                for (ki, mapping) in prim.variant_mappings.iter().enumerate() {
+                    if (mapping.material.0 as usize) >= n_materials {
+                        errors.push(ValidationError::DanglingId {
+                            location: here(&format!("variant_mappings[{ki}].material")),
+                            id: mapping.material.0,
+                            arena: "materials",
+                        });
+                    }
+                    for (vi, v) in mapping.variants.iter().enumerate() {
+                        if (v.0 as usize) >= n_variants {
+                            errors.push(ValidationError::DanglingId {
+                                location: here(&format!("variant_mappings[{ki}].variants[{vi}]")),
+                                id: v.0,
+                                arena: "material_variants",
+                            });
+                        }
+                        if !seen_variants.insert(v.0) {
+                            errors.push(ValidationError::DuplicateVariantMapping {
+                                location: here(&format!("variant_mappings[{ki}].variants[{vi}]")),
+                                variant: v.0,
+                            });
+                        }
+                    }
+                }
                 for (ti, tgt) in prim.targets.iter().enumerate() {
                     let tgt_loc = |field: &str| here(&format!("targets[{ti}].{field}"));
                     if let Some(v) = &tgt.position {
@@ -2726,6 +2788,13 @@ pub enum ValidationError {
     /// the linear blend). Only the first offending component per
     /// primitive is reported.
     JointWeightInvalid { location: String, value: f32 },
+    /// A `KHR_materials_variants` variant index appears in more than
+    /// one mapping of the same primitive's
+    /// [`variant_mappings`](crate::Primitive::variant_mappings) list.
+    /// The extension requires each variant index to be used at most
+    /// once across the whole list, so the active-variant lookup is
+    /// unambiguous.
+    DuplicateVariantMapping { location: String, variant: u32 },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -2818,6 +2887,12 @@ impl std::fmt::Display for ValidationError {
             ),
             Self::JointWeightInvalid { location, value } => {
                 write!(f, "{location}: joint weight {value} is negative or non-finite")
+            }
+            Self::DuplicateVariantMapping { location, variant } => {
+                write!(
+                    f,
+                    "{location}: material variant {variant} is claimed by more than one mapping"
+                )
             }
         }
     }

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 408 (KHR_materials_variants)
+
+- `Scene3D::material_variants` — the asset-level variant-name roster,
+  addressed by the new `MaterialVariantId`, with
+  `add_material_variant` / `find_or_add_material_variant` helpers.
+- `Primitive::variant_mappings` + `VariantMapping { material,
+  variants }` — per-primitive material overrides keyed by the active
+  variant.
+- `Scene3D::validate()` checks mapping material ids, variant ids, and
+  the extension's at-most-once variant-use rule (new
+  `ValidationError::DuplicateVariantMapping`).
+- `Scene3D::append` merges variant rosters **by name** (a variant is
+  an asset-level identity, so "Red" + "Red" unify) and rewrites
+  relocated mapping indices through the name map; `AppendOffsets` is
+  unchanged by design.
+- `Mesh::merge_primitives_by_material` now partitions on (material,
+  variant_mappings) — primitives whose materials diverge under an
+  active variant no longer fuse; `Primitive::merge` carries the first
+  input's mappings.
+
 ### Changed — Round 408 (docs)
 
 - README + rustdoc refreshed for the expanded `MaterialExt` surface;

@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::scene::{BoundingBox, MaterialId};
+use crate::scene::{BoundingBox, MaterialId, MaterialVariantId};
 
 /// How the vertex buffer is interpreted as primitives.
 ///
@@ -100,6 +100,28 @@ impl MorphTarget {
     }
 }
 
+/// One `KHR_materials_variants` mapping entry on a [`Primitive`]:
+/// when any of `variants` is the scene's active variant, `material`
+/// replaces the primitive's base
+/// [`material`](Primitive::material) reference.
+///
+/// The variant indices point into
+/// [`Scene3D::material_variants`](crate::Scene3D::material_variants).
+/// Across one primitive's whole
+/// [`variant_mappings`](Primitive::variant_mappings) list, each
+/// variant index must appear **at most once** (the spec's uniqueness
+/// rule — [`Scene3D::validate`](crate::Scene3D::validate) reports
+/// violations). When no mapping names the active variant (or no
+/// variant is active), the base `material` applies.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VariantMapping {
+    /// Material applied while one of [`variants`](Self::variants) is
+    /// active.
+    pub material: MaterialId,
+    /// The variants this mapping responds to.
+    pub variants: Vec<MaterialVariantId>,
+}
+
 /// One drawable submesh.
 ///
 /// `positions` is mandatory; every other attribute is optional and,
@@ -134,6 +156,11 @@ pub struct Primitive {
     pub weights: Option<Vec<[f32; 4]>>,
     pub indices: Option<Indices>,
     pub material: Option<MaterialId>,
+    /// `KHR_materials_variants` mappings: material overrides keyed by
+    /// the scene's active variant (see [`VariantMapping`]). Empty
+    /// means the primitive has no variant-dependent materials and
+    /// always draws with [`material`](Self::material).
+    pub variant_mappings: Vec<VariantMapping>,
     /// Morph-target delta sets per glTF 2.0 §3.7.2.2. Empty vec means
     /// no morph targets on this primitive. Each entry is one named
     /// pose (e.g. "smile", "blink") whose blend weight is sourced
@@ -160,6 +187,7 @@ impl Primitive {
             weights: None,
             indices: None,
             material: None,
+            variant_mappings: Vec::new(),
             targets: Vec::new(),
             extras: HashMap::new(),
         }
@@ -583,6 +611,7 @@ impl Primitive {
             weights,
             indices: Some(indices),
             material: self.material,
+            variant_mappings: self.variant_mappings.clone(),
             targets,
             extras: self.extras.clone(),
         }
@@ -4048,6 +4077,7 @@ impl Primitive {
             weights,
             indices: Some(indices),
             material: self.material,
+            variant_mappings: self.variant_mappings.clone(),
             targets,
             extras: self.extras.clone(),
         }

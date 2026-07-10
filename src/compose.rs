@@ -73,7 +73,19 @@ impl Scene3D {
     /// before appending if they differ — see the [module
     /// docs](crate::compose)). Does not mutate `other`.
     ///
-    /// Cost is linear in the size of `other`'s arenas.
+    /// **Material variants** are the one arena merged by *name*
+    /// rather than by offset: a variant name is an asset-level
+    /// identity, so "Red" declared in both scenes unifies into a
+    /// single [`material_variants`](Scene3D::material_variants) entry
+    /// (via [`find_or_add_material_variant`](Scene3D::find_or_add_material_variant))
+    /// and every relocated
+    /// [`variant_mappings`](crate::Primitive::variant_mappings) index
+    /// is rewritten through the name map. That's why
+    /// [`AppendOffsets`] carries no variant offset — there is no
+    /// contiguous relocated block.
+    ///
+    /// Cost is linear in the size of `other`'s arenas (× the merged
+    /// variant-roster length for the name unification).
     pub fn append(&mut self, other: &Scene3D) -> AppendOffsets {
         let off = AppendOffsets {
             nodes: self.nodes.len() as u32,
@@ -113,12 +125,38 @@ impl Scene3D {
             self.nodes.push(n);
         }
 
-        // --- Meshes: primitive material refs -----------------------
+        // --- Material variants: unify rosters by NAME --------------
+        // Variant names are asset-level identities ("Red", "Winter"),
+        // not positional indices: appending two scenes that both
+        // declare "Red" must yield ONE "Red" entry that a single
+        // active-variant switch drives across every primitive. So
+        // instead of a flat arena offset, each of `other`'s variant
+        // indices maps through find-or-add on its name.
+        let variant_map: Vec<u32> = other
+            .material_variants
+            .iter()
+            .map(|name| self.find_or_add_material_variant(name).0)
+            .collect();
+        // Ids that were already dangling in `other` (validate()
+        // territory) are rebased past the merged roster so they stay
+        // dangling instead of aliasing a live variant.
+        let dangling_base = self.material_variants.len() as u32;
+
+        // --- Meshes: primitive material + variant-mapping refs -----
         for mesh in &other.meshes {
             let mut m = mesh.clone();
             for prim in &mut m.primitives {
                 if let Some(mat) = &mut prim.material {
                     mat.0 += off.materials;
+                }
+                for mapping in &mut prim.variant_mappings {
+                    mapping.material.0 += off.materials;
+                    for v in &mut mapping.variants {
+                        match variant_map.get(v.0 as usize) {
+                            Some(&mapped) => v.0 = mapped,
+                            None => v.0 = v.0.saturating_add(dangling_base),
+                        }
+                    }
                 }
             }
             self.meshes.push(m);

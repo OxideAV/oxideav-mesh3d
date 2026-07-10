@@ -115,15 +115,15 @@ pub use material::{
 };
 pub use mesh::{
     EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, OrientationReport,
-    Primitive, Topology, TopologySummary,
+    Primitive, Topology, TopologySummary, VariantMapping,
 };
 pub use optimize::{simulate_cache, CacheStats, DEFAULT_CACHE_SIZE};
 pub use pose::Pose;
 pub use ray::{Ray, RayHit};
 pub use registry::Mesh3DRegistry;
 pub use scene::{
-    Axis, BoundingBox, CameraId, LightId, MaterialId, MeshId, Node, NodeId, Scene3D, SceneRayHit,
-    SkeletonId, SkinId, TextureId, Transform, Unit, ValidationError,
+    Axis, BoundingBox, CameraId, LightId, MaterialId, MaterialVariantId, MeshId, Node, NodeId,
+    Scene3D, SceneRayHit, SkeletonId, SkinId, TextureId, Transform, Unit, ValidationError,
 };
 pub use skin::{Skeleton, Skin};
 pub use smooth::SmoothOptions;

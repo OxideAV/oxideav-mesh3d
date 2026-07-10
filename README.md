@@ -58,6 +58,11 @@ coverage lives in the workspace umbrella's `oxideav-tests`.
   `Material::texture_refs()` enumerates every occupied texture slot
   (core + all extensions) for resource walkers, and is what
   `Scene3D::validate` checks texture ids through.
+- Material variants (`KHR_materials_variants`) —
+  `Scene3D::material_variants` name roster + per-primitive
+  `VariantMapping` overrides. `append` unifies rosters by name,
+  `merge_primitives_by_material` treats mappings as draw state, and
+  `validate` enforces live ids plus the at-most-once variant rule.
 - `Texture` / `ImageData { Embedded, Source(Arc<dyn AssetSource>),
   External }` / `Sampler`. `AssetSource` lets format crates pass a
   lazy reader through the model without materialising bytes, with
