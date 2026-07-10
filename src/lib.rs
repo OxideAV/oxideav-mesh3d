@@ -20,8 +20,9 @@
 //! * Materials are metallic-roughness PBR with `base_color`,
 //!   `metallic`, `roughness`, `normal`, `occlusion`, and `emissive`
 //!   slots (see [`Material`]), refined by a typed [`MaterialExt`]
-//!   surface for the ratified KHR dielectric extensions (emissive
-//!   strength, IOR, specular, unlit).
+//!   surface for the KHR material extensions (emissive strength, IOR,
+//!   dispersion, specular, unlit, clearcoat, sheen, transmission,
+//!   diffuse transmission, volume, iridescence, anisotropy).
 //!
 //! Round 1 ships the type model + the trait surface only. No format
 //! support — that lands in dedicated sibling crates.

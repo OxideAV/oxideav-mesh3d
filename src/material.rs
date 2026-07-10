@@ -48,8 +48,9 @@ pub enum AlphaMode {
     Blend,
 }
 
-/// Typed surface for the ratified KHR material extensions that refine
-/// the core metallic-roughness dielectric BRDF.
+/// Typed surface for the KHR material extensions that refine the core
+/// metallic-roughness dielectric BRDF (all ratified, except
+/// diffuse transmission which is a release candidate).
 ///
 /// Every field is `Option`/flag-shaped so the *absence* of an
 /// extension is distinguishable from its spec default — a format crate
@@ -471,8 +472,9 @@ pub struct Material {
     pub emissive_texture: Option<TextureRef>,
     pub alpha_mode: AlphaMode,
     pub double_sided: bool,
-    /// Typed ratified-KHR extension refinements (emissive strength,
-    /// IOR, specular, unlit). All absent / `false` by default, meaning
+    /// Typed KHR extension refinements (emissive strength, IOR,
+    /// dispersion, specular, unlit, and the layered extensions —
+    /// see [`MaterialExt`]). All absent / `false` by default, meaning
     /// "plain core metallic-roughness".
     pub ext: MaterialExt,
     /// Round-trip side-channel for non-glTF data (FBX/USD/OBJ

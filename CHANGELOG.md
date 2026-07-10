@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — Round 408 (docs)
+
+- README + rustdoc refreshed for the expanded `MaterialExt` surface;
+  noted that the typed extension surface now covers every
+  UsdPreviewSurface input (specular workflow, clearcoat + clearcoat
+  roughness, IOR, opacity threshold), so format importers keep
+  `Material::extras` for genuinely exotic parameters only.
+
 ### Added — Round 408 (IOR-derived F0 helpers)
 
 - `Material::dielectric_f0()` — normal-incidence dielectric

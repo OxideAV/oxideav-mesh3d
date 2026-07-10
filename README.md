@@ -40,15 +40,24 @@ coverage lives in the workspace umbrella's `oxideav-tests`.
   joints + weights, and `MorphTarget` delta buffers.
 - `Material` — full glTF 2.0 metallic-roughness PBR slots plus
   `AlphaMode` and `double_sided`, refined by a typed `MaterialExt`
-  surface for the ratified KHR extensions: emissive strength, index of
-  refraction, `Specular` (strength + F0-colour factors and textures),
-  the unlit flag, and six layered refinements — `Clearcoat`, `Sheen`,
-  `Transmission`, `Volume`, `Iridescence`, `Anisotropy`. Each field is
-  `Option`/flag-shaped so an absent extension stays distinguishable
-  from its spec default; `effective_ior()` /
-  `effective_emissive_strength()` /
+  surface for the KHR material extensions: emissive strength, index of
+  refraction, dispersion, `Specular` (strength + F0-colour factors and
+  textures), the unlit flag, and seven layered refinements —
+  `Clearcoat`, `Sheen`, `Transmission`, `DiffuseTransmission`,
+  `Volume`, `Iridescence`, `Anisotropy`. Each field is `Option`/flag-
+  shaped so an absent extension stays distinguishable from its spec
+  default; `effective_ior()` / `effective_emissive_strength()` /
+  `effective_dispersion()` /
   `Volume::effective_attenuation_distance()` substitute the default on
-  demand.
+  demand, and `dielectric_f0()` / `dielectric_f0_rgb()` / `rgb_iors()`
+  evaluate the spec-documented IOR/specular/dispersion combination
+  formulas. This surface covers every input of USD's
+  UsdPreviewSurface (specular workflow, clearcoat + clearcoat
+  roughness, IOR, opacity threshold via `AlphaMode::Mask`) so format
+  importers keep `extras` for genuinely exotic parameters only.
+  `Material::texture_refs()` enumerates every occupied texture slot
+  (core + all extensions) for resource walkers, and is what
+  `Scene3D::validate` checks texture ids through.
 - `Texture` / `ImageData { Embedded, Source(Arc<dyn AssetSource>),
   External }` / `Sampler`. `AssetSource` lets format crates pass a
   lazy reader through the model without materialising bytes, with
