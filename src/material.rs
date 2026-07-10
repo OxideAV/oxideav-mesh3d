@@ -4,8 +4,8 @@
 //! reference; the runtime sample is `factor * sample(texture)` per
 //! channel (RGB componentwise). This is the lowest-common-denominator
 //! PBR shape that every modern engine supports — glTF, USD's
-//! UsdPreviewSurface, FBX's PBR exporter chain, and Blender Principled
-//! BSDF all map cleanly into it.
+//! UsdPreviewSurface, FBX's PBR exporter chain, and principled-BSDF
+//! authoring shaders all map cleanly into it.
 //!
 //! Non-PBR formats (legacy OBJ MTL Phong, FBX Lambert) collapse into
 //! the same shape with metallic = 0, roughness from `Ns`, and the

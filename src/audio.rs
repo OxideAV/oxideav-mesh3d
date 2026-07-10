@@ -3,7 +3,7 @@
 //! Audio is a first-class part of every modern 3D scene format that
 //! the type model targets: USD/USDZ carries `UsdMediaSpatialAudio`
 //! prims, glTF gained the `KHR_audio_emitter` extension, FBX has
-//! `FbxAudioClip`, and modern Blender exports follow suit. Round 1
+//! `FbxAudioClip`, and modern exporter toolchains follow suit. Round 1
 //! deliberately punted on this — round 2 lands the typed surface
 //! before the v0.1 publish locks the API in.
 //!
