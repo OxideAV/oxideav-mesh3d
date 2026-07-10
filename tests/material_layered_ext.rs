@@ -5,8 +5,8 @@
 //! struct's `Default` reproduces the extension's normative defaults.
 
 use oxideav_mesh3d::{
-    Anisotropy, Clearcoat, Iridescence, Material, Sheen, TextureId, TextureRef, Transmission,
-    Volume,
+    Anisotropy, Clearcoat, DiffuseTransmission, Iridescence, Material, Sheen, TextureId,
+    TextureRef, Transmission, Volume,
 };
 
 #[test]
@@ -15,6 +15,7 @@ fn all_layered_extensions_absent_by_default() {
     assert!(mat.ext.clearcoat.is_none());
     assert!(mat.ext.sheen.is_none());
     assert!(mat.ext.transmission.is_none());
+    assert!(mat.ext.diffuse_transmission.is_none());
     assert!(mat.ext.volume.is_none());
     assert!(mat.ext.iridescence.is_none());
     assert!(mat.ext.anisotropy.is_none());
@@ -86,6 +87,53 @@ fn transmission_defaults_to_opaque() {
     let got = mat.ext.transmission.unwrap();
     assert!((got.factor - 0.9).abs() < f32::EPSILON);
     assert_eq!(got.factor_texture.unwrap().texture.0, 7);
+}
+
+#[test]
+fn diffuse_transmission_defaults_match_spec() {
+    let dt = DiffuseTransmission::default();
+    assert_eq!(dt.factor, 0.0);
+    assert_eq!(dt.color_factor, [1.0, 1.0, 1.0]);
+    assert!(dt.factor_texture.is_none());
+    assert!(dt.color_texture.is_none());
+}
+
+#[test]
+fn diffuse_transmission_carries_factors_and_textures() {
+    let dt = DiffuseTransmission {
+        factor: 0.25,
+        factor_texture: Some(TextureRef::new(TextureId(12))),
+        color_factor: [1.0, 0.9, 0.85],
+        color_texture: Some(TextureRef::new(TextureId(13))),
+    };
+    let mat = Material::new().with_diffuse_transmission(dt);
+    let got = mat
+        .ext
+        .diffuse_transmission
+        .expect("diffuse transmission set");
+    assert!((got.factor - 0.25).abs() < f32::EPSILON);
+    assert_eq!(got.color_factor, [1.0, 0.9, 0.85]);
+    assert_eq!(got.factor_texture.unwrap().texture.0, 12);
+    assert_eq!(got.color_texture.unwrap().texture.0, 13);
+}
+
+/// The two transmission models stay independent fields: specular
+/// (microfacet) transmission and diffuse transmission can coexist on
+/// one material — the spec resolves the overlap at render time
+/// (transmission overrides), not in the data model.
+#[test]
+fn diffuse_and_specular_transmission_coexist() {
+    let mat = Material::new()
+        .with_transmission(Transmission {
+            factor: 0.5,
+            ..Default::default()
+        })
+        .with_diffuse_transmission(DiffuseTransmission {
+            factor: 1.0,
+            ..Default::default()
+        });
+    assert!(mat.ext.transmission.is_some());
+    assert!(mat.ext.diffuse_transmission.is_some());
 }
 
 #[test]
@@ -207,6 +255,11 @@ fn fully_textured_material() -> Material {
         texture: Some(TextureRef::new(TextureId(16))),
         ..Default::default()
     });
+    mat.ext.diffuse_transmission = Some(DiffuseTransmission {
+        factor_texture: Some(TextureRef::new(TextureId(17))),
+        color_texture: Some(TextureRef::new(TextureId(18))),
+        ..Default::default()
+    });
     mat
 }
 
@@ -214,7 +267,7 @@ fn fully_textured_material() -> Material {
 /// every extension map). Bump when a new slot lands — the drift-guard
 /// tests below then force `texture_refs` and `map_texture_ids` to
 /// both cover it.
-const TOTAL_TEXTURE_SLOTS: usize = 17;
+const TOTAL_TEXTURE_SLOTS: usize = 19;
 
 #[test]
 fn texture_refs_enumerates_every_slot_with_unique_names() {

@@ -131,6 +131,14 @@ pub struct MaterialExt {
     /// exclusive with [`unlit`](Self::unlit) per the extension's
     /// exclusions.
     pub dispersion: Option<f32>,
+    /// `KHR_materials_diffuse_transmission` — diffuse (Lambertian)
+    /// transmission of light through an infinitely thin surface
+    /// (leaves, paper, lampshades). `None` ⇒ no diffuse transmission
+    /// (factor `0.0`). Mutually exclusive with
+    /// [`unlit`](Self::unlit) per the extension's exclusions; when
+    /// combined with [`transmission`](Self::transmission), the
+    /// (specular) transmission effect overrides this one.
+    pub diffuse_transmission: Option<DiffuseTransmission>,
 }
 
 /// `KHR_materials_clearcoat` parameters: a thin, glossy isotropic
@@ -355,6 +363,50 @@ impl Default for Anisotropy {
     }
 }
 
+/// `KHR_materials_diffuse_transmission` parameters: the fraction of
+/// light that penetrates an infinitely thin surface (is not specularly
+/// reflected) and is transmitted **diffusely** out the far side —
+/// leaves, paper, lampshades. Distinct from [`Transmission`], whose
+/// BTDF is specular (microfacet); the diffuse BTDF here has no
+/// roughness control, so surface roughness only shapes the reflective
+/// lobe. Energy given to diffuse transmission is taken from the
+/// diffuse reflection.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DiffuseTransmission {
+    /// Fraction of the non-specularly-reflected light that is
+    /// diffusely transmitted through the surface
+    /// (`diffuseTransmissionFactor`). Default `0.0` (no diffuse
+    /// transmission); `1.0` transmits all penetrating light.
+    /// Multiplied by the alpha channel of
+    /// [`factor_texture`](Self::factor_texture).
+    pub factor: f32,
+    /// Diffuse-transmission strength texture
+    /// (`diffuseTransmissionTexture`), sampled from the alpha (`A`)
+    /// channel, linear.
+    pub factor_texture: Option<TextureRef>,
+    /// Colour modulating the transmitted light
+    /// (`diffuseTransmissionColorFactor`), linear RGB. Default
+    /// `[1, 1, 1]` (untinted); the surface's constant attenuation is
+    /// `1 − colour` per channel. Multiplied by the `RGB` of
+    /// [`color_texture`](Self::color_texture).
+    pub color_factor: [f32; 3],
+    /// Transmission-colour texture
+    /// (`diffuseTransmissionColorTexture`); the `RGB` channels
+    /// (sRGB-encoded) multiply [`color_factor`](Self::color_factor).
+    pub color_texture: Option<TextureRef>,
+}
+
+impl Default for DiffuseTransmission {
+    fn default() -> Self {
+        Self {
+            factor: 0.0,
+            factor_texture: None,
+            color_factor: [1.0, 1.0, 1.0],
+            color_texture: None,
+        }
+    }
+}
+
 /// `KHR_materials_specular` parameters: the strength and F0 colour of
 /// the dielectric specular reflection. Each value is a constant factor
 /// optionally multiplied by a texture sample.
@@ -533,6 +585,12 @@ impl Material {
         self
     }
 
+    /// Builder-style `KHR_materials_diffuse_transmission` setter.
+    pub fn with_diffuse_transmission(mut self, diffuse_transmission: DiffuseTransmission) -> Self {
+        self.ext.diffuse_transmission = Some(diffuse_transmission);
+        self
+    }
+
     /// The effective emissive strength the renderer should apply —
     /// the extension value when present, else the spec default `1.0`.
     pub fn effective_emissive_strength(&self) -> f32 {
@@ -634,6 +692,13 @@ impl Material {
         if let Some(t) = &self.ext.transmission {
             push("ext.transmission.factor_texture", &t.factor_texture);
         }
+        if let Some(dt) = &self.ext.diffuse_transmission {
+            push(
+                "ext.diffuse_transmission.factor_texture",
+                &dt.factor_texture,
+            );
+            push("ext.diffuse_transmission.color_texture", &dt.color_texture);
+        }
         if let Some(v) = &self.ext.volume {
             push("ext.volume.thickness_texture", &v.thickness_texture);
         }
@@ -687,6 +752,10 @@ impl Material {
         }
         if let Some(t) = &mut self.ext.transmission {
             remap(&mut t.factor_texture);
+        }
+        if let Some(dt) = &mut self.ext.diffuse_transmission {
+            remap(&mut dt.factor_texture);
+            remap(&mut dt.color_texture);
         }
         if let Some(v) = &mut self.ext.volume {
             remap(&mut v.thickness_texture);

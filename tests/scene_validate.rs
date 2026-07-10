@@ -264,6 +264,11 @@ fn dangling_layered_extension_textures_reported() {
         texture: Some(TextureRef::new(TextureId(29))),
         ..Default::default()
     });
+    m.ext.diffuse_transmission = Some(oxideav_mesh3d::DiffuseTransmission {
+        factor_texture: Some(TextureRef::new(TextureId(30))),
+        color_texture: Some(TextureRef::new(TextureId(31))),
+        ..Default::default()
+    });
     let mut s = Scene3D::new();
     s.add_material(m);
     let errs = s.validate().unwrap_err();
@@ -278,6 +283,8 @@ fn dangling_layered_extension_textures_reported() {
         (27, "materials[0].ext.iridescence.factor_texture"),
         (28, "materials[0].ext.iridescence.thickness_texture"),
         (29, "materials[0].ext.anisotropy.texture"),
+        (30, "materials[0].ext.diffuse_transmission.factor_texture"),
+        (31, "materials[0].ext.diffuse_transmission.color_texture"),
     ] {
         assert!(
             errs.iter().any(|e| matches!(

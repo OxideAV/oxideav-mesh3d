@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 408 (KHR_materials_diffuse_transmission)
+
+- `DiffuseTransmission` — typed `KHR_materials_diffuse_transmission`
+  surface on `MaterialExt::diffuse_transmission`: transmission factor
+  (+ `A`-channel texture) and transmission colour (+ sRGB `RGB`
+  texture), defaults `0.0` / `[1, 1, 1]` per the extension. `None`
+  keeps "extension absent" distinguishable from the defaults.
+- `Material::with_diffuse_transmission(...)` builder; the two new
+  texture slots participate in `Material::map_texture_ids`,
+  `Material::texture_refs`, and therefore `Scene3D::validate` and
+  `Scene3D::append` re-indexing.
+
 ### Added — Round 408 (KHR_materials_dispersion)
 
 - `MaterialExt::dispersion` — typed `KHR_materials_dispersion`
