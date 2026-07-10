@@ -525,6 +525,68 @@ impl Material {
         self.ext.ior.unwrap_or(1.5)
     }
 
+    /// Every texture slot this material currently references, as
+    /// `(slot_path, TextureRef)` pairs.
+    ///
+    /// Enumerates the core metallic-roughness maps (`base_color`,
+    /// `metallic_roughness`, `normal`, `occlusion`, `emissive`) *and*
+    /// every extension map on [`MaterialExt`] that is present. The
+    /// slot path is a stable dotted identifier matching the field
+    /// names (e.g. `"base_color_texture"`,
+    /// `"ext.clearcoat.normal_texture"`), suitable for diagnostics.
+    ///
+    /// This is the read-side companion of
+    /// [`map_texture_ids`](Self::map_texture_ids):
+    /// [`Scene3D::validate`](crate::Scene3D::validate) walks this list
+    /// to check every referenced [`TextureId`](crate::TextureId) is
+    /// live, so a texture slot added to the model in the future cannot
+    /// silently escape validation, and generic consumers (resource
+    /// collectors, dependency walkers) never have to enumerate the
+    /// slots by hand.
+    pub fn texture_refs(&self) -> Vec<(&'static str, TextureRef)> {
+        let mut out = Vec::new();
+        let mut push = |name: &'static str, r: &Option<TextureRef>| {
+            if let Some(tr) = r {
+                out.push((name, *tr));
+            }
+        };
+        push("base_color_texture", &self.base_color_texture);
+        push(
+            "metallic_roughness_texture",
+            &self.metallic_roughness_texture,
+        );
+        push("normal_texture", &self.normal_texture);
+        push("occlusion_texture", &self.occlusion_texture);
+        push("emissive_texture", &self.emissive_texture);
+        if let Some(s) = &self.ext.specular {
+            push("ext.specular.factor_texture", &s.factor_texture);
+            push("ext.specular.color_texture", &s.color_texture);
+        }
+        if let Some(c) = &self.ext.clearcoat {
+            push("ext.clearcoat.factor_texture", &c.factor_texture);
+            push("ext.clearcoat.roughness_texture", &c.roughness_texture);
+            push("ext.clearcoat.normal_texture", &c.normal_texture);
+        }
+        if let Some(sh) = &self.ext.sheen {
+            push("ext.sheen.color_texture", &sh.color_texture);
+            push("ext.sheen.roughness_texture", &sh.roughness_texture);
+        }
+        if let Some(t) = &self.ext.transmission {
+            push("ext.transmission.factor_texture", &t.factor_texture);
+        }
+        if let Some(v) = &self.ext.volume {
+            push("ext.volume.thickness_texture", &v.thickness_texture);
+        }
+        if let Some(ir) = &self.ext.iridescence {
+            push("ext.iridescence.factor_texture", &ir.factor_texture);
+            push("ext.iridescence.thickness_texture", &ir.thickness_texture);
+        }
+        if let Some(an) = &self.ext.anisotropy {
+            push("ext.anisotropy.texture", &an.texture);
+        }
+        out
+    }
+
     /// Rewrite **every** [`TextureId`](crate::TextureId) this material
     /// references through `f`, in place.
     ///

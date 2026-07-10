@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 408 (material texture-slot enumeration)
+
+- `Material::texture_refs()` — enumerate every occupied texture slot
+  as `(slot_path, TextureRef)` pairs: the five core metallic-roughness
+  maps plus every extension map on `MaterialExt`. The read-side
+  companion of `Material::map_texture_ids` for resource collectors and
+  dependency walkers.
+
+### Fixed — Round 408
+
+- `Scene3D::validate()` now dangling-checks the texture slots of the
+  six layered material extensions (clearcoat, sheen, transmission,
+  volume, iridescence, anisotropy); previously only the core maps and
+  the specular extension were covered. Validation walks
+  `Material::texture_refs()`, so future slots are covered by
+  construction.
+
 ### Added — Round 401 (linear-blend skinning: joint matrices + vertex blend)
 
 - New `skinning` module implementing glTF 2.0 §3.7.3 linear-blend

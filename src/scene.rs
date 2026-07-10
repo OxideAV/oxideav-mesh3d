@@ -2355,28 +2355,19 @@ impl Scene3D {
             }
         }
 
-        // Materials → textures.
+        // Materials → textures. `Material::texture_refs` enumerates
+        // every slot — the five core maps plus every extension map on
+        // `MaterialExt` — so a newly added slot is validated the day
+        // it exists rather than needing a matching edit here.
         for (mi, mat) in self.materials.iter().enumerate() {
-            let slot = |field: &str| format!("materials[{mi}].{field}");
-            let mut check = |field: &str, t: Option<crate::material::TextureRef>| {
-                if let Some(r) = t {
-                    if (r.texture.0 as usize) >= n_textures {
-                        errors.push(ValidationError::DanglingId {
-                            location: slot(field),
-                            id: r.texture.0,
-                            arena: "textures",
-                        });
-                    }
+            for (field, r) in mat.texture_refs() {
+                if (r.texture.0 as usize) >= n_textures {
+                    errors.push(ValidationError::DanglingId {
+                        location: format!("materials[{mi}].{field}"),
+                        id: r.texture.0,
+                        arena: "textures",
+                    });
                 }
-            };
-            check("base_color_texture", mat.base_color_texture);
-            check("metallic_roughness_texture", mat.metallic_roughness_texture);
-            check("normal_texture", mat.normal_texture);
-            check("occlusion_texture", mat.occlusion_texture);
-            check("emissive_texture", mat.emissive_texture);
-            if let Some(spec) = &mat.ext.specular {
-                check("ext.specular.factor_texture", spec.factor_texture);
-                check("ext.specular.color_texture", spec.color_texture);
             }
         }
 

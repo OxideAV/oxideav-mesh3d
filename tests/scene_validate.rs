@@ -229,6 +229,87 @@ fn dangling_specular_textures_reported() {
     )));
 }
 
+/// The layered extension maps (clearcoat / sheen / transmission /
+/// volume / iridescence / anisotropy) must be dangling-checked too —
+/// validation walks `Material::texture_refs`, which enumerates every
+/// slot the model exposes.
+#[test]
+fn dangling_layered_extension_textures_reported() {
+    let mut m = Material::new();
+    m.ext.clearcoat = Some(oxideav_mesh3d::Clearcoat {
+        factor_texture: Some(TextureRef::new(TextureId(20))),
+        roughness_texture: Some(TextureRef::new(TextureId(21))),
+        normal_texture: Some(TextureRef::new(TextureId(22))),
+        ..Default::default()
+    });
+    m.ext.sheen = Some(oxideav_mesh3d::Sheen {
+        color_texture: Some(TextureRef::new(TextureId(23))),
+        roughness_texture: Some(TextureRef::new(TextureId(24))),
+        ..Default::default()
+    });
+    m.ext.transmission = Some(oxideav_mesh3d::Transmission {
+        factor_texture: Some(TextureRef::new(TextureId(25))),
+        ..Default::default()
+    });
+    m.ext.volume = Some(oxideav_mesh3d::Volume {
+        thickness_texture: Some(TextureRef::new(TextureId(26))),
+        ..Default::default()
+    });
+    m.ext.iridescence = Some(oxideav_mesh3d::Iridescence {
+        factor_texture: Some(TextureRef::new(TextureId(27))),
+        thickness_texture: Some(TextureRef::new(TextureId(28))),
+        ..Default::default()
+    });
+    m.ext.anisotropy = Some(oxideav_mesh3d::Anisotropy {
+        texture: Some(TextureRef::new(TextureId(29))),
+        ..Default::default()
+    });
+    let mut s = Scene3D::new();
+    s.add_material(m);
+    let errs = s.validate().unwrap_err();
+    for (id, slot) in [
+        (20, "materials[0].ext.clearcoat.factor_texture"),
+        (21, "materials[0].ext.clearcoat.roughness_texture"),
+        (22, "materials[0].ext.clearcoat.normal_texture"),
+        (23, "materials[0].ext.sheen.color_texture"),
+        (24, "materials[0].ext.sheen.roughness_texture"),
+        (25, "materials[0].ext.transmission.factor_texture"),
+        (26, "materials[0].ext.volume.thickness_texture"),
+        (27, "materials[0].ext.iridescence.factor_texture"),
+        (28, "materials[0].ext.iridescence.thickness_texture"),
+        (29, "materials[0].ext.anisotropy.texture"),
+    ] {
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ValidationError::DanglingId { id: got, arena: "textures", location }
+                    if *got == id && location == slot
+            )),
+            "missing dangling report for {slot}"
+        );
+    }
+}
+
+/// Extension texture slots that reference **live** textures must not
+/// be flagged.
+#[test]
+fn live_layered_extension_textures_validate_clean() {
+    let mut s = Scene3D::new();
+    let tid = s.add_texture(oxideav_mesh3d::Texture::from_uri("lacquer.png"));
+    let mut m = Material::new();
+    m.ext.clearcoat = Some(oxideav_mesh3d::Clearcoat {
+        factor_texture: Some(TextureRef::new(tid)),
+        normal_texture: Some(TextureRef::new(tid)),
+        ..Default::default()
+    });
+    m.ext.anisotropy = Some(oxideav_mesh3d::Anisotropy {
+        texture: Some(TextureRef::new(tid)),
+        ..Default::default()
+    });
+    s.add_material(m);
+    assert!(s.validate().is_ok());
+}
+
 #[test]
 fn dangling_material_emissive_texture_reported() {
     let mut m = Material::new();

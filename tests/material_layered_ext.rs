@@ -163,6 +163,99 @@ fn anisotropy_carries_strength_rotation_texture() {
     assert_eq!(got.texture.unwrap().texture.0, 11);
 }
 
+/// A material with **every** texture slot occupied by a distinct id —
+/// the five core maps + every extension map — used to prove the two
+/// slot enumerations ([`Material::texture_refs`] and
+/// [`Material::map_texture_ids`]) cannot drift apart.
+fn fully_textured_material() -> Material {
+    let mut mat = Material::new();
+    mat.base_color_texture = Some(TextureRef::new(TextureId(0)));
+    mat.metallic_roughness_texture = Some(TextureRef::new(TextureId(1)));
+    mat.normal_texture = Some(TextureRef::new(TextureId(2)));
+    mat.occlusion_texture = Some(TextureRef::new(TextureId(3)));
+    mat.emissive_texture = Some(TextureRef::new(TextureId(4)));
+    mat.ext.specular = Some(oxideav_mesh3d::Specular {
+        factor_texture: Some(TextureRef::new(TextureId(5))),
+        color_texture: Some(TextureRef::new(TextureId(6))),
+        ..Default::default()
+    });
+    mat.ext.clearcoat = Some(Clearcoat {
+        factor_texture: Some(TextureRef::new(TextureId(7))),
+        roughness_texture: Some(TextureRef::new(TextureId(8))),
+        normal_texture: Some(TextureRef::new(TextureId(9))),
+        ..Default::default()
+    });
+    mat.ext.sheen = Some(Sheen {
+        color_texture: Some(TextureRef::new(TextureId(10))),
+        roughness_texture: Some(TextureRef::new(TextureId(11))),
+        ..Default::default()
+    });
+    mat.ext.transmission = Some(Transmission {
+        factor_texture: Some(TextureRef::new(TextureId(12))),
+        ..Default::default()
+    });
+    mat.ext.volume = Some(Volume {
+        thickness_texture: Some(TextureRef::new(TextureId(13))),
+        ..Default::default()
+    });
+    mat.ext.iridescence = Some(Iridescence {
+        factor_texture: Some(TextureRef::new(TextureId(14))),
+        thickness_texture: Some(TextureRef::new(TextureId(15))),
+        ..Default::default()
+    });
+    mat.ext.anisotropy = Some(Anisotropy {
+        texture: Some(TextureRef::new(TextureId(16))),
+        ..Default::default()
+    });
+    mat
+}
+
+/// Total number of texture slots the material model exposes (core +
+/// every extension map). Bump when a new slot lands — the drift-guard
+/// tests below then force `texture_refs` and `map_texture_ids` to
+/// both cover it.
+const TOTAL_TEXTURE_SLOTS: usize = 17;
+
+#[test]
+fn texture_refs_enumerates_every_slot_with_unique_names() {
+    let mat = fully_textured_material();
+    let refs = mat.texture_refs();
+    assert_eq!(refs.len(), TOTAL_TEXTURE_SLOTS);
+    // Slot names are unique diagnostics keys.
+    let mut names: Vec<&str> = refs.iter().map(|(n, _)| *n).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), TOTAL_TEXTURE_SLOTS);
+    // Every distinct id 0..N shows up exactly once.
+    let mut ids: Vec<u32> = refs.iter().map(|(_, r)| r.texture.0).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, (0..TOTAL_TEXTURE_SLOTS as u32).collect::<Vec<_>>());
+}
+
+#[test]
+fn texture_refs_empty_on_untextured_material() {
+    assert!(Material::new().texture_refs().is_empty());
+}
+
+#[test]
+fn map_texture_ids_and_texture_refs_cover_the_same_slots() {
+    // Shift every id by +100 through `map_texture_ids`, then read the
+    // slots back through `texture_refs`: if either enumeration misses
+    // a slot the other covers, an id stays unshifted (or a slot count
+    // disagrees) and this fails.
+    let mut mat = fully_textured_material();
+    mat.map_texture_ids(|t| TextureId(t.0 + 100));
+    let refs = mat.texture_refs();
+    assert_eq!(refs.len(), TOTAL_TEXTURE_SLOTS);
+    for (name, r) in refs {
+        assert!(
+            (100..100 + TOTAL_TEXTURE_SLOTS as u32).contains(&r.texture.0),
+            "slot {name} escaped map_texture_ids: id {}",
+            r.texture.0
+        );
+    }
+}
+
 #[test]
 fn extensions_compose_independently_on_one_material() {
     let mat = Material::new()
