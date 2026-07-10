@@ -193,6 +193,66 @@ fn merge_by_material_keeps_variant_divergent_primitives_apart() {
 }
 
 #[test]
+fn material_for_variant_activation_rule() {
+    let base = MaterialId(0);
+    let alt_a = MaterialId(1);
+    let alt_b = MaterialId(2);
+    let red = MaterialVariantId(0);
+    let blue = MaterialVariantId(1);
+    let green = MaterialVariantId(2);
+
+    let mut p = one_triangle_primitive();
+    p.material = Some(base);
+    p.variant_mappings = vec![
+        VariantMapping {
+            material: alt_a,
+            variants: vec![red, green],
+        },
+        VariantMapping {
+            material: alt_b,
+            variants: vec![blue],
+        },
+    ];
+
+    // Active variant claimed by a mapping: that mapping's material.
+    assert_eq!(p.material_for_variant(Some(red)), Some(alt_a));
+    assert_eq!(p.material_for_variant(Some(green)), Some(alt_a));
+    assert_eq!(p.material_for_variant(Some(blue)), Some(alt_b));
+    // No active variant, or an unclaimed one: base material.
+    assert_eq!(p.material_for_variant(None), Some(base));
+    assert_eq!(
+        p.material_for_variant(Some(MaterialVariantId(9))),
+        Some(base)
+    );
+
+    // Unmaterialled primitive with no mappings: stays None.
+    let bare = one_triangle_primitive();
+    assert_eq!(bare.material_for_variant(Some(red)), None);
+    assert_eq!(bare.material_for_variant(None), None);
+}
+
+#[test]
+fn material_for_variant_first_mapping_wins_on_duplicates() {
+    // Out-of-spec: two mappings both claim variant 0. Resolution must
+    // be deterministic — first listing wins.
+    let mut p = one_triangle_primitive();
+    p.variant_mappings = vec![
+        VariantMapping {
+            material: MaterialId(1),
+            variants: vec![MaterialVariantId(0)],
+        },
+        VariantMapping {
+            material: MaterialId(2),
+            variants: vec![MaterialVariantId(0)],
+        },
+    ];
+    assert_eq!(
+        p.material_for_variant(Some(MaterialVariantId(0))),
+        Some(MaterialId(1))
+    );
+}
+
+#[test]
 fn transformed_preserves_variant_mappings() {
     let mut p = one_triangle_primitive();
     p.material = Some(MaterialId(0));

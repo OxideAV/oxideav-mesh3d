@@ -193,6 +193,28 @@ impl Primitive {
         }
     }
 
+    /// The material to draw this primitive with while `active` is the
+    /// scene's active `KHR_materials_variants` variant.
+    ///
+    /// Implements the extension's activation rule: when a mapping in
+    /// [`variant_mappings`](Self::variant_mappings) lists the active
+    /// variant, that mapping's material applies; when no mapping
+    /// names it — or there is no active variant (`None`) — the
+    /// primitive falls back to its base
+    /// [`material`](Self::material). On out-of-spec duplicate claims
+    /// (which [`Scene3D::validate`](crate::Scene3D::validate)
+    /// reports), the first listing mapping wins deterministically.
+    pub fn material_for_variant(&self, active: Option<MaterialVariantId>) -> Option<MaterialId> {
+        if let Some(v) = active {
+            for mapping in &self.variant_mappings {
+                if mapping.variants.contains(&v) {
+                    return Some(mapping.material);
+                }
+            }
+        }
+        self.material
+    }
+
     /// Number of triangles produced by tessellating this primitive.
     ///
     /// The count uses the index buffer length when present, or

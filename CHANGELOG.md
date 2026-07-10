@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variant_mappings) — primitives whose materials diverge under an
   active variant no longer fuse; `Primitive::merge` carries the first
   input's mappings.
+- `Primitive::material_for_variant(active)` — the extension's
+  activation rule: the mapping listing the active variant wins, else
+  the base material; `None` active always resolves to the base
+  material; first mapping wins deterministically on out-of-spec
+  duplicates.
 
 ### Changed — Round 408 (docs)
 
