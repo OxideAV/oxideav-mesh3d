@@ -212,8 +212,12 @@ impl Scene3D {
     /// Render-ready world-space geometry for one node — the full glTF
     /// 2.0 §3.7.4 instantiation pipeline in one call:
     ///
-    /// 1. **Morph.** When the mesh has morph targets and default
-    ///    weights ([`Mesh::weights`](crate::Mesh::weights)), each
+    /// 1. **Morph.** When the mesh has morph targets and static
+    ///    weights — the node's [`Node::weights`](crate::Node::weights)
+    ///    override when non-empty, else the mesh's default
+    ///    [`Mesh::weights`](crate::Mesh::weights) (the static half of
+    ///    §3.7.4's *animation > node > mesh* precedence chain, as
+    ///    resolved by [`Scene3D::effective_morph_weights`]) — each
     ///    primitive's base attributes are blended via
     ///    [`Primitive::apply_morph_weights`]. An empty weight list
     ///    instantiates the non-morphed state (§3.7.4: all weights
@@ -244,12 +248,34 @@ impl Scene3D {
     ///
     /// The rest pose is used; to instantiate under an animated pose,
     /// sample the animation into posed world matrices and call
-    /// [`Scene3D::world_mesh_with`]. This models the *mesh*'s default
-    /// morph weights only — a node-level morph-weight override (glTF
-    /// `node.weights`) is not currently representable on
-    /// [`Node`](crate::Node).
+    /// [`Scene3D::world_mesh_with`], or use [`Scene3D::world_mesh_at`]
+    /// — the animated route additionally lets a `MorphWeights` channel
+    /// beat the static (node > mesh) weights this method resolves.
     pub fn world_mesh(&self, node: NodeId) -> Option<Mesh> {
         self.world_mesh_with(node, &self.world_node_transforms())
+    }
+
+    /// The static morph-weight vector instantiation of `node` blends
+    /// with — the *node > mesh* half of glTF 2.0 §3.7.4's weight
+    /// precedence chain resolved in one place: the node's own
+    /// [`Node::weights`](crate::Node::weights) override when
+    /// non-empty, otherwise the instantiated mesh's default
+    /// [`Mesh::weights`](crate::Mesh::weights). An animated
+    /// `MorphWeights` channel beats both at runtime
+    /// ([`Scene3D::world_mesh_at`] applies that final rung).
+    ///
+    /// Returns `None` when `node` is out of range, carries no mesh, or
+    /// the mesh id dangles. The returned slice may be empty (no
+    /// override anywhere): §3.7.4 reads that as "all weights zero",
+    /// i.e. the non-morphed base mesh.
+    pub fn effective_morph_weights(&self, node: NodeId) -> Option<&[f32]> {
+        let n = self.node(node)?;
+        let mesh = self.meshes.get(n.mesh?.0 as usize)?;
+        Some(if n.weights.is_empty() {
+            &mesh.weights
+        } else {
+            &n.weights
+        })
     }
 
     /// The scene-graph root of a skin's joint hierarchy — the
@@ -353,9 +379,12 @@ impl Scene3D {
     }
 
     /// Shared instantiation body. `weight_override` replaces the
-    /// mesh's default morph weights when supplied — the runtime /
-    /// node-level override slot of glTF §3.7.4's weight-precedence
-    /// chain, used by [`Scene3D::world_mesh_at`].
+    /// static weights when supplied — the animated (topmost) rung of
+    /// glTF §3.7.4's weight-precedence chain, used by
+    /// [`Scene3D::world_mesh_at`]. Without it, the static rungs apply:
+    /// the node's [`Node::weights`](crate::Node::weights) override
+    /// when non-empty, else the mesh's defaults (exactly
+    /// [`Scene3D::effective_morph_weights`]).
     pub(crate) fn world_mesh_impl(
         &self,
         node: NodeId,
@@ -365,7 +394,11 @@ impl Scene3D {
         let n = self.node(node)?;
         let mesh = self.meshes.get(n.mesh?.0 as usize)?;
         let world = (*worlds.get(node.0 as usize)?)?;
-        let weights: &[f32] = weight_override.unwrap_or(&mesh.weights);
+        let weights: &[f32] = match weight_override {
+            Some(w) => w,
+            None if !n.weights.is_empty() => &n.weights,
+            None => &mesh.weights,
+        };
         let palette = if n.skin.is_some() {
             // A skinned node whose palette can't be built is an error,
             // not a fall-through to rigid instancing.

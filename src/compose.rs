@@ -20,7 +20,8 @@
 //! Every internal reference is shifted by its arena's offset:
 //!
 //! - **Node** → child `NodeId`s, `mesh`, `camera`, `light`, `skin`,
-//!   `audio_emitter`.
+//!   `audio_emitter` (the id-free `weights` override travels
+//!   verbatim).
 //! - **Mesh.primitive** → `material`.
 //! - **Material** → every texture slot (core + all extensions), via
 //!   [`Material::map_texture_ids`].

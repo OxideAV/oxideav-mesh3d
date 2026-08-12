@@ -68,8 +68,10 @@ impl Indices {
 /// attribute name (`POSITION`, `NORMAL`, `TANGENT`) to a delta accessor
 /// of the same length as the base attribute. The deltas are added to
 /// the base values, scaled by the per-target weight (sourced from
-/// either [`Mesh::weights`] or, at runtime, the
-/// [`crate::AnimationProperty::MorphWeights`] channel).
+/// [`Mesh::weights`], a per-instance
+/// [`Node::weights`](crate::Node::weights) override, or — at runtime —
+/// the [`crate::AnimationProperty::MorphWeights`] channel, in
+/// increasing precedence).
 ///
 /// We surface those three named slots as typed `Option`s so callers
 /// don't have to round-trip through string keys. Other attribute names
@@ -164,8 +166,10 @@ pub struct Primitive {
     /// Morph-target delta sets per glTF 2.0 §3.7.2.2. Empty vec means
     /// no morph targets on this primitive. Each entry is one named
     /// pose (e.g. "smile", "blink") whose blend weight is sourced
-    /// from [`Mesh::weights`] (default) or an animation channel
-    /// (runtime). The number of targets across every primitive in the
+    /// from [`Mesh::weights`] (default), a per-instance
+    /// [`Node::weights`](crate::Node::weights) override, or an
+    /// animation channel (runtime) — in increasing precedence. The
+    /// number of targets across every primitive in the
     /// parent [`Mesh`] should match — the spec mandates that the
     /// `i`th target on each primitive shares one weight slot.
     pub targets: Vec<MorphTarget>,
@@ -4957,10 +4961,15 @@ pub struct Mesh {
     /// Default morph-target blend weights (glTF 2.0 §3.7.2.2
     /// `mesh.weights`). When non-empty, `weights[i]` is the static
     /// blend factor for the `i`th [`MorphTarget`] on every primitive
-    /// in [`Mesh::primitives`]. An animation channel of property
-    /// [`crate::AnimationProperty::MorphWeights`] overrides this
-    /// vector at runtime. Empty vec means no static weights — the
-    /// runtime falls back to zero (i.e. base mesh).
+    /// in [`Mesh::primitives`]. A node instantiating this mesh can
+    /// override the vector per instance via
+    /// [`Node::weights`](crate::Node::weights) (glTF `node.weights`),
+    /// and an animation channel of property
+    /// [`crate::AnimationProperty::MorphWeights`] overrides both at
+    /// runtime — §3.7.4's *animation > node > mesh* precedence chain
+    /// ([`Scene3D::effective_morph_weights`](crate::Scene3D::effective_morph_weights)
+    /// resolves the static half). Empty vec means no static weights —
+    /// the runtime falls back to zero (i.e. base mesh).
     pub weights: Vec<f32>,
 }
 

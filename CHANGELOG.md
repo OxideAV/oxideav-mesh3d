@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Node-level morph-weight overrides** — `Node::weights` (glTF 2.0
+  `node.weights`), closing the round-401 documented limitation
+  ("node-level morph-weight overrides are not representable on `Node`
+  yet"): a non-empty vector replaces the instantiated mesh's default
+  `Mesh::weights` for that instance, so two nodes sharing one mesh
+  hold different static blend states. `Node::with_weights` builder;
+  the field is id-free, so `Scene3D::append` carries it verbatim.
+- `Scene3D::effective_morph_weights(node)` — the static (node > mesh)
+  half of §3.7.4's *animation > node > mesh* weight-precedence chain
+  resolved in one place; `None` when the node → mesh chain doesn't
+  resolve.
+- Instantiation honours the whole precedence chain: `world_mesh` /
+  `world_mesh_with` blend the node override when present (else the
+  mesh defaults); `world_mesh_at`'s sampled `MorphWeights` channel
+  still beats both.
+- `Scene3D::validate` checks the override's glTF requirements (new
+  variants `NodeMorphWeightCountMismatch` — length must match every
+  primitive's morph-target count — and `NodeMorphWeightsWithoutMesh`
+  — `node.weights` requires `node.mesh`; the count check defers to
+  the existing `DanglingId` on an unresolvable mesh).
+
+### Changed
+
+- `Scene3D::posed` bakes sampled morph weights onto each driven
+  **node** (`Node::weights`) instead of writing the shared
+  `Mesh::weights`, removing the documented last-wins clobber when two
+  nodes with divergent animated weight vectors share one mesh —
+  `posed(a, t).world_mesh(n)` now equals `world_mesh_at(a, t, n)` for
+  every node. A vector targeting a node without a live mesh is
+  dropped (nothing to blend; `validate` territory).
+
 ## [0.0.4](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.3...v0.0.4) - 2026-07-10
 
 ### Other

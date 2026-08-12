@@ -33,7 +33,12 @@ coverage lives in the workspace umbrella's `oxideav-tests`.
   `AppendOffsets` recording where each source arena landed.
   `Material::map_texture_ids` remaps every texture slot (core + all
   extensions) in one call.
-- `Node` + `Transform { Matrix, Trs }` with matrix↔TRS decompose.
+- `Node` + `Transform { Matrix, Trs }` with matrix↔TRS decompose,
+  plus a per-instance morph-weight override (`Node::weights`, glTF
+  `node.weights`) — two nodes sharing one mesh can hold different
+  static blend states; `Scene3D::effective_morph_weights` resolves
+  the static (node > mesh) half of the weight-precedence chain and
+  `validate` enforces the count/mesh-presence rules.
 - `Mesh` / `Primitive` / `Topology` (Triangles, TriangleStrip,
   TriangleFan, Lines, LineStrip, LineLoop, Points) / `Indices`
   (U16 or U32). Multi-channel UVs, vertex colours, optional skinning
@@ -272,12 +277,14 @@ glTF 2.0 §3.7.3 (skins), §3.6 + Appendix C (animation), §3.7.4
   documented fallback); pairs with `descendants` for one-subtree rig
   culling.
 - **Instantiation** — `Scene3D::world_mesh(node)` bakes the §3.7.4
-  pipeline (default morph weights folded in, then skin-or-transform)
-  into one static world-space mesh; `world_mesh_at(anim, t, node)` is
-  the animated frame (animated morph weights beat static defaults);
+  pipeline (static morph weights folded in — the node's override,
+  else the mesh's defaults — then skin-or-transform) into one static
+  world-space mesh; `world_mesh_at(anim, t, node)` is the animated
+  frame (the full *animation > node > mesh* weight precedence);
   `Scene3D::posed(anim, t)` bakes a whole frame into a scene copy for
-  exporter flattening. Broken palettes yield `None`, never a silent
-  rigid fallback.
+  exporter flattening, writing sampled morph weights onto each driven
+  *node* so shared meshes keep divergent blend states. Broken
+  palettes yield `None`, never a silent rigid fallback.
 
 ## Sketch
 

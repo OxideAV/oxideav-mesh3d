@@ -571,6 +571,25 @@ pub struct Node {
     pub camera: Option<CameraId>,
     pub light: Option<LightId>,
     pub skin: Option<SkinId>,
+    /// Node-level morph-weight override (glTF 2.0 `node.weights`).
+    ///
+    /// When non-empty, this vector replaces the instantiated mesh's
+    /// default [`Mesh::weights`](crate::Mesh::weights) for **this
+    /// instance** — two nodes sharing one mesh can hold different
+    /// static blend states. Empty means "no override": the mesh's own
+    /// defaults apply. An animated
+    /// [`MorphWeights`](crate::AnimationProperty::MorphWeights)
+    /// channel targeting the node beats both — the §3.7.4 weight
+    /// precedence chain is *animation > node > mesh*.
+    /// [`Scene3D::effective_morph_weights`] resolves the static
+    /// (node > mesh) half of that chain;
+    /// [`Scene3D::world_mesh`](crate::Scene3D::world_mesh) and its
+    /// animated variants honour the whole chain.
+    ///
+    /// When non-empty, the node must carry a mesh and the length must
+    /// match the morph-target count of every primitive of that mesh
+    /// ([`Scene3D::validate`] reports both).
+    pub weights: Vec<f32>,
     /// Optional audio emitter attached to this node. The emitter's
     /// position + orientation come from this node's world transform
     /// when [`AudioEmitter::spatial`](crate::AudioEmitter::spatial)
@@ -591,6 +610,7 @@ impl Node {
             camera: None,
             light: None,
             skin: None,
+            weights: Vec::new(),
             audio_emitter: None,
             extras: HashMap::new(),
         }
@@ -611,6 +631,15 @@ impl Node {
     /// Builder-style mesh attachment.
     pub fn with_mesh(mut self, mesh: MeshId) -> Self {
         self.mesh = Some(mesh);
+        self
+    }
+
+    /// Builder-style node-level morph-weight override (glTF 2.0
+    /// `node.weights` — see [`Node::weights`]). The vector length
+    /// should match the morph-target count of every primitive of the
+    /// mesh this node instantiates.
+    pub fn with_weights(mut self, weights: impl Into<Vec<f32>>) -> Self {
+        self.weights = weights.into();
         self
     }
 
@@ -2157,6 +2186,10 @@ impl Scene3D {
     /// * `Mesh::weights.len()` matches the morph-target count of
     ///   every contained primitive (or every primitive has zero
     ///   targets and `weights` is empty).
+    /// * A non-empty `Node::weights` override sits on a node that
+    ///   instantiates a mesh, and its length matches the morph-target
+    ///   count of every primitive of that mesh (glTF 2.0 `node.weights`
+    ///   count/`mesh`-presence requirements).
     /// * Every `Skeleton::inverse_bind_matrices` entry has its fourth
     ///   row set to `[0, 0, 0, 1]` (glTF 2.0 §5.28.1 affine-IBM
     ///   constraint), and at least as many entries as joints exist
@@ -2248,6 +2281,37 @@ impl Scene3D {
                         id: e.0,
                         arena: "audio_emitters",
                     });
+                }
+            }
+            // Node-level morph-weight overrides (glTF 2.0
+            // `node.weights`): only meaningful on a node that
+            // instantiates a mesh, and the vector must carry one
+            // weight per morph target of every contained primitive —
+            // the per-instance mirror of the `Mesh::weights` parity
+            // check below.
+            if !node.weights.is_empty() {
+                match node.mesh {
+                    None => errors.push(ValidationError::NodeMorphWeightsWithoutMesh {
+                        location: format!("nodes[{i}].weights"),
+                    }),
+                    Some(m) => {
+                        // A dangling mesh id is already reported above;
+                        // the count check only applies when it resolves.
+                        if let Some(mesh) = self.meshes.get(m.0 as usize) {
+                            for (pi, prim) in mesh.primitives.iter().enumerate() {
+                                if prim.targets.len() != node.weights.len() {
+                                    errors.push(ValidationError::NodeMorphWeightCountMismatch {
+                                        location: format!(
+                                            "nodes[{i}].weights -> meshes[{mi}].primitives[{pi}]",
+                                            mi = m.0
+                                        ),
+                                        node_weights: node.weights.len(),
+                                        primitive_targets: prim.targets.len(),
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2716,6 +2780,21 @@ pub enum ValidationError {
         mesh_weights: usize,
         primitive_targets: usize,
     },
+    /// A [`Node::weights`](crate::Node::weights) override is non-empty
+    /// and its length disagrees with the morph-target count of one of
+    /// the instantiated mesh's primitives (glTF 2.0 `node.weights`:
+    /// the element count MUST match the referenced mesh's morph-target
+    /// count).
+    NodeMorphWeightCountMismatch {
+        location: String,
+        node_weights: usize,
+        primitive_targets: usize,
+    },
+    /// A [`Node::weights`](crate::Node::weights) override is non-empty
+    /// on a node that carries no mesh (glTF 2.0 `node.weights`: when
+    /// defined, `mesh` MUST also be defined) — there is nothing to
+    /// blend.
+    NodeMorphWeightsWithoutMesh { location: String },
     /// [`Skeleton::inverse_bind_matrices`](crate::Skeleton::inverse_bind_matrices)
     /// is non-empty and its length disagrees with
     /// [`Skeleton::joints`](crate::Skeleton::joints).
@@ -2827,6 +2906,18 @@ impl std::fmt::Display for ValidationError {
             } => write!(
                 f,
                 "{location}: mesh has {mesh_weights} weights but primitive carries {primitive_targets} morph targets"
+            ),
+            Self::NodeMorphWeightCountMismatch {
+                location,
+                node_weights,
+                primitive_targets,
+            } => write!(
+                f,
+                "{location}: node overrides {node_weights} weights but primitive carries {primitive_targets} morph targets"
+            ),
+            Self::NodeMorphWeightsWithoutMesh { location } => write!(
+                f,
+                "{location}: node carries morph-weight overrides but no mesh"
             ),
             Self::SkeletonBindMatrixCountMismatch {
                 location,

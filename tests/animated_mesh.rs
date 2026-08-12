@@ -250,13 +250,28 @@ fn posed_scene_reproduces_posed_world_transforms() {
 }
 
 #[test]
-fn posed_writes_animated_morph_weights_into_the_mesh() {
+fn posed_writes_animated_morph_weights_onto_the_node() {
     let (s, nid) = morphable_scene();
     let anim = weight_ramp_animation(nid);
     let baked = s.posed(&anim, 1.0);
-    assert_eq!(baked.meshes[0].weights, vec![1.0], "animated weight baked");
-    assert_eq!(s.meshes[0].weights, vec![0.25], "original untouched");
-    // The baked scene's rest-pose world_mesh now IS the frame.
+    // The sampled vector lands on the node (glTF `node.weights`), not
+    // in the shared mesh arena.
+    assert_eq!(
+        baked.nodes[nid.0 as usize].weights,
+        vec![1.0],
+        "animated weight baked onto the node"
+    );
+    assert_eq!(
+        baked.meshes[0].weights,
+        vec![0.25],
+        "mesh defaults untouched in the baked scene"
+    );
+    assert!(
+        s.nodes[nid.0 as usize].weights.is_empty(),
+        "original untouched"
+    );
+    // The baked scene's rest-pose world_mesh now IS the frame (the
+    // node override beats the mesh default).
     let frame = baked.world_mesh(nid).expect("baked frame");
     assert_vec3_eq(
         frame.primitives[0].positions[0],

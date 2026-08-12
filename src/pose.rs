@@ -255,9 +255,12 @@ impl Scene3D {
     /// Instantiating many nodes at one timestamp? Build the pose and
     /// posed worlds once and drive [`Scene3D::world_mesh_with`] /
     /// [`Scene3D::joint_matrices_with`] yourself — this convenience
-    /// resamples per call. Note the manual route uses the mesh's
-    /// *default* morph weights; the per-node animated override is
-    /// what this method adds on top.
+    /// resamples per call. Note the manual route uses the *static*
+    /// morph weights ([`Scene3D::effective_morph_weights`]: the
+    /// node's [`Node::weights`](crate::Node::weights) override, else
+    /// the mesh's defaults); the animated per-node override — the top
+    /// rung of the glTF §3.7.4 weight-precedence chain — is what this
+    /// method adds on top.
     pub fn world_mesh_at(&self, animation: &Animation, t: f32, node: NodeId) -> Option<Mesh> {
         let pose = animation.sample_pose(t, self.nodes.len());
         let worlds = self.posed_node_transforms(&pose);
@@ -270,28 +273,33 @@ impl Scene3D {
 
     /// Bake an animation frame into a copy of the scene: every node's
     /// transform becomes its [`Pose::local_transform`] under
-    /// `animation` at time `t`, and every mesh instantiated by a node
-    /// with an animated `MorphWeights` channel gets that sampled
-    /// vector written to [`Mesh::weights`](crate::Mesh::weights).
-    /// `self` is untouched.
+    /// `animation` at time `t`, and every node with an animated
+    /// `MorphWeights` channel (and a live mesh to blend) gets that
+    /// sampled vector written to its own
+    /// [`Node::weights`](crate::Node::weights) override. `self` is
+    /// untouched.
     ///
     /// This is the exporter's flatten: the returned scene *is* the
     /// frame — `posed(anim, t).world_node_transforms()` equals
     /// `posed_node_transforms(&anim.sample_pose(t, …))`, and the
     /// downstream rest-pose tooling ([`Scene3D::world_mesh`],
     /// [`Scene3D::bake_transforms`], metrics, exporters) now sees the
-    /// animated frame as its rest pose.
+    /// animated frame as its rest pose. Because the sampled weights
+    /// land on the *node* (glTF `node.weights`), two nodes sharing one
+    /// mesh keep their divergent animated blend states — no
+    /// mesh-arena write, no last-wins clobber —
+    /// so `posed(a, t).world_mesh(n)` equals
+    /// `world_mesh_at(a, t, n)` for every node.
     ///
-    /// Two structural caveats, both inherent to baking:
+    /// Structural caveats, inherent to baking:
     ///
     /// * Driven nodes get `Trs` transforms (a `Matrix` rest transform
     ///   is decomposed first — see [`Pose::local_transform`]);
     ///   undriven nodes keep their rest transform bit-for-bit.
-    /// * [`Mesh::weights`](crate::Mesh::weights) lives on the *mesh*,
-    ///   so when two nodes with different animated weight vectors
-    ///   share one mesh, the higher-indexed node wins (the same
-    ///   last-wins rule as duplicate channels). Per-node divergence
-    ///   needs per-node instantiation — [`Scene3D::world_mesh_at`].
+    /// * A sampled weight vector targeting a node with no (or a
+    ///   dangling) mesh is dropped — a node-level override without a
+    ///   mesh is invalid ([`Scene3D::validate`] territory), and there
+    ///   is nothing it could blend.
     ///
     /// Animations (including `animation` itself) are carried over
     /// unchanged: they still describe motion relative to the original
@@ -304,13 +312,21 @@ impl Scene3D {
             node.transform = pose.local_transform(NodeId(i as u32), &node.transform);
         }
         for (i, weights) in pose.morph_weights.iter().enumerate() {
-            let (Some(w), Some(node)) = (weights, self.nodes.get(i)) else {
+            let Some(w) = weights else {
                 continue;
             };
-            let Some(mesh) = node.mesh.and_then(|m| out.meshes.get_mut(m.0 as usize)) else {
+            let Some(node) = out.nodes.get_mut(i) else {
                 continue;
             };
-            mesh.weights = w.clone();
+            // Only a node that instantiates a live mesh can carry the
+            // baked override (glTF `node.weights` requires `mesh`).
+            if !node
+                .mesh
+                .is_some_and(|m| (m.0 as usize) < self.meshes.len())
+            {
+                continue;
+            }
+            node.weights = w.clone();
         }
         out
     }
