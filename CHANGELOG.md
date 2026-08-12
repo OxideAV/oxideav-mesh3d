@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   morph-free target format needs before export; `world_mesh`'s
   instantiation pipeline now runs `Primitive::morphed` as its
   single source of morph-fold semantics.
+- Three weight-chain properties in the seeded property suite
+  (`tests/skinning_props.rs`): node-override ≡ mesh-default carrying
+  the same vector; `posed` bake ≡ animated instantiation over random
+  shared-mesh scenes with mixed morph/translation channels;
+  `Primitive::morphed` ≡ `apply_morph_weights` fold (wrong-length
+  vectors included) with the roster consumed.
 
 ### Changed
 

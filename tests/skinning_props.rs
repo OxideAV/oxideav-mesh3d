@@ -13,7 +13,13 @@
 //! * sampled rotations are always unit quaternions;
 //! * an empty pose walks the exact rest world transforms on random
 //!   trees, and posed walks are deterministic;
-//! * `skinned` preserves buffer shapes and non-geometric attributes.
+//! * `skinned` preserves buffer shapes and non-geometric attributes;
+//! * a `Node::weights` override instantiates exactly like the same
+//!   vector stored as `Mesh::weights` (two levels, one rung);
+//! * `posed(a, t).world_mesh(n)` equals `world_mesh_at(a, t, n)` over
+//!   random shared-mesh scenes with mixed weight/transform channels;
+//! * `Primitive::morphed` folds exactly `apply_morph_weights`
+//!   (including wrong-length soft-skips) and consumes the roster.
 
 use oxideav_mesh3d::{
     Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
@@ -376,5 +382,168 @@ fn mesh_normalize_joint_weights_maps_every_primitive() {
                 "{row:?}"
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Weight-precedence chain properties (node.weights / posed / morphed)
+// ---------------------------------------------------------------------------
+
+fn random_morphable_primitive(rng: &mut Lcg, n_verts: usize, n_targets: usize) -> Primitive {
+    let mut p = Primitive::new(Topology::Triangles);
+    let mut normals = Vec::with_capacity(n_verts);
+    for _ in 0..n_verts {
+        p.positions.push(rng.vec3(-10.0, 10.0));
+        let n = rng.vec3(-1.0, 1.0);
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(0.1);
+        normals.push([n[0] / len, n[1] / len, n[2] / len]);
+    }
+    p.normals = Some(normals);
+    for _ in 0..n_targets {
+        let position = Some((0..n_verts).map(|_| rng.vec3(-2.0, 2.0)).collect());
+        // Half the targets also displace normals — per-attribute
+        // opt-in must hold on both sides of every equivalence.
+        let normal = if rng.usize(2) == 0 {
+            Some((0..n_verts).map(|_| rng.vec3(-0.5, 0.5)).collect())
+        } else {
+            None
+        };
+        p.targets.push(oxideav_mesh3d::MorphTarget {
+            position,
+            normal,
+            tangent: None,
+        });
+    }
+    p
+}
+
+fn morph_channel(rng: &mut Lcg, node: NodeId, n_targets: usize) -> AnimationChannel {
+    let values: Vec<f32> = (0..2 * n_targets).map(|_| rng.f32(-1.0, 2.0)).collect();
+    AnimationChannel {
+        target: AnimationTarget {
+            node,
+            property: AnimationProperty::MorphWeights,
+        },
+        sampler: AnimationSampler {
+            keyframes: vec![0.0, 1.0],
+            values: AnimationValues::Scalar(values),
+            interpolation: Interpolation::Linear,
+        },
+    }
+}
+
+/// The node override and the mesh default are the same rung expressed
+/// at two levels: instantiating `node.weights = w` must equal
+/// instantiating `mesh.weights = w` exactly (identical blend path).
+#[test]
+fn node_override_equals_mesh_defaults_carrying_the_same_vector() {
+    let mut rng = Lcg::new(0x0DDBA11);
+    for _ in 0..200 {
+        let n_targets = 1 + rng.usize(3);
+        let n_verts = 3 + rng.usize(8);
+        let prim = random_morphable_primitive(&mut rng, n_verts, n_targets);
+        let w: Vec<f32> = (0..n_targets).map(|_| rng.f32(-1.0, 2.0)).collect();
+
+        let mut sa = Scene3D::new();
+        let ma = sa.add_mesh(oxideav_mesh3d::Mesh::new(None).with_primitive(prim.clone()));
+        let na = sa.add_node(Node::new().with_mesh(ma).with_weights(w.clone()));
+        sa.add_root(na);
+
+        let mut sb = Scene3D::new();
+        let mb = sb.add_mesh(
+            oxideav_mesh3d::Mesh::new(None)
+                .with_primitive(prim.clone())
+                .with_weights(w.clone()),
+        );
+        let nb = sb.add_node(Node::new().with_mesh(mb));
+        sb.add_root(nb);
+
+        let a = sa.world_mesh(na).expect("override side");
+        let b = sb.world_mesh(nb).expect("default side");
+        assert_eq!(a.primitives[0].positions, b.primitives[0].positions);
+        assert_eq!(a.primitives[0].normals, b.primitives[0].normals);
+    }
+}
+
+/// The doc contract of `posed`: `posed(a, t).world_mesh(n)` equals
+/// `world_mesh_at(a, t, n)` for every node — over random scenes where
+/// several nodes share one mesh, only some of them weight-driven, and
+/// transforms animate too.
+#[test]
+fn posed_bake_equals_animated_instantiation_on_shared_meshes() {
+    let mut rng = Lcg::new(0xBAAB);
+    for _ in 0..100 {
+        let n_targets = 1 + rng.usize(3);
+        let n_verts = 3 + rng.usize(6);
+        let prim = random_morphable_primitive(&mut rng, n_verts, n_targets);
+        let defaults: Vec<f32> = (0..n_targets).map(|_| rng.f32(0.0, 1.0)).collect();
+        let mut s = Scene3D::new();
+        let mid = s.add_mesh(
+            oxideav_mesh3d::Mesh::new(None)
+                .with_primitive(prim)
+                .with_weights(defaults),
+        );
+        let mut anim = Animation::new(None);
+        let mut nodes = Vec::new();
+        for _ in 0..2 + rng.usize(3) {
+            let node = Node::new().with_mesh(mid).with_transform(Transform::Trs {
+                translation: rng.vec3(-5.0, 5.0),
+                rotation: rng.quat(),
+                scale: [1.0, 1.0, 1.0],
+            });
+            let nid = s.add_node(node);
+            s.add_root(nid);
+            if rng.usize(2) == 0 {
+                anim.channels.push(morph_channel(&mut rng, nid, n_targets));
+            }
+            if rng.usize(2) == 0 {
+                anim.channels.push(AnimationChannel {
+                    target: AnimationTarget {
+                        node: nid,
+                        property: AnimationProperty::Translation,
+                    },
+                    sampler: AnimationSampler {
+                        keyframes: vec![0.0, 1.0],
+                        values: AnimationValues::Vec3(vec![
+                            rng.vec3(-3.0, 3.0),
+                            rng.vec3(-3.0, 3.0),
+                        ]),
+                        interpolation: Interpolation::Linear,
+                    },
+                });
+            }
+            nodes.push(nid);
+        }
+        let t = rng.f32(0.0, 1.0);
+        let baked = s.posed(&anim, t);
+        for &nid in &nodes {
+            let via_bake = baked.world_mesh(nid).expect("baked");
+            let via_anim = s.world_mesh_at(&anim, t, nid).expect("animated");
+            assert_eq!(
+                via_bake.primitives[0].positions, via_anim.primitives[0].positions,
+                "node {nid:?}"
+            );
+        }
+    }
+}
+
+/// `Primitive::morphed` is exactly `apply_morph_weights` folded in
+/// place — including the soft-skip behaviour on wrong-length weight
+/// vectors — with the target roster consumed.
+#[test]
+fn morphed_lift_matches_apply_morph_weights_on_random_inputs() {
+    let mut rng = Lcg::new(0x5EED);
+    for _ in 0..200 {
+        let n_targets = rng.usize(4);
+        let n_verts = 3 + rng.usize(8);
+        let prim = random_morphable_primitive(&mut rng, n_verts, n_targets);
+        // Deliberately allow mismatched weight-vector lengths.
+        let w: Vec<f32> = (0..rng.usize(6)).map(|_| rng.f32(-1.0, 2.0)).collect();
+        let folded = prim.morphed(&w);
+        let blended = prim.apply_morph_weights(&w);
+        assert_eq!(folded.positions, blended.positions);
+        assert_eq!(folded.normals, blended.normals);
+        assert_eq!(folded.tangents, blended.tangents);
+        assert!(folded.targets.is_empty());
     }
 }
