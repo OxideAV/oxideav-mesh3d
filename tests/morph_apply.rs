@@ -417,3 +417,87 @@ fn morphed_attributes_reexported_at_crate_root() {
         tangents: None,
     };
 }
+
+// ---------------------------------------------------------------------------
+// Primitive::morphed / Mesh::morphed — the static-fold lifts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn primitive_morphed_folds_the_blend_and_consumes_targets() {
+    let mut p = base_triangle();
+    p.targets = vec![MorphTarget {
+        position: Some(vec![[0.0, 0.0, 4.0]; 3]),
+        ..Default::default()
+    }];
+    let out = p.morphed(&[0.5]);
+    assert!(vec3_close(out.positions[0], [0.0, 0.0, 2.0], 1e-6));
+    assert!(out.targets.is_empty(), "morph state consumed");
+    assert_eq!(p.targets.len(), 1, "self untouched");
+}
+
+#[test]
+fn primitive_morphed_with_empty_weights_bakes_the_base_state() {
+    let mut p = base_triangle();
+    p.targets = vec![MorphTarget {
+        position: Some(vec![[0.0, 0.0, 4.0]; 3]),
+        ..Default::default()
+    }];
+    let out = p.morphed(&[]);
+    assert_eq!(out.positions, p.positions, "all weights zero = base");
+    assert!(out.targets.is_empty(), "roster still cleared");
+}
+
+#[test]
+fn primitive_morphed_carries_every_other_field() {
+    let mut p = base_triangle();
+    p.uvs = vec![vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]];
+    p.joints = Some(vec![[0, 0, 0, 0]; 3]);
+    p.weights = Some(vec![[1.0, 0.0, 0.0, 0.0]; 3]);
+    p.targets = vec![MorphTarget {
+        position: Some(vec![[1.0, 0.0, 0.0]; 3]),
+        ..Default::default()
+    }];
+    let out = p.morphed(&[1.0]);
+    assert_eq!(out.topology, p.topology);
+    assert_eq!(out.uvs, p.uvs);
+    assert_eq!(out.joints, p.joints, "skinning influences pass through");
+    assert_eq!(out.weights, p.weights);
+    assert!(vec4_close(
+        out.tangents.as_ref().unwrap()[1],
+        [1.0, 0.0, 0.0, -1.0],
+        1e-6
+    ));
+}
+
+#[test]
+fn mesh_morphed_lifts_across_primitives_and_clears_defaults() {
+    let mut a = base_triangle();
+    a.targets = vec![MorphTarget {
+        position: Some(vec![[0.0, 0.0, 4.0]; 3]),
+        ..Default::default()
+    }];
+    let mut b = base_triangle();
+    b.targets = vec![MorphTarget {
+        position: Some(vec![[2.0, 0.0, 0.0]; 3]),
+        ..Default::default()
+    }];
+    let mesh = oxideav_mesh3d::Mesh::new(Some("blend".to_owned()))
+        .with_primitive(a)
+        .with_primitive(b)
+        .with_weights(vec![0.25]);
+    let out = mesh.morphed(&[0.5]);
+    assert_eq!(out.name.as_deref(), Some("blend"), "name preserved");
+    assert!(vec3_close(
+        out.primitives[0].positions[0],
+        [0.0, 0.0, 2.0],
+        1e-6
+    ));
+    assert!(vec3_close(
+        out.primitives[1].positions[0],
+        [1.0, 0.0, 0.0],
+        1e-6
+    ));
+    assert!(out.weights.is_empty(), "consumed defaults cleared");
+    assert!(out.primitives.iter().all(|p| p.targets.is_empty()));
+    assert_eq!(mesh.weights, vec![0.25], "self untouched");
+}

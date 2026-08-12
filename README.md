@@ -99,7 +99,10 @@ are skipped or fall back rather than panic), and topology-aware
   ear-clip patch wound consistent with the surrounding surface,
   making a torn surface watertight again).
 - **Attributes** — `compute_normals` (area-weighted),
-  `compute_tangents` (MikkTSpace-style basis), `apply_morph_weights`.
+  `compute_tangents` (MikkTSpace-style basis), `apply_morph_weights`,
+  and the static-fold lifts `Primitive::morphed` / `Mesh::morphed`
+  (blend the weight vector in, consume the target roster — the
+  flatten a morph-free target format needs).
 - **Measures** — `surface_area`, `surface_centroid`,
   `signed_volume` / `volume`, `volume_centroid` (centre of mass),
   `inertia_tensor` (unit density). Each has `Mesh` / `Scene3D`

@@ -2523,6 +2523,35 @@ impl Primitive {
         }
     }
 
+    /// Fold a morph-weight vector into a **static** copy of this
+    /// primitive: the base `POSITION` / `NORMAL` / `TANGENT` buffers
+    /// are replaced by the [`Primitive::apply_morph_weights`] blend
+    /// (same §3.7.2.2 contract — per-attribute opt-in, handedness
+    /// preserved, missing weights read as zero, length mismatches
+    /// soft-skipped) and [`Primitive::targets`] is cleared — the
+    /// morph state has been consumed. Empty `weights` (or no targets)
+    /// bakes the non-morphed base state, still clearing the roster.
+    ///
+    /// This is the flatten a morph-free target format needs per
+    /// primitive; [`Mesh::morphed`] lifts it across a mesh, and
+    /// [`crate::Scene3D::world_mesh`] runs it inside the full
+    /// instantiation pipeline (resolve the weight vector with
+    /// [`crate::Scene3D::effective_morph_weights`] to honour a
+    /// node-level override). Every other field (topology, indices,
+    /// UVs, colours, joints/weights, material, variant mappings,
+    /// extras) is carried over unchanged. Pure — `self` is untouched.
+    pub fn morphed(&self, weights: &[f32]) -> Primitive {
+        let mut out = self.clone();
+        if !out.targets.is_empty() && !weights.is_empty() {
+            let m = self.apply_morph_weights(weights);
+            out.positions = m.positions;
+            out.normals = m.normals;
+            out.tangents = m.tangents;
+        }
+        out.targets = Vec::new();
+        out
+    }
+
     /// Indices into [`Primitive::triangle_indices`] for **degenerate**
     /// triangles — triangles whose three vertices are collinear or
     /// coincident in 3D space.
@@ -4995,6 +5024,26 @@ impl Mesh {
     pub fn with_weights(mut self, weights: impl Into<Vec<f32>>) -> Self {
         self.weights = weights.into();
         self
+    }
+
+    /// Fold a morph-weight vector into a **static** copy of this mesh
+    /// — [`Primitive::morphed`] applied to every contained primitive,
+    /// with the consumed default [`Mesh::weights`] cleared alongside
+    /// each primitive's target roster (`name` is preserved).
+    ///
+    /// The caller resolves *which* vector to bake:
+    /// [`crate::Scene3D::effective_morph_weights`] yields the static
+    /// node-override-aware default for an instantiated node, an
+    /// animation sample supplies a frame, or pass `&self.weights` to
+    /// bake the mesh's own defaults. The flatten a morph-free target
+    /// format needs before export. Pure — `self` is untouched.
+    pub fn morphed(&self, weights: &[f32]) -> Mesh {
+        let mut out = self.clone();
+        for prim in &mut out.primitives {
+            *prim = prim.morphed(weights);
+        }
+        out.weights = Vec::new();
+        out
     }
 
     /// Axis-aligned bounding box over every contained primitive in

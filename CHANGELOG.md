@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   primitive's morph-target count — and `NodeMorphWeightsWithoutMesh`
   — `node.weights` requires `node.mesh`; the count check defers to
   the existing `DanglingId` on an unresolvable mesh).
+- `Primitive::morphed(weights)` / `Mesh::morphed(weights)` — the
+  static-fold lifts: replace the base `POSITION`/`NORMAL`/`TANGENT`
+  buffers with the §3.7.2.2 blend and consume the morph state
+  (`targets` cleared; the `Mesh` lift also clears the consumed
+  default `weights`, keeping `name`). The per-mesh flatten a
+  morph-free target format needs before export; `world_mesh`'s
+  instantiation pipeline now runs `Primitive::morphed` as its
+  single source of morph-fold semantics.
 
 ### Changed
 

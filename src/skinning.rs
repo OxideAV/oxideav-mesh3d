@@ -409,21 +409,16 @@ impl Scene3D {
 
         let mut out = mesh.clone();
         for prim in &mut out.primitives {
-            // 1. Fold the morph weights into the base attributes
-            //    (no-op when either side is empty).
-            if !prim.targets.is_empty() && !weights.is_empty() {
-                let morphed = prim.apply_morph_weights(weights);
-                prim.positions = morphed.positions;
-                prim.normals = morphed.normals;
-                prim.tangents = morphed.tangents;
-            }
-            prim.targets = Vec::new();
+            // 1. Fold the morph weights into the base attributes —
+            //    [`Primitive::morphed`]: no-op blend when either side
+            //    is empty, targets always consumed.
+            let morphed = prim.morphed(weights);
 
             // 2./3. Skin (world space) or bake the world matrix.
-            let has_influences = prim.joints.is_some() && prim.weights.is_some();
+            let has_influences = morphed.joints.is_some() && morphed.weights.is_some();
             *prim = match &palette {
-                Some(p) if has_influences => prim.skinned(p),
-                _ => prim.transformed(world),
+                Some(p) if has_influences => morphed.skinned(p),
+                _ => morphed.transformed(world),
             };
         }
         out.weights = Vec::new();
