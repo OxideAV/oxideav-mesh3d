@@ -17,20 +17,207 @@ use std::collections::HashMap;
 use crate::scene::TextureId;
 
 /// Reference to one [`Texture`](crate::Texture) along with which UV
-/// set in the consuming primitive samples it.
+/// set in the consuming primitive samples it and an optional typed
+/// per-reference UV transform.
 ///
 /// `uv_set` indexes into [`Primitive::uvs`](crate::mesh::Primitive::uvs);
-/// the default for most files is 0.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// the default for most files is 0. When a [`TextureTransform`] is
+/// present its [`uv_set`](TextureTransform::uv_set) override — when
+/// set — takes precedence; use
+/// [`effective_uv_set`](Self::effective_uv_set) to resolve the chain.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextureRef {
     pub texture: TextureId,
     pub uv_set: u32,
+    /// Per-reference UV-coordinate transform
+    /// (`KHR_texture_transform`). `None` keeps "no transform declared"
+    /// distinguishable from an explicit identity transform, so an
+    /// encoder re-emits exactly the extension blocks the source
+    /// declared.
+    pub transform: Option<TextureTransform>,
 }
 
 impl TextureRef {
-    /// Bind a texture to UV set 0 (the most common case).
+    /// Bind a texture to UV set 0 (the most common case), with no
+    /// UV transform.
     pub fn new(texture: TextureId) -> Self {
-        Self { texture, uv_set: 0 }
+        Self {
+            texture,
+            uv_set: 0,
+            transform: None,
+        }
+    }
+
+    /// Builder-style UV-set selector.
+    pub fn with_uv_set(mut self, uv_set: u32) -> Self {
+        self.uv_set = uv_set;
+        self
+    }
+
+    /// Builder-style transform setter.
+    pub fn with_transform(mut self, transform: TextureTransform) -> Self {
+        self.transform = Some(transform);
+        self
+    }
+
+    /// The UV set this reference actually samples: the transform's
+    /// [`uv_set`](TextureTransform::uv_set) override when present,
+    /// else the reference's own [`uv_set`](Self::uv_set). This is the
+    /// value [`Scene3D::validate`](crate::Scene3D::validate) checks
+    /// against the consuming primitive's UV channels.
+    pub fn effective_uv_set(&self) -> u32 {
+        self.transform.and_then(|t| t.uv_set).unwrap_or(self.uv_set)
+    }
+}
+
+/// Typed per-texture-reference UV transform, aligned with the
+/// ratified `KHR_texture_transform` extension.
+///
+/// The transform maps a primitive's stored UV coordinates into the
+/// coordinates actually sampled — the standard mechanism for texture
+/// atlasing (offset + scale select an atlas region) and for axis
+/// flips (`scale: [1.0, -1.0]` with `offset: [0.0, 1.0]` inverts the
+/// T axis for a bottom-left-origin source). The applied mapping is
+/// the affine composition **translation · rotation · scale** on
+/// homogeneous UV coordinates:
+///
+/// ```text
+/// uv' = T(offset) · R(rotation) · S(scale) · [u, v, 1]ᵀ
+/// ```
+///
+/// i.e. scale first, then rotate counter-clockwise about the UV
+/// origin, then offset. Per the extension, the result is generally
+/// only meaningful when the sampler wraps with
+/// [`WrapMode::Repeat`](crate::WrapMode::Repeat) or when the
+/// transformed coordinates stay inside `[0, 1]`. Remember the UV
+/// origin `(0, 0)` is the *top-left* corner of the image, so a
+/// counter-clockwise UV rotation reads as a clockwise image rotation.
+///
+/// All fields default to the extension's normative defaults (zero
+/// offset, zero rotation, unit scale, no `texCoord` override), so
+/// `TextureTransform::default()` is the identity mapping.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextureTransform {
+    /// Offset of the UV origin as a factor of the texture dimensions
+    /// (`offset`). Default `[0.0, 0.0]`.
+    pub offset: [f32; 2],
+    /// Rotation applied to the UVs, in radians counter-clockwise
+    /// around the origin (`rotation`). Default `0.0`.
+    pub rotation: f32,
+    /// Scale factor applied to the UV components (`scale`). Default
+    /// `[1.0, 1.0]`. Negative components are legal and mirror the
+    /// respective axis.
+    pub scale: [f32; 2],
+    /// UV-set override (`texCoord`): when `Some`, replaces the
+    /// [`TextureRef::uv_set`] of the reference carrying this
+    /// transform. `None` (the default) keeps the reference's own set.
+    pub uv_set: Option<u32>,
+}
+
+impl TextureTransform {
+    /// The identity transform — every field at its normative default.
+    pub const IDENTITY: Self = Self {
+        offset: [0.0, 0.0],
+        rotation: 0.0,
+        scale: [1.0, 1.0],
+        uv_set: None,
+    };
+
+    /// Construct the identity transform (same as `default()`).
+    pub fn new() -> Self {
+        Self::IDENTITY
+    }
+
+    /// Builder-style offset setter.
+    pub fn with_offset(mut self, offset: [f32; 2]) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Builder-style rotation setter (radians counter-clockwise).
+    pub fn with_rotation(mut self, rotation: f32) -> Self {
+        self.rotation = rotation;
+        self
+    }
+
+    /// Builder-style scale setter.
+    pub fn with_scale(mut self, scale: [f32; 2]) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    /// Builder-style UV-set (`texCoord`) override setter.
+    pub fn with_uv_set(mut self, uv_set: u32) -> Self {
+        self.uv_set = Some(uv_set);
+        self
+    }
+
+    /// `true` when this transform is a complete no-op: the affine
+    /// part is the identity **and** there is no UV-set override
+    /// (a transform that only re-targets `texCoord` still changes
+    /// sampling, so it is not an identity).
+    pub fn is_identity(&self) -> bool {
+        self.offset == [0.0, 0.0]
+            && self.rotation == 0.0
+            && self.scale == [1.0, 1.0]
+            && self.uv_set.is_none()
+    }
+
+    /// `true` when every affine component (offset, rotation, scale)
+    /// is finite. A non-finite component would poison every
+    /// transformed coordinate;
+    /// [`Scene3D::validate`](crate::Scene3D::validate) reports it.
+    pub fn is_finite(&self) -> bool {
+        self.offset.iter().all(|c| c.is_finite())
+            && self.rotation.is_finite()
+            && self.scale.iter().all(|c| c.is_finite())
+    }
+
+    /// The transform as a row-major 3×3 homogeneous matrix acting on
+    /// column vectors `[u, v, 1]ᵀ` — the product
+    /// `T(offset) · R(rotation) · S(scale)`:
+    ///
+    /// ```text
+    /// ⎡ cos·sx  −sin·sy  ox ⎤
+    /// ⎢ sin·sx   cos·sy  oy ⎥
+    /// ⎣   0        0      1 ⎦
+    /// ```
+    ///
+    /// Same row-major column-vector convention as the crate's 4×4
+    /// node matrices.
+    pub fn to_matrix(&self) -> [[f32; 3]; 3] {
+        let (s, c) = self.rotation.sin_cos();
+        let [sx, sy] = self.scale;
+        let [ox, oy] = self.offset;
+        [[c * sx, -s * sy, ox], [s * sx, c * sy, oy], [0.0, 0.0, 1.0]]
+    }
+
+    /// Apply the transform to one UV coordinate: scale, then rotate
+    /// counter-clockwise about the origin, then offset — exactly
+    /// [`to_matrix`](Self::to_matrix) times `[u, v, 1]ᵀ`.
+    pub fn apply(&self, uv: [f32; 2]) -> [f32; 2] {
+        let (s, c) = self.rotation.sin_cos();
+        let [sx, sy] = self.scale;
+        let (u, v) = (uv[0] * sx, uv[1] * sy);
+        [
+            c * u - s * v + self.offset[0],
+            s * u + c * v + self.offset[1],
+        ]
+    }
+
+    /// Apply the transform to a whole UV channel — the baking helper
+    /// for exporters targeting a format without per-reference UV
+    /// transforms: replace the primitive's channel with the baked
+    /// coordinates (and drop the transform, e.g. via
+    /// [`Material::map_texture_refs`]). Pure; the input is untouched.
+    pub fn apply_channel(&self, uvs: &[[f32; 2]]) -> Vec<[f32; 2]> {
+        uvs.iter().map(|&uv| self.apply(uv)).collect()
+    }
+}
+
+impl Default for TextureTransform {
+    fn default() -> Self {
+        Self::IDENTITY
     }
 }
 
@@ -763,17 +950,38 @@ impl Material {
     /// (`base_color`, `metallic_roughness`, `normal`, `occlusion`,
     /// `emissive`) *and* every extension map on [`MaterialExt`]
     /// (specular, clearcoat, sheen, transmission, volume, iridescence,
-    /// anisotropy). The `uv_set` of each [`TextureRef`] is left
-    /// untouched; only the texture index is remapped.
+    /// anisotropy). The `uv_set` and `transform` of each
+    /// [`TextureRef`] are left untouched; only the texture index is
+    /// remapped.
     ///
     /// This is the building block for re-indexing a material when its
     /// textures move to a new arena (scene composition / append), so a
     /// caller never has to enumerate the slot list by hand and risk
     /// missing a newly-added extension map.
     pub fn map_texture_ids(&mut self, f: impl Fn(crate::TextureId) -> crate::TextureId) {
+        self.map_texture_refs(|mut r| {
+            r.texture = f(r.texture);
+            r
+        });
+    }
+
+    /// Rewrite **every** occupied texture slot of this material
+    /// through `f`, in place — the whole-[`TextureRef`] counterpart of
+    /// [`map_texture_ids`](Self::map_texture_ids).
+    ///
+    /// Walks the same complete slot list as
+    /// [`texture_refs`](Self::texture_refs) (the five core
+    /// metallic-roughness maps plus every extension map on
+    /// [`MaterialExt`]), passing each present reference through `f`
+    /// and storing the result. Use it when the rewrite touches more
+    /// than the texture index — retargeting `uv_set`s after a UV
+    /// channel shuffle, attaching or clearing
+    /// [`TextureTransform`]s (e.g. after baking them into the UV
+    /// data with [`TextureTransform::apply_channel`]), and so on.
+    pub fn map_texture_refs(&mut self, f: impl Fn(TextureRef) -> TextureRef) {
         let remap = |r: &mut Option<TextureRef>| {
             if let Some(tr) = r {
-                tr.texture = f(tr.texture);
+                *tr = f(*tr);
             }
         };
         remap(&mut self.base_color_texture);

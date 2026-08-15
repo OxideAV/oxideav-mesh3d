@@ -111,7 +111,7 @@ pub use instance_bvh::{Instance, InstanceBvh, InstanceBvhNode};
 pub use light::Light;
 pub use material::{
     AlphaMode, Anisotropy, Clearcoat, DiffuseTransmission, Iridescence, Material, MaterialExt,
-    Sheen, Specular, TextureRef, Transmission, Volume,
+    Sheen, Specular, TextureRef, TextureTransform, Transmission, Volume,
 };
 pub use mesh::{
     EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, OrientationReport,
