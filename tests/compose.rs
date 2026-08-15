@@ -19,6 +19,9 @@ fn textured_scene(x: f32) -> Scene3D {
 
     let mut prim = Primitive::new(Topology::Triangles);
     prim.positions = vec![[x, 0.0, 0.0], [x + 1.0, 0.0, 0.0], [x, 1.0, 0.0]];
+    // The textured material samples UV set 0, so the primitive must
+    // carry that channel (validate() enforces the coverage rule).
+    prim.uvs = vec![vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]];
     prim.indices = Some(Indices::U32(vec![0, 1, 2]));
     prim.material = Some(matid);
     let mesh = Mesh::new(Some("m".to_owned())).with_primitive(prim);

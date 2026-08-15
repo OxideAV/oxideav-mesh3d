@@ -2441,6 +2441,49 @@ impl Scene3D {
                         }
                     }
                 }
+                // Texture-coordinate coverage: every texture slot of
+                // every material this primitive can draw with (the
+                // base material plus each variant-mapping override)
+                // must sample a UV channel the primitive actually
+                // carries — glTF 2.0 requires the corresponding
+                // TEXCOORD attribute for the material to be
+                // applicable. The checked set is the *effective* one:
+                // a `KHR_texture_transform` `texCoord` override wins
+                // over the reference's own `uv_set`.
+                {
+                    let mut checked: HashSet<u32> = HashSet::new();
+                    let base = prim.material.iter().map(|m| (*m, None));
+                    let mapped = prim
+                        .variant_mappings
+                        .iter()
+                        .enumerate()
+                        .map(|(ki, mapping)| (mapping.material, Some(ki)));
+                    for (mid, mapping_idx) in base.chain(mapped) {
+                        if !checked.insert(mid.0) {
+                            continue; // shared material: report once
+                        }
+                        let Some(mat) = self.materials.get(mid.0 as usize) else {
+                            continue; // dangling id already reported
+                        };
+                        for (field, r) in mat.texture_refs() {
+                            let uv_set = r.effective_uv_set();
+                            if (uv_set as usize) >= prim.uvs.len() {
+                                let via = match mapping_idx {
+                                    None => String::new(),
+                                    Some(ki) => format!(".variant_mappings[{ki}]"),
+                                };
+                                errors.push(ValidationError::UvSetOutOfRange {
+                                    location: format!(
+                                        "meshes[{mi}].primitives[{pi}]{via} -> materials[{id}].{field}",
+                                        id = mid.0
+                                    ),
+                                    uv_set,
+                                    available: prim.uvs.len(),
+                                });
+                            }
+                        }
+                    }
+                }
                 for (ti, tgt) in prim.targets.iter().enumerate() {
                     let tgt_loc = |field: &str| here(&format!("targets[{ti}].{field}"));
                     if let Some(v) = &tgt.position {
@@ -2493,6 +2536,15 @@ impl Scene3D {
                         id: r.texture.0,
                         arena: "textures",
                     });
+                }
+                // A `KHR_texture_transform` with a non-finite affine
+                // component would poison every coordinate it maps.
+                if let Some(t) = r.transform {
+                    if !t.is_finite() {
+                        errors.push(ValidationError::TextureTransformNotFinite {
+                            location: format!("materials[{mi}].{field}.transform"),
+                        });
+                    }
                 }
             }
         }
@@ -2874,6 +2926,23 @@ pub enum ValidationError {
     /// once across the whole list, so the active-variant lookup is
     /// unambiguous.
     DuplicateVariantMapping { location: String, variant: u32 },
+    /// A material applied by a primitive (directly or through a
+    /// `KHR_materials_variants` mapping) references a texture through
+    /// a UV set the primitive does not carry. glTF 2.0 requires the
+    /// corresponding `TEXCOORD_<set>` attribute to be present for the
+    /// material to be applicable; the checked value is
+    /// [`TextureRef::effective_uv_set`](crate::TextureRef::effective_uv_set),
+    /// so a `KHR_texture_transform` `texCoord` override is honoured.
+    UvSetOutOfRange {
+        location: String,
+        uv_set: u32,
+        available: usize,
+    },
+    /// A [`TextureTransform`](crate::TextureTransform) on one of a
+    /// material's texture references carries a non-finite offset,
+    /// rotation, or scale component — every UV coordinate mapped
+    /// through it would be poisoned.
+    TextureTransformNotFinite { location: String },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -2984,6 +3053,17 @@ impl std::fmt::Display for ValidationError {
                     f,
                     "{location}: material variant {variant} is claimed by more than one mapping"
                 )
+            }
+            Self::UvSetOutOfRange {
+                location,
+                uv_set,
+                available,
+            } => write!(
+                f,
+                "{location}: texture samples UV set {uv_set} but the primitive carries {available} UV channel(s)"
+            ),
+            Self::TextureTransformNotFinite { location } => {
+                write!(f, "{location}: texture transform has non-finite components")
             }
         }
     }

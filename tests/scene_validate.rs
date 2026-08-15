@@ -9,7 +9,7 @@ use oxideav_mesh3d::{
     Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
     AnimationValues, AudioEmitter, AudioSourceId, Indices, Interpolation, Material, Mesh, MeshId,
     MorphTarget, Node, NodeId, Primitive, Scene3D, Skeleton, SkeletonId, Skin, Specular, TextureId,
-    TextureRef, Topology, ValidationError,
+    TextureRef, TextureTransform, Topology, ValidationError,
 };
 
 fn one_triangle_primitive() -> Primitive {
@@ -761,4 +761,196 @@ fn skeleton_ibm_display_breadcrumb() {
         msg.contains("[0.0, 0.0, 0.0, 0.0]") || msg.contains("[0, 0, 0, 0]"),
         "{msg}"
     );
+}
+
+// ---------------------------------------------------------------
+// UV-set coverage + texture-transform finiteness
+
+/// One textured material bound to a primitive carrying `n_uv_sets`
+/// UV channels; the material's base-colour reference is `r`.
+fn textured_prim_scene(r: TextureRef, n_uv_sets: usize) -> Scene3D {
+    let mut s = Scene3D::new();
+    s.add_texture(oxideav_mesh3d::Texture::from_uri("t.png"));
+    let mut mat = Material::new();
+    mat.base_color_texture = Some(r);
+    let matid = s.add_material(mat);
+    let mut p = one_triangle_primitive();
+    p.uvs = vec![vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]; n_uv_sets];
+    p.material = Some(matid);
+    let mid = s.add_mesh(Mesh::new(None).with_primitive(p));
+    let nid = s.add_node(Node::new().with_mesh(mid));
+    s.add_root(nid);
+    s
+}
+
+#[test]
+fn covered_uv_set_validates_clean() {
+    let s = textured_prim_scene(TextureRef::new(TextureId(0)), 1);
+    assert!(s.validate().is_ok());
+}
+
+#[test]
+fn uv_set_beyond_primitive_channels_reported() {
+    let s = textured_prim_scene(TextureRef::new(TextureId(0)).with_uv_set(1), 1);
+    let errs = s.validate().unwrap_err();
+    assert_eq!(errs.len(), 1);
+    let ValidationError::UvSetOutOfRange {
+        location,
+        uv_set,
+        available,
+    } = &errs[0]
+    else {
+        panic!("wrong variant: {:?}", errs[0]);
+    };
+    assert_eq!(*uv_set, 1);
+    assert_eq!(*available, 1);
+    assert!(
+        location.contains("meshes[0].primitives[0]")
+            && location.contains("materials[0].base_color_texture"),
+        "location was {location}"
+    );
+}
+
+#[test]
+fn texture_on_uvless_primitive_reported() {
+    let s = textured_prim_scene(TextureRef::new(TextureId(0)), 0);
+    let errs = s.validate().unwrap_err();
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::UvSetOutOfRange { available: 0, .. })));
+}
+
+#[test]
+fn transform_uv_set_override_is_the_checked_value() {
+    // Base uv_set 0 would be fine, but the KHR_texture_transform
+    // texCoord override re-targets set 3 — which doesn't exist.
+    let r = TextureRef::new(TextureId(0)).with_transform(TextureTransform::new().with_uv_set(3));
+    let s = textured_prim_scene(r, 1);
+    let errs = s.validate().unwrap_err();
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::UvSetOutOfRange { uv_set: 3, .. })));
+
+    // And the converse: an out-of-range base set redeemed by an
+    // in-range override validates clean.
+    let r = TextureRef::new(TextureId(0))
+        .with_uv_set(7)
+        .with_transform(TextureTransform::new().with_uv_set(0));
+    let s = textured_prim_scene(r, 1);
+    assert!(s.validate().is_ok());
+}
+
+#[test]
+fn unused_material_uv_set_not_checked() {
+    // The material is in the arena but no primitive applies it — the
+    // coverage rule is per applied primitive, so nothing fires.
+    let mut s = Scene3D::new();
+    s.add_texture(oxideav_mesh3d::Texture::from_uri("t.png"));
+    let mut mat = Material::new();
+    mat.base_color_texture = Some(TextureRef::new(TextureId(0)).with_uv_set(9));
+    s.add_material(mat);
+    assert!(s.validate().is_ok());
+}
+
+#[test]
+fn variant_mapping_material_uv_set_checked() {
+    let mut s = Scene3D::new();
+    s.add_texture(oxideav_mesh3d::Texture::from_uri("t.png"));
+    let base = s.add_material(Material::new());
+    let mut alt = Material::new();
+    alt.emissive_texture = Some(TextureRef::new(TextureId(0)).with_uv_set(2));
+    let altid = s.add_material(alt);
+    let red = s.add_material_variant("Red");
+    let mut p = one_triangle_primitive();
+    p.uvs = vec![vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]];
+    p.material = Some(base);
+    p.variant_mappings = vec![oxideav_mesh3d::VariantMapping {
+        material: altid,
+        variants: vec![red],
+    }];
+    let mid = s.add_mesh(Mesh::new(None).with_primitive(p));
+    let nid = s.add_node(Node::new().with_mesh(mid));
+    s.add_root(nid);
+    let errs = s.validate().unwrap_err();
+    assert_eq!(errs.len(), 1);
+    let ValidationError::UvSetOutOfRange { location, .. } = &errs[0] else {
+        panic!("wrong variant: {:?}", errs[0]);
+    };
+    assert!(
+        location.contains("variant_mappings[0]") && location.contains("materials[1]"),
+        "location was {location}"
+    );
+}
+
+#[test]
+fn shared_base_and_mapping_material_reports_once() {
+    // The same out-of-coverage material both as base and as a
+    // mapping override — one report, not two.
+    let mut s = Scene3D::new();
+    s.add_texture(oxideav_mesh3d::Texture::from_uri("t.png"));
+    let mut mat = Material::new();
+    mat.base_color_texture = Some(TextureRef::new(TextureId(0)).with_uv_set(1));
+    let matid = s.add_material(mat);
+    let red = s.add_material_variant("Red");
+    let mut p = one_triangle_primitive();
+    p.uvs = vec![vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]];
+    p.material = Some(matid);
+    p.variant_mappings = vec![oxideav_mesh3d::VariantMapping {
+        material: matid,
+        variants: vec![red],
+    }];
+    s.add_mesh(Mesh::new(None).with_primitive(p));
+    let errs = s.validate().unwrap_err();
+    let uv_errs = errs
+        .iter()
+        .filter(|e| matches!(e, ValidationError::UvSetOutOfRange { .. }))
+        .count();
+    assert_eq!(uv_errs, 1);
+}
+
+#[test]
+fn dangling_applied_material_does_not_double_report() {
+    // A primitive applying a dangling material id: the DanglingId
+    // report stands alone — the uv-set rule skips unresolvable ids.
+    let mut p = one_triangle_primitive();
+    p.material = Some(oxideav_mesh3d::MaterialId(4));
+    let mut s = Scene3D::new();
+    s.add_mesh(Mesh::new(None).with_primitive(p));
+    let errs = s.validate().unwrap_err();
+    assert_eq!(errs.len(), 1);
+    assert!(matches!(
+        &errs[0],
+        ValidationError::DanglingId {
+            arena: "materials",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn non_finite_texture_transform_reported() {
+    let r = TextureRef::new(TextureId(0))
+        .with_transform(TextureTransform::new().with_rotation(f32::NAN));
+    let s = textured_prim_scene(r, 1);
+    let errs = s.validate().unwrap_err();
+    assert_eq!(errs.len(), 1);
+    let ValidationError::TextureTransformNotFinite { location } = &errs[0] else {
+        panic!("wrong variant: {:?}", errs[0]);
+    };
+    assert!(
+        location.contains("materials[0].base_color_texture.transform"),
+        "location was {location}"
+    );
+}
+
+#[test]
+fn finite_texture_transform_validates_clean() {
+    let r = TextureRef::new(TextureId(0)).with_transform(
+        TextureTransform::new()
+            .with_offset([0.5, 0.5])
+            .with_rotation(1.0)
+            .with_scale([2.0, -1.0]),
+    );
+    let s = textured_prim_scene(r, 1);
+    assert!(s.validate().is_ok());
 }
