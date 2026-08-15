@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.4...v0.0.5) - 2026-08-15
+
+### Other
+
+- seeded property coverage — wrap-mode and transform invariants
+- docs — README + changelog for the texture-transform/sampler surface
+- validate() — UV-set coverage rule + texture-transform finiteness
+- typed sampler surface — undefined filters, mip decomposition, wrap semantics
+- typed KHR_texture_transform surface — TextureTransform on TextureRef
+- property suite — weight-precedence chain invariants over random scenes
+- static-fold lifts — Primitive::morphed + Mesh::morphed
+- node-level morph-weight overrides — Node::weights + full weight-precedence chain
+
 ### Added
 
 - **Node-level morph-weight overrides** — `Node::weights` (glTF 2.0
