@@ -127,4 +127,4 @@ pub use scene::{
 };
 pub use skin::{Skeleton, Skin};
 pub use smooth::SmoothOptions;
-pub use texture::{ImageData, MagFilter, MinFilter, Sampler, Texture, WrapMode};
+pub use texture::{ImageData, MagFilter, MinFilter, MipmapMode, Sampler, Texture, WrapMode};

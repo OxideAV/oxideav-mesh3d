@@ -343,12 +343,17 @@ fn light_variants_round_trip_via_clone() {
 
 #[test]
 fn texture_constructors_default_to_gltf_sampler() {
+    // The glTF default sampler: repeat wrapping, filters undefined
+    // (the runtime picks) — with the trilinear effective fallback.
     let t = Texture::from_uri("file://foo.png");
-    assert_eq!(t.sampler.mag_filter, MagFilter::Linear);
-    assert_eq!(t.sampler.min_filter, MinFilter::LinearMipLinear);
+    assert_eq!(t.sampler.mag_filter, None);
+    assert_eq!(t.sampler.min_filter, None);
     assert_eq!(t.sampler.wrap_s, WrapMode::Repeat);
     assert_eq!(t.sampler.wrap_t, WrapMode::Repeat);
+    assert_eq!(t.sampler.effective_mag_filter(), MagFilter::Linear);
+    assert_eq!(t.sampler.effective_min_filter(), MinFilter::LinearMipLinear);
 
     let s = Sampler::default_sampler();
-    assert_eq!(s.mag_filter, MagFilter::Linear);
+    assert_eq!(s, Sampler::default());
+    assert_eq!(s.mag_filter, None);
 }
