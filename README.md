@@ -63,15 +63,39 @@ coverage lives in the workspace umbrella's `oxideav-tests`.
   `Material::texture_refs()` enumerates every occupied texture slot
   (core + all extensions) for resource walkers, and is what
   `Scene3D::validate` checks texture ids through.
+- Texture references (`TextureRef`) — texture id + UV set + an
+  optional typed `TextureTransform` (`KHR_texture_transform`:
+  offset / rotation / scale plus the `texCoord` override), `None`
+  keeping "no transform declared" distinguishable from an explicit
+  identity. The transform carries its semantics typed: `to_matrix`
+  (row-major T·R·S), `apply` / `apply_channel` (the whole-channel
+  bake an exporter targeting a transform-free format needs),
+  `is_identity` / `is_finite`; `TextureRef::effective_uv_set`
+  resolves the override chain. `Material::map_texture_refs` rewrites
+  whole references across every slot in one walk (uv-set
+  retargeting, transform attach/clear); `map_texture_ids` stays the
+  id-only remap. `Scene3D::validate` enforces transform finiteness
+  and the UV-set coverage rule — every texture slot of every
+  material a primitive can draw with (base + variant mappings) must
+  sample a UV channel that primitive carries, checked through the
+  effective (override-aware) set.
 - Material variants (`KHR_materials_variants`) —
   `Scene3D::material_variants` name roster + per-primitive
   `VariantMapping` overrides. `append` unifies rosters by name,
   `merge_primitives_by_material` treats mappings as draw state, and
   `validate` enforces live ids plus the at-most-once variant rule.
 - `Texture` / `ImageData { Embedded, Source(Arc<dyn AssetSource>),
-  External }` / `Sampler`. `AssetSource` lets format crates pass a
-  lazy reader through the model without materialising bytes, with
-  optional `raw_storage()` pass-through for archive-to-archive copy.
+  External }` / `Sampler`. The sampler keeps glTF's undefined-filter
+  state representable (`Option`-shaped mag/min filters — the spec
+  gives them no default — with `effective_*` accessors substituting
+  the documented Linear / trilinear fallback), decomposes mip
+  behaviour (`MinFilter::mipmap_mode` → `MipmapMode`,
+  `uses_mipmaps`, `base_filter`), and evaluates the wrap modes'
+  reference semantics (`WrapMode::wrap`, `Sampler::wrap_uv`; wraps
+  default to the normative `Repeat`). `AssetSource` lets format
+  crates pass a lazy reader through the model without materialising
+  bytes, with optional `raw_storage()` pass-through for
+  archive-to-archive copy.
 - `Skeleton` + `Skin`; `Animation` / channels / samplers /
   `Interpolation`; `Camera`; `Light`; `Audio*` types
   (`AudioSource`, `AudioEmitter`, `SpatialAudio`, `AuralMode`,

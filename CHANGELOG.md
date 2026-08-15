@@ -43,8 +43,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared-mesh scenes with mixed morph/translation channels;
   `Primitive::morphed` ≡ `apply_morph_weights` fold (wrong-length
   vectors included) with the roster consumed.
+- **Typed texture transform** (`KHR_texture_transform`) —
+  `TextureRef` gains `transform: Option<TextureTransform>`: offset /
+  rotation (radians CCW) / scale plus the `texCoord` override, with
+  `None` keeping "no transform declared" distinguishable from an
+  explicit identity so an encoder re-emits exactly what the source
+  declared. `TextureTransform` ships the extension's semantics
+  typed: `IDENTITY` / `Default`, `with_*` builders, `is_identity`
+  (a `texCoord`-only override is *not* an identity), `is_finite`,
+  `to_matrix` (row-major column-vector 3×3, `T·R·S` — same
+  convention as the node 4×4s), `apply`, and `apply_channel` (the
+  whole-channel bake an exporter targeting a transform-free format
+  needs). `TextureRef::effective_uv_set` resolves the
+  override-vs-`uv_set` chain; `with_uv_set` / `with_transform`
+  builders round out construction. `Scene3D::append` carries
+  transforms verbatim (id-free payload).
+- `Material::map_texture_refs(f)` — the whole-`TextureRef` in-place
+  walker over the complete slot list (core + every extension map),
+  for uv-set retargeting and transform attach/clear passes;
+  `map_texture_ids` is now implemented on top of it and keeps its
+  id-only contract.
+- **Typed sampler mip/wrap surface** — `MinFilter::uses_mipmaps` /
+  `mipmap_mode` (new `MipmapMode` enum: `Disabled` / `Nearest` /
+  `Linear`) / `base_filter` split each of the six minification
+  variants into their two independent axes;
+  `Sampler::uses_mipmaps` tells an importer whether a texture needs
+  its mip chain. `WrapMode::wrap` evaluates the CPU-side reference
+  semantics of the three wrap modes (clamp / fract / period-2
+  triangle wave; non-finite → `0.0`), `Sampler::wrap_uv` applies
+  `wrap_s`/`wrap_t` per axis, and `WrapMode` gains the normative
+  `Repeat` `Default`. `Sampler` builders: `with_mag_filter` /
+  `with_min_filter` / `with_wrap`.
+- `Scene3D::validate` texture-reference rules (new
+  `ValidationError` variants):
+  - `UvSetOutOfRange` — every texture slot of every material a
+    primitive can draw with (base material + each
+    `KHR_materials_variants` mapping override) must sample a UV
+    channel the primitive carries (glTF 2.0 requires the
+    corresponding `TEXCOORD_<set>` attribute for the material to be
+    applicable). Checked through `TextureRef::effective_uv_set`, so
+    a `KHR_texture_transform` `texCoord` override is honoured — it
+    can both introduce and redeem a violation. Shared materials
+    report once per primitive; dangling ids stay `DanglingId` alone.
+  - `TextureTransformNotFinite` — a transform with a non-finite
+    offset / rotation / scale component, reported per material slot.
 
 ### Changed
+
+- **`Sampler::mag_filter` / `min_filter` are now
+  `Option`-shaped** — glTF gives the two filters *no* default (an
+  undefined filter is the runtime's choice, §3.8.4.1), so the
+  round-trip-able model keeps "undefined" distinguishable from
+  every explicit choice; previously an omitted filter silently
+  became an explicit Linear / trilinear. `default_sampler()` now
+  models the samplerless-texture state exactly (repeat wrapping,
+  filters undefined) and equals `Sampler::default()`;
+  `effective_mag_filter()` / `effective_min_filter()` substitute
+  the crate's documented `Linear` / `LinearMipLinear` fallback on
+  demand. Migration: read through the `effective_*` accessors (or
+  match on the `Option`); construct explicit filters via
+  `with_mag_filter` / `with_min_filter`.
+- `TextureRef` adds the `transform` field (struct literals gain one
+  member; `TextureRef::new` + builders are unchanged and preferred)
+  and drops its `Eq` derive (the transform carries `f32`s;
+  `PartialEq` remains).
 
 - `Scene3D::posed` bakes sampled morph weights onto each driven
   **node** (`Node::weights`) instead of writing the shared
