@@ -308,3 +308,62 @@ fn append_remaps_texture_id_but_keeps_transform() {
         )
     );
 }
+
+// ---------------------------------------------------------------
+// Seeded properties (house-style LCG, no dependencies)
+
+fn lcg(state: &mut u64) -> f32 {
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let bits = (*state >> 40) as u32;
+    bits as f32 / (1 << 24) as f32
+}
+
+#[test]
+fn apply_agrees_with_matrix_over_random_transforms() {
+    let mut state = 0xBEEF_u64;
+    for _ in 0..300 {
+        let t = TextureTransform {
+            offset: [(lcg(&mut state) - 0.5) * 4.0, (lcg(&mut state) - 0.5) * 4.0],
+            rotation: (lcg(&mut state) - 0.5) * 12.0,
+            scale: [(lcg(&mut state) - 0.5) * 6.0, (lcg(&mut state) - 0.5) * 6.0],
+            uv_set: None,
+        };
+        let m = t.to_matrix();
+        let uv = [(lcg(&mut state) - 0.5) * 2.0, (lcg(&mut state) - 0.5) * 2.0];
+        let via_matrix = [
+            m[0][0] * uv[0] + m[0][1] * uv[1] + m[0][2],
+            m[1][0] * uv[0] + m[1][1] * uv[1] + m[1][2],
+        ];
+        let direct = t.apply(uv);
+        assert!(
+            (direct[0] - via_matrix[0]).abs() < 1e-4 && (direct[1] - via_matrix[1]).abs() < 1e-4,
+            "{t:?} at {uv:?}: {direct:?} vs {via_matrix:?}"
+        );
+    }
+}
+
+#[test]
+fn zero_rotation_transform_is_componentwise_affine() {
+    // Without rotation the two axes never mix: uv' = uv·scale + offset.
+    let mut state = 0xF00D_u64;
+    for _ in 0..300 {
+        let t = TextureTransform {
+            offset: [(lcg(&mut state) - 0.5) * 4.0, (lcg(&mut state) - 0.5) * 4.0],
+            rotation: 0.0,
+            scale: [(lcg(&mut state) - 0.5) * 6.0, (lcg(&mut state) - 0.5) * 6.0],
+            uv_set: None,
+        };
+        let uv = [lcg(&mut state), lcg(&mut state)];
+        let out = t.apply(uv);
+        let expect = [
+            uv[0] * t.scale[0] + t.offset[0],
+            uv[1] * t.scale[1] + t.offset[1],
+        ];
+        assert!(
+            (out[0] - expect[0]).abs() < 1e-5 && (out[1] - expect[1]).abs() < 1e-5,
+            "{t:?} at {uv:?}"
+        );
+    }
+}

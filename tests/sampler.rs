@@ -175,3 +175,56 @@ fn wrap_uv_applies_each_axis_independently() {
     assert_close(out[0], 1.0); // clamped
     assert_close(out[1], 0.25); // repeated
 }
+
+// ---------------------------------------------------------------
+// Seeded properties (house-style LCG, no dependencies)
+
+fn lcg(state: &mut u64) -> f32 {
+    // Numerical Recipes LCG constants; take the high bits.
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let bits = (*state >> 40) as u32; // 24 bits
+    bits as f32 / (1 << 24) as f32
+}
+
+#[test]
+fn wrap_output_always_lands_in_unit_range_and_is_idempotent() {
+    let modes = [
+        WrapMode::ClampToEdge,
+        WrapMode::Repeat,
+        WrapMode::MirroredRepeat,
+    ];
+    let mut state = 0x5EED_u64;
+    for _ in 0..1000 {
+        let x = (lcg(&mut state) - 0.5) * 16.0; // [-8, 8)
+        for w in modes {
+            let y = w.wrap(x);
+            assert!((0.0..=1.0).contains(&y), "{w:?}.wrap({x}) = {y}");
+            // A wrapped coordinate is already in the sampled range,
+            // so wrapping again must be a no-op.
+            let z = w.wrap(y);
+            assert!(
+                (y - z).abs() < 1e-6,
+                "{w:?} not idempotent at {x}: {y} -> {z}"
+            );
+        }
+    }
+}
+
+#[test]
+fn repeat_wrap_is_period_one_and_mirrored_is_period_two() {
+    let mut state = 0xACE_u64;
+    for _ in 0..500 {
+        let x = (lcg(&mut state) - 0.5) * 8.0;
+        let r = WrapMode::Repeat;
+        assert!((r.wrap(x) - r.wrap(x + 1.0)).abs() < 1e-5, "Repeat at {x}");
+        let m = WrapMode::MirroredRepeat;
+        assert!(
+            (m.wrap(x) - m.wrap(x + 2.0)).abs() < 1e-5,
+            "Mirrored at {x}"
+        );
+        // Mirroring: reflecting about an even integer is invariant.
+        assert!((m.wrap(-x) - m.wrap(x)).abs() < 1e-5, "Mirror sym at {x}");
+    }
+}
