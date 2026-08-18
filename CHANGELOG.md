@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.5...v0.0.6) - 2026-08-18
+
+### Other
+
+- morph property suite + README rollup for the round-448 surfaces
+- typed in-between shapes — Inbetween on MorphTarget + station resolution
+- typed morph-target names — Mesh::target_names + validate length rule
+- sampled MorphWeights synthesis path — typed constructors + lossless read-back
+
 ### Added
 
 - Seeded property suite for the round's morph surfaces
