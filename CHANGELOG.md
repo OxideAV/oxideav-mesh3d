@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Seeded property suite for the round's morph surfaces
+  (`tests/morph_props.rs`, deterministic LCG, no new dependencies):
+  sampler-synthesis lossless round-trips + bracketing-hull
+  containment, cubic triple round-trips, `at_weight` station/endpoint
+  exactness + piecewise affinity, linear degeneration without
+  in-betweens, `apply_morph_weights` ≡ the manual station sum,
+  morph/transform commutation with in-betweens, and
+  `optimize_vertex_fetch` invariance of morphed drawn triangles.
+- README refresh for the three new surfaces (target names,
+  in-between shapes, sampled-`MorphWeights` synthesis).
+
 - **Typed in-between shapes** — `MorphTarget::inbetweens:
   Vec<Inbetween>` gives the USD blend-shape `inbetweens:` encoding
   (staged schema `docs/3d/usd/usdskel-usdpreviewsurface-schema.md`

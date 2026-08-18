@@ -42,7 +42,20 @@ coverage lives in the workspace umbrella's `oxideav-tests`.
 - `Mesh` / `Primitive` / `Topology` (Triangles, TriangleStrip,
   TriangleFan, Lines, LineStrip, LineLoop, Points) / `Indices`
   (U16 or U32). Multi-channel UVs, vertex colours, optional skinning
-  joints + weights, and `MorphTarget` delta buffers.
+  joints + weights, and `MorphTarget` delta buffers. Morph state is
+  complete: `Mesh::target_names` types the glTF §3.7.2.2
+  implementation-note convention (`mesh.extras.targetNames`, with
+  `target_name` / `find_target` lookups and the length rule
+  enforced by `validate`), and `MorphTarget::inbetweens` types the
+  USD blend-shape in-between encoding — named corrective shapes
+  pinned at intermediate weight stations, resolved by
+  `MorphTarget::at_weight` (implicit null/primary endpoints,
+  unbounded piecewise-linear bracketing) and routed through
+  `apply_morph_weights`, so the entire instantiation pipeline
+  (`morphed`, `world_mesh*`, `posed`, sampled `MorphWeights`
+  channels) blends through the stations. Geometry passes (weld,
+  transform bake, vertex-buffer reorders, subdivision, decimation)
+  carry in-between buffers like any other per-vertex delta stream.
 - `Material` — full glTF 2.0 metallic-roughness PBR slots plus
   `AlphaMode` and `double_sided`, refined by a typed `MaterialExt`
   surface for the KHR material extensions: emissive strength, index of
@@ -99,7 +112,16 @@ coverage lives in the workspace umbrella's `oxideav-tests`.
 - `Skeleton` + `Skin`; `Animation` / channels / samplers /
   `Interpolation`; `Camera`; `Light`; `Audio*` types
   (`AudioSource`, `AudioEmitter`, `SpatialAudio`, `AuralMode`,
-  `DistanceModel`).
+  `DistanceModel`). Sampled `MorphWeights` channels are authorable
+  purely through the typed model:
+  `AnimationSampler::morph_weights` /
+  `morph_weights_cubic` build well-formed weights samplers from
+  per-keyframe vectors (structural §3.6 rules enforced at
+  construction), `morph_weight_frame(s)` /
+  `morph_weight_cubic_frame` read the authored key values back
+  losslessly for exporters, and `AnimationChannel::new` /
+  `Animation::with_channel` / `channel_for` round out first-class
+  channel authoring.
 - `Mesh3DDecoder` / `Mesh3DEncoder` traits + `Mesh3DRegistry`
   (case-insensitive extension / format-id lookup).
 
