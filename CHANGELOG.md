@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sampled-`MorphWeights` synthesis path** — a `MorphWeights`
+  animation channel can now be authored purely through the typed
+  model, no manual stride flattening:
+  - `AnimationSampler::morph_weights(keyframes, frames,
+    interpolation)` — build a well-formed Step / Linear weights
+    sampler from per-keyframe weight vectors (`frames[k]` = the full
+    vector at `keyframes[k]`), flattened row-major into
+    `AnimationValues::Scalar` exactly as `sample` reads it. Returns
+    `None` instead of a sampler `validate` would reject: empty /
+    non-finite / non-strictly-increasing keyframes (glTF 2.0 §3.6),
+    frame-count mismatch, ragged or zero stride, or `CubicSpline`
+    (which carries tangent triples — see below). Weight *values* pass
+    through verbatim (negative / >1 weights are meaningful).
+  - `AnimationSampler::morph_weights_cubic(keyframes, in_tangents,
+    values, out_tangents)` — the cubic companion: three parallel
+    per-keyframe tables laid out in the interleaved
+    `[a_0, v_0, b_0, a_1, v_1, b_1, …]` order of §3.6.
+  - Lossless read-back for exporters that need the authored key
+    values rather than a resampling:
+    `AnimationSampler::morph_weight_stride` (per-keyframe vector
+    width), `morph_weight_frame(k)` (stored vector at keyframe `k` —
+    the centre *value* element for `CubicSpline`),
+    `morph_weight_frames()` (all of them, keyframe order), and
+    `morph_weight_cubic_frame(k)` (the full
+    `(in_tangent, value, out_tangent)` triple).
+  - `AnimationChannel::new(node, property, sampler)` and the chaining
+    builder `Animation::with_channel(node, property, sampler)`;
+    `Animation::channel_for(node, property)` looks the channel back
+    up (last-wins on out-of-spec §5.6 duplicates, matching
+    `sample_pose`).
+  - 15 integration tests (`tests/morph_channel.rs`): constructor
+    contracts, cubic layout + manual Hermite cross-check, lossless
+    round-trips, and an end-to-end synthesized channel driving
+    `validate` + `world_mesh_at`.
+
 ## [0.0.5](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.4...v0.0.5) - 2026-08-15
 
 ### Other

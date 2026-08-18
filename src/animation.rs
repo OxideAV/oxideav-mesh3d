@@ -268,6 +268,212 @@ impl AnimationSampler {
     }
 }
 
+impl AnimationSampler {
+    /// Build a well-formed [`AnimationProperty::MorphWeights`] sampler
+    /// from per-keyframe weight vectors — the synthesis path for
+    /// authoring a sampled morph-weight animation purely through the
+    /// typed model (no manual stride flattening).
+    ///
+    /// `frames[k]` is the full weight vector at `keyframes[k]` — one
+    /// `f32` per morph target of the mesh the channel will drive
+    /// (glTF 2.0 §3.6: a weights sampler carries `count(targets)`
+    /// floats per keyframe). The vectors are flattened row-major into
+    /// [`AnimationValues::Scalar`] exactly as
+    /// [`AnimationSampler::sample`] expects.
+    ///
+    /// Returns `None` — instead of a sampler [`Scene3D::validate`]
+    /// would reject — when:
+    ///
+    /// * `keyframes` is empty, non-finite, or not strictly increasing
+    ///   (§3.6 requires strictly-increasing timestamps);
+    /// * `frames.len() != keyframes.len()`;
+    /// * the frames don't share one non-zero length (the per-frame
+    ///   stride must be constant and at least 1);
+    /// * `interpolation` is [`Interpolation::CubicSpline`] — cubic
+    ///   keyframes carry tangent triples, use
+    ///   [`AnimationSampler::morph_weights_cubic`].
+    ///
+    /// Weight *values* are stored verbatim (negative and >1 weights
+    /// are meaningful morph inputs and pass through).
+    ///
+    /// [`Scene3D::validate`]: crate::Scene3D::validate
+    pub fn morph_weights(
+        keyframes: Vec<f32>,
+        frames: Vec<Vec<f32>>,
+        interpolation: Interpolation,
+    ) -> Option<Self> {
+        if matches!(interpolation, Interpolation::CubicSpline) {
+            return None;
+        }
+        let stride = uniform_stride(&keyframes, &[&frames])?;
+        let mut values = Vec::with_capacity(frames.len() * stride);
+        for f in &frames {
+            values.extend_from_slice(f);
+        }
+        Some(Self {
+            keyframes,
+            values: AnimationValues::Scalar(values),
+            interpolation,
+        })
+    }
+
+    /// Cubic-spline companion of [`AnimationSampler::morph_weights`]:
+    /// build a [`Interpolation::CubicSpline`] `MorphWeights` sampler
+    /// from parallel per-keyframe in-tangent / value / out-tangent
+    /// weight vectors.
+    ///
+    /// Per glTF 2.0 §3.6 each cubic keyframe stores the triple
+    /// `(in_tangent, value, out_tangent)`; this constructor lays the
+    /// three parallel tables out in the interleaved
+    /// `[a_0, v_0, b_0, a_1, v_1, b_1, …]` order the sampler reads
+    /// (each element `stride` weights wide).
+    ///
+    /// Returns `None` under the same structural rules as
+    /// [`AnimationSampler::morph_weights`], with all **three** tables
+    /// required to match the keyframe count and share one non-zero
+    /// stride.
+    pub fn morph_weights_cubic(
+        keyframes: Vec<f32>,
+        in_tangents: Vec<Vec<f32>>,
+        values: Vec<Vec<f32>>,
+        out_tangents: Vec<Vec<f32>>,
+    ) -> Option<Self> {
+        let stride = uniform_stride(&keyframes, &[&in_tangents, &values, &out_tangents])?;
+        let mut flat = Vec::with_capacity(keyframes.len() * 3 * stride);
+        for k in 0..keyframes.len() {
+            flat.extend_from_slice(&in_tangents[k]);
+            flat.extend_from_slice(&values[k]);
+            flat.extend_from_slice(&out_tangents[k]);
+        }
+        Some(Self {
+            keyframes,
+            values: AnimationValues::Scalar(flat),
+            interpolation: Interpolation::CubicSpline,
+        })
+    }
+
+    /// Per-keyframe weight-vector width of a `MorphWeights`-shaped
+    /// sampler — how many `f32`s one keyframe carries (equals the
+    /// morph-target count of the driven mesh on a conforming channel).
+    ///
+    /// `None` when the values are not [`AnimationValues::Scalar`] or
+    /// the sampler is structurally malformed (empty keyframes, value
+    /// table not an exact multiple of the keyframe table under the
+    /// interpolation's storage factor) — the same well-formedness
+    /// test [`AnimationSampler::sample`] applies.
+    pub fn morph_weight_stride(&self) -> Option<usize> {
+        let AnimationValues::Scalar(v) = &self.values else {
+            return None;
+        };
+        let n = self.keyframes.len();
+        if n == 0 {
+            return None;
+        }
+        let factor: usize = match self.interpolation {
+            Interpolation::CubicSpline => 3,
+            _ => 1,
+        };
+        let total = v.len();
+        if total == 0 || total % (n * factor) != 0 {
+            return None;
+        }
+        Some(total / (n * factor))
+    }
+
+    /// The **stored** weight vector at keyframe `k` — no
+    /// interpolation. For [`Interpolation::CubicSpline`] this is the
+    /// centre *value* element of the keyframe's
+    /// `(in_tangent, value, out_tangent)` triple.
+    ///
+    /// The read-back side of [`AnimationSampler::morph_weights`]: an
+    /// exporter that needs the authored key values (rather than a
+    /// resampling) walks `(0..keyframes.len())` with this. `None`
+    /// under the [`morph_weight_stride`] conditions or when `k` is
+    /// out of range.
+    ///
+    /// [`morph_weight_stride`]: AnimationSampler::morph_weight_stride
+    pub fn morph_weight_frame(&self, k: usize) -> Option<&[f32]> {
+        let stride = self.morph_weight_stride()?;
+        if k >= self.keyframes.len() {
+            return None;
+        }
+        let AnimationValues::Scalar(v) = &self.values else {
+            return None;
+        };
+        let (factor, centre) = match self.interpolation {
+            Interpolation::CubicSpline => (3, 1),
+            _ => (1, 0),
+        };
+        let base = (k * factor + centre) * stride;
+        v.get(base..base + stride)
+    }
+
+    /// Every stored per-keyframe weight vector, in keyframe order —
+    /// [`AnimationSampler::morph_weight_frame`] over the whole
+    /// sampler. `Some` is always exactly `keyframes.len()` slices
+    /// long. Lossless against [`AnimationSampler::morph_weights`]:
+    /// `morph_weights(t, f, i)?.morph_weight_frames()` yields `f`.
+    pub fn morph_weight_frames(&self) -> Option<Vec<&[f32]>> {
+        self.morph_weight_stride()?;
+        (0..self.keyframes.len())
+            .map(|k| self.morph_weight_frame(k))
+            .collect()
+    }
+
+    /// The full `(in_tangent, value, out_tangent)` weight-vector
+    /// triple stored at keyframe `k` of a
+    /// [`Interpolation::CubicSpline`] `MorphWeights` sampler — the
+    /// lossless read-back of
+    /// [`AnimationSampler::morph_weights_cubic`]. `None` for
+    /// non-cubic samplers, non-`Scalar` values, malformed storage, or
+    /// `k` out of range.
+    pub fn morph_weight_cubic_frame(&self, k: usize) -> Option<(&[f32], &[f32], &[f32])> {
+        if !matches!(self.interpolation, Interpolation::CubicSpline) {
+            return None;
+        }
+        let stride = self.morph_weight_stride()?;
+        if k >= self.keyframes.len() {
+            return None;
+        }
+        let AnimationValues::Scalar(v) = &self.values else {
+            return None;
+        };
+        let base = k * 3 * stride;
+        Some((
+            v.get(base..base + stride)?,
+            v.get(base + stride..base + 2 * stride)?,
+            v.get(base + 2 * stride..base + 3 * stride)?,
+        ))
+    }
+}
+
+/// Shared structural gate of the two `morph_weights*` constructors:
+/// keyframes non-empty / finite / strictly increasing, every parallel
+/// table exactly `keyframes.len()` rows, and all rows across all
+/// tables one common non-zero width. Returns that width.
+fn uniform_stride(keyframes: &[f32], tables: &[&Vec<Vec<f32>>]) -> Option<usize> {
+    if keyframes.is_empty() {
+        return None;
+    }
+    let mut prev = f32::NEG_INFINITY;
+    for &t in keyframes {
+        if !t.is_finite() || t <= prev {
+            return None;
+        }
+        prev = t;
+    }
+    let stride = tables.first()?.first()?.len();
+    if stride == 0 {
+        return None;
+    }
+    for table in tables {
+        if table.len() != keyframes.len() || table.iter().any(|row| row.len() != stride) {
+            return None;
+        }
+    }
+    Some(stride)
+}
+
 /// Spherical linear interpolation between two unit quaternions in
 /// xyzw order, per glTF 2.0 Appendix C.4.
 ///
@@ -352,6 +558,16 @@ pub struct AnimationChannel {
     pub sampler: AnimationSampler,
 }
 
+impl AnimationChannel {
+    /// Channel binding `sampler` to `property` of `node`.
+    pub fn new(node: NodeId, property: AnimationProperty, sampler: AnimationSampler) -> Self {
+        Self {
+            target: AnimationTarget { node, property },
+            sampler,
+        }
+    }
+}
+
 /// Named animation — a bag of channels played back together.
 #[derive(Clone, Debug, Default)]
 pub struct Animation {
@@ -366,5 +582,57 @@ impl Animation {
             name: name.into(),
             channels: Vec::new(),
         }
+    }
+
+    /// Push a channel binding `sampler` to `property` of `node` and
+    /// return `self` for chaining — the builder companion of
+    /// [`AnimationChannel::new`].
+    ///
+    /// ```
+    /// use oxideav_mesh3d::{
+    ///     Animation, AnimationProperty, AnimationSampler, Interpolation, NodeId,
+    /// };
+    ///
+    /// let sampler = AnimationSampler::morph_weights(
+    ///     vec![0.0, 1.0],
+    ///     vec![vec![0.0, 0.0], vec![1.0, 0.5]],
+    ///     Interpolation::Linear,
+    /// )
+    /// .unwrap();
+    /// let anim = Animation::new("blink".to_owned()).with_channel(
+    ///     NodeId(0),
+    ///     AnimationProperty::MorphWeights,
+    ///     sampler,
+    /// );
+    /// assert_eq!(anim.channels.len(), 1);
+    /// ```
+    pub fn with_channel(
+        mut self,
+        node: NodeId,
+        property: AnimationProperty,
+        sampler: AnimationSampler,
+    ) -> Self {
+        self.channels
+            .push(AnimationChannel::new(node, property, sampler));
+        self
+    }
+
+    /// The channel driving `property` of `node`, or `None` when this
+    /// animation doesn't animate that slot.
+    ///
+    /// glTF 2.0 §5.6 forbids two channels of one animation targeting
+    /// the same node + property; on out-of-spec duplicates the **last**
+    /// matching channel is returned — the same later-channel-wins rule
+    /// [`Animation::sample_pose`](crate::Animation) applies when
+    /// building a [`Pose`](crate::Pose).
+    pub fn channel_for(
+        &self,
+        node: NodeId,
+        property: AnimationProperty,
+    ) -> Option<&AnimationChannel> {
+        self.channels
+            .iter()
+            .rev()
+            .find(|ch| ch.target.node == node && ch.target.property == property)
     }
 }
