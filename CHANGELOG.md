@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Typed morph-target names** — `Mesh::target_names: Vec<String>`
+  lifts the de-facto convention glTF 2.0 documents in the §3.7.2.2
+  implementation note (`mesh.extras.targetNames`) to a first-class
+  field: `target_names[i]` names the `i`th `MorphTarget` slot of
+  every primitive in the mesh. Empty means unnamed (the common
+  case); the field is id-free so `Scene3D::append` carries it
+  verbatim. Additive — `Mesh` is `#[non_exhaustive]` and
+  constructor-built.
+  - `Mesh::with_target_names(names)` builder,
+    `Mesh::target_name(i)` accessor, and `Mesh::find_target(name)`
+    (name → weight-slot index, the lookup a consumer needs to drive a
+    named pose through `Mesh::weights` / `Node::weights` / a sampled
+    `MorphWeights` frame).
+  - `Scene3D::validate` enforces the note's length rule per
+    primitive (new `ValidationError::MorphTargetNameCountMismatch`):
+    a non-empty `target_names` must be exactly as long as every
+    primitive's `targets` roster.
+  - Lifecycle: the morph-consuming bakes (`Mesh::morphed`,
+    `Mesh::skinned`, the `world_mesh*` instantiation pipeline) clear
+    the names alongside the targets they consume, so flattened output
+    still validates; `simplify_quadric*` roll-ups (targets survive)
+    and `merge_primitives_by_material` / `Scene3D::append` carry
+    them.
+  - 13 integration tests (`tests/target_names.rs`).
+
 - **Sampled-`MorphWeights` synthesis path** — a `MorphWeights`
   animation channel can now be authored purely through the typed
   model, no manual stride flattening:

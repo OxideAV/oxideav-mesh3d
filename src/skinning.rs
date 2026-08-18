@@ -422,6 +422,7 @@ impl Scene3D {
             };
         }
         out.weights = Vec::new();
+        out.target_names = Vec::new();
         Some(out)
     }
 }
@@ -589,6 +590,8 @@ impl Mesh {
             *prim = prim.skinned(palette);
         }
         out.weights = Vec::new();
+        // Names name the consumed target slots (see [`Mesh::morphed`]).
+        out.target_names = Vec::new();
         out
     }
 

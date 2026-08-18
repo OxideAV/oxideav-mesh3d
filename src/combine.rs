@@ -212,8 +212,10 @@ impl Mesh {
     ///
     /// Group order follows first appearance of each draw state in
     /// [`Mesh::primitives`], so the result is deterministic. The mesh's
-    /// `name` and `weights` are preserved; morph targets are dropped
-    /// from the fused primitives (consistent with `merge`).
+    /// `name`, `weights`, and `target_names` are preserved; morph
+    /// targets are dropped from the fused primitives (consistent with
+    /// `merge` — run [`Mesh::morphed`] first, or clear the mesh-level
+    /// morph fields, if the inputs carried targets).
     /// Does not mutate `self`. A mesh with no primitives returns a clone
     /// with an empty primitive list.
     pub fn merge_primitives_by_material(&self) -> Mesh {

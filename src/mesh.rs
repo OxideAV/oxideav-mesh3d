@@ -5000,6 +5000,27 @@ pub struct Mesh {
     /// resolves the static half). Empty vec means no static weights —
     /// the runtime falls back to zero (i.e. base mesh).
     pub weights: Vec<f32>,
+    /// Morph-target display names, `target_names[i]` naming the `i`th
+    /// [`MorphTarget`] of every primitive in this mesh.
+    ///
+    /// glTF 2.0 keeps target names out of the core schema but
+    /// documents the de-facto convention in the §3.7.2.2
+    /// implementation note: an array of strings,
+    /// `mesh.extras.targetNames`, whose length **must** equal every
+    /// primitive's `targets` length. The typed model lifts that
+    /// convention to a first-class field — format importers map their
+    /// wire-side channel/shape names here instead of round-tripping
+    /// through `extras`, and exporters that need a name per weight
+    /// slot (blend-shape channels, per-pose tracks) read it back with
+    /// [`Mesh::target_name`] / [`Mesh::find_target`].
+    ///
+    /// Empty vec means unnamed targets (the common glTF case). When
+    /// non-empty, [`Scene3D::validate`](crate::Scene3D::validate)
+    /// enforces the length rule per primitive
+    /// (`MorphTargetNameCountMismatch`). Names are id-free, so
+    /// [`Scene3D::append`](crate::Scene3D::append) carries them
+    /// verbatim.
+    pub target_names: Vec<String>,
 }
 
 impl Mesh {
@@ -5009,6 +5030,7 @@ impl Mesh {
             name: name.into(),
             primitives: Vec::new(),
             weights: Vec::new(),
+            target_names: Vec::new(),
         }
     }
 
@@ -5026,10 +5048,43 @@ impl Mesh {
         self
     }
 
+    /// Set the morph-target display names and return `self` for
+    /// chaining. The vector length should match the number of
+    /// [`MorphTarget`]s on each [`Primitive`] in this mesh (glTF 2.0
+    /// §3.7.2.2 implementation note — `mesh.extras.targetNames` must
+    /// be as long as every primitive's `targets` array;
+    /// [`Scene3D::validate`](crate::Scene3D::validate) enforces it).
+    pub fn with_target_names<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.target_names = names.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The display name of morph-target slot `i`, or `None` when the
+    /// targets are unnamed ([`Mesh::target_names`] empty) or `i` is
+    /// out of range.
+    pub fn target_name(&self, i: usize) -> Option<&str> {
+        self.target_names.get(i).map(String::as_str)
+    }
+
+    /// The morph-target slot carrying display name `name` — the index
+    /// to poke into a weight vector
+    /// ([`Mesh::weights`] / [`Node::weights`](crate::Node::weights) /
+    /// a sampled `MorphWeights` frame) to drive that named pose.
+    /// First match wins on duplicate names; `None` when no target
+    /// carries the name.
+    pub fn find_target(&self, name: &str) -> Option<usize> {
+        self.target_names.iter().position(|n| n == name)
+    }
+
     /// Fold a morph-weight vector into a **static** copy of this mesh
     /// — [`Primitive::morphed`] applied to every contained primitive,
-    /// with the consumed default [`Mesh::weights`] cleared alongside
-    /// each primitive's target roster (`name` is preserved).
+    /// with the consumed default [`Mesh::weights`] and
+    /// [`Mesh::target_names`] cleared alongside each primitive's
+    /// target roster (`name` is preserved).
     ///
     /// The caller resolves *which* vector to bake:
     /// [`crate::Scene3D::effective_morph_weights`] yields the static
@@ -5043,6 +5098,9 @@ impl Mesh {
             *prim = prim.morphed(weights);
         }
         out.weights = Vec::new();
+        // The names name the consumed target slots — a morph-free
+        // mesh keeping them would fail the validate() length rule.
+        out.target_names = Vec::new();
         out
     }
 
@@ -5460,6 +5518,7 @@ impl Mesh {
                 .map(|p| p.simplify_quadric(target_triangles))
                 .collect(),
             weights: self.weights.clone(),
+            target_names: self.target_names.clone(),
         }
     }
 
@@ -5481,6 +5540,7 @@ impl Mesh {
                 .map(|p| p.simplify_quadric_error(max_error))
                 .collect(),
             weights: self.weights.clone(),
+            target_names: self.target_names.clone(),
         }
     }
 }

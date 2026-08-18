@@ -2186,6 +2186,10 @@ impl Scene3D {
     /// * `Mesh::weights.len()` matches the morph-target count of
     ///   every contained primitive (or every primitive has zero
     ///   targets and `weights` is empty).
+    /// * `Mesh::target_names.len()`, when non-empty, matches the
+    ///   morph-target count of every contained primitive (glTF 2.0
+    ///   §3.7.2.2 implementation note — the `targetNames` array and
+    ///   all primitive `targets` arrays must have the same length).
     /// * A non-empty `Node::weights` override sits on a node that
     ///   instantiates a mesh, and its length matches the morph-target
     ///   count of every primitive of that mesh (glTF 2.0 `node.weights`
@@ -2521,6 +2525,17 @@ impl Scene3D {
                         primitive_targets: prim.targets.len(),
                     });
                 }
+                // Morph-target names: glTF 2.0 §3.7.2.2 implementation
+                // note — the `targetNames` array and all primitive
+                // `targets` arrays must have the same length. Empty
+                // means unnamed and is always fine.
+                if !mesh.target_names.is_empty() && prim.targets.len() != mesh.target_names.len() {
+                    errors.push(ValidationError::MorphTargetNameCountMismatch {
+                        location: format!("meshes[{mi}].primitives[{pi}].targets"),
+                        target_names: mesh.target_names.len(),
+                        primitive_targets: prim.targets.len(),
+                    });
+                }
             }
         }
 
@@ -2832,6 +2847,16 @@ pub enum ValidationError {
         mesh_weights: usize,
         primitive_targets: usize,
     },
+    /// [`Mesh::target_names`](crate::Mesh::target_names) is non-empty
+    /// and its length disagrees with one of the child primitives'
+    /// morph-target count (glTF 2.0 §3.7.2.2 implementation note:
+    /// the `targetNames` array and all primitive `targets` arrays
+    /// must have the same length).
+    MorphTargetNameCountMismatch {
+        location: String,
+        target_names: usize,
+        primitive_targets: usize,
+    },
     /// A [`Node::weights`](crate::Node::weights) override is non-empty
     /// and its length disagrees with the morph-target count of one of
     /// the instantiated mesh's primitives (glTF 2.0 `node.weights`:
@@ -2975,6 +3000,14 @@ impl std::fmt::Display for ValidationError {
             } => write!(
                 f,
                 "{location}: mesh has {mesh_weights} weights but primitive carries {primitive_targets} morph targets"
+            ),
+            Self::MorphTargetNameCountMismatch {
+                location,
+                target_names,
+                primitive_targets,
+            } => write!(
+                f,
+                "{location}: mesh names {target_names} morph targets but primitive carries {primitive_targets}"
             ),
             Self::NodeMorphWeightCountMismatch {
                 location,
