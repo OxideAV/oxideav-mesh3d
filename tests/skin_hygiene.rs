@@ -261,10 +261,7 @@ fn morph_anim_scene(n_targets: usize, stride: usize) -> Scene3D {
     let mut prim = Primitive::new(Topology::Triangles);
     prim.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     prim.targets = (0..n_targets)
-        .map(|_| MorphTarget {
-            position: Some(vec![[0.0, 0.0, 1.0]; 3]),
-            ..Default::default()
-        })
+        .map(|_| MorphTarget::with_deltas(Some(vec![[0.0, 0.0, 1.0]; 3]), None, None))
         .collect();
     let mut s = Scene3D::new();
     let mid = s.add_mesh(Mesh::new(None).with_primitive(prim));

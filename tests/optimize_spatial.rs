@@ -145,11 +145,11 @@ fn carries_attributes_with_positions() {
     let mut prim = Primitive::new(Topology::Points);
     prim.positions = vec![[9.0, 9.0, 9.0], [0.0, 0.0, 0.0]];
     prim.normals = Some(vec![[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]);
-    prim.targets = vec![MorphTarget {
-        position: Some(vec![[0.9, 0.0, 0.0], [0.1, 0.0, 0.0]]),
-        normal: None,
-        tangent: None,
-    }];
+    prim.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.9, 0.0, 0.0], [0.1, 0.0, 0.0]]),
+        None,
+        None,
+    )];
     let opt = prim.optimize_vertex_spatial(8);
     // The (0,0,0) vertex sorts first; its normal [0,0,1] and morph delta
     // [0.1,..] must travel with it.

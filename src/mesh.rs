@@ -82,7 +82,11 @@ impl Indices {
 /// base attribute on the parent [`Primitive`]. Absent slots
 /// (`None`/`tangent: None`) leave that attribute untouched at runtime
 /// for this target.
+/// **`#[non_exhaustive]`:** construct via [`MorphTarget::new`] +
+/// per-field assignment; new slots land in minor releases without
+/// breaking downstream callers.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct MorphTarget {
     /// Per-vertex `POSITION` delta (added to the base `positions`).
     pub position: Option<Vec<[f32; 3]>>,
@@ -91,6 +95,99 @@ pub struct MorphTarget {
     /// Per-vertex `TANGENT` delta (added to the base `tangents` xyz;
     /// the handedness `w` is *not* morphed per spec §3.7.2.2).
     pub tangent: Option<Vec<[f32; 3]>>,
+    /// Named **in-between shapes**: explicit corrective shapes to use
+    /// when this target's channel resolves at an intermediate weight,
+    /// instead of linearly scaling the primary deltas (the USD
+    /// blend-shape `inbetweens:` encoding — see
+    /// `docs/3d/usd/usdskel-usdpreviewsurface-schema.md` §1.4.1;
+    /// glTF has no wire equivalent, so exporters targeting glTF fold
+    /// them via [`MorphTarget::at_weight`] or keep them in `extras`).
+    ///
+    /// Empty (the glTF case) means plain linear scaling —
+    /// [`Primitive::apply_morph_weights`] is bit-for-bit unchanged.
+    /// Non-empty, the target's contribution at channel weight `w`
+    /// becomes the piecewise-linear interpolation over the weight
+    /// stations resolved by [`MorphTarget::at_weight`]. Weights `0`
+    /// and `1` are implicitly the null shape and the primary deltas —
+    /// authoring an in-between *at* those weights (or two in-betweens
+    /// at one weight) is an authoring error the resolution ignores
+    /// and [`Scene3D::validate`](crate::Scene3D::validate) reports.
+    pub inbetweens: Vec<Inbetween>,
+}
+
+/// One in-between shape of a [`MorphTarget`] — a full corrective
+/// delta set pinned at an intermediate channel weight.
+///
+/// Mirrors the USD blend-shape `inbetweens:<name>` attribute
+/// (`docs/3d/usd/usdskel-usdpreviewsurface-schema.md` §1.4.1): the
+/// per-vertex position offsets (and optionally normal offsets) that
+/// the surface takes *exactly at* [`weight`](Self::weight), with
+/// neighbouring stations interpolated linearly. Absent `normal`
+/// means "no normal offsets" (zeros) — the schema explicitly permits
+/// it. Arrays are dense and parallel to the base `positions` (a
+/// sparse wire encoding is densified by the importer, like the
+/// primary deltas).
+///
+/// **`#[non_exhaustive]`:** construct via [`Inbetween::new`] +
+/// builders / per-field assignment.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct Inbetween {
+    /// Shape name (the `inbetweens:<name>` attribute name on the
+    /// wire). `None` for formats whose in-betweens are anonymous.
+    pub name: Option<String>,
+    /// Channel weight at which this shape applies exactly. Must be
+    /// finite and neither `0.0` nor `1.0` (those stations are
+    /// implicitly the null shape and the primary deltas), and unique
+    /// within one target — [`Inbetween::is_valid_weight`] is the
+    /// per-shape half of that test, `validate` the roster half.
+    pub weight: f32,
+    /// Per-vertex `POSITION` delta at this station.
+    pub position: Option<Vec<[f32; 3]>>,
+    /// Per-vertex `NORMAL` delta at this station. `None` = zeros.
+    pub normal: Option<Vec<[f32; 3]>>,
+}
+
+impl Inbetween {
+    /// Empty shape pinned at `weight` — no deltas yet.
+    pub fn new(weight: f32) -> Self {
+        Self {
+            name: None,
+            weight,
+            position: None,
+            normal: None,
+        }
+    }
+
+    /// Set the shape name and return `self` for chaining.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Set the position deltas and return `self` for chaining.
+    pub fn with_position(mut self, deltas: Vec<[f32; 3]>) -> Self {
+        self.position = Some(deltas);
+        self
+    }
+
+    /// Set the normal deltas and return `self` for chaining.
+    pub fn with_normal(mut self, deltas: Vec<[f32; 3]>) -> Self {
+        self.normal = Some(deltas);
+        self
+    }
+
+    /// `true` when [`weight`](Self::weight) is a legal in-between
+    /// station: finite and neither `0.0` nor `1.0` (§1.4.1 — the
+    /// endpoints are implicitly defined and must not be authored).
+    /// Duplicate stations across a roster are the other half of
+    /// validity; [`MorphTarget::at_weight`] ignores every shape at a
+    /// duplicated weight, and
+    /// [`Scene3D::validate`](crate::Scene3D::validate) reports both
+    /// malformations.
+    pub fn is_valid_weight(&self) -> bool {
+        self.weight.is_finite() && self.weight != 0.0 && self.weight != 1.0
+    }
 }
 
 impl MorphTarget {
@@ -99,6 +196,197 @@ impl MorphTarget {
     /// the wire actually carried.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Target from the three glTF §3.7.2.2 delta slots, no
+    /// in-betweens — the literal-shaped constructor
+    /// (`MorphTarget` is `#[non_exhaustive]`, so external crates
+    /// construct through this or [`MorphTarget::new`]).
+    pub fn with_deltas(
+        position: Option<Vec<[f32; 3]>>,
+        normal: Option<Vec<[f32; 3]>>,
+        tangent: Option<Vec<[f32; 3]>>,
+    ) -> Self {
+        let mut t = Self::new();
+        t.position = position;
+        t.normal = normal;
+        t.tangent = tangent;
+        t
+    }
+
+    /// Resolve the effective delta set at channel weight `w` —
+    /// the in-between interpolation of the USD blend-shape schema
+    /// (`docs/3d/usd/usdskel-usdpreviewsurface-schema.md` §1.4.1),
+    /// returned as a plain [`MorphTarget`] whose deltas *applied at
+    /// weight 1* reproduce the resolved shape (`inbetweens` empty).
+    ///
+    /// Resolution: the valid in-betweens (finite weight, not `0`/`1`,
+    /// unique — every shape at a duplicated weight is ignored, per
+    /// the schema's error-but-continue rule) are sorted by weight and
+    /// the two implicit endpoints added: the **null shape** (all
+    /// zeros) at `0` and the **primary** deltas at `1`. `w` selects
+    /// its bracketing station pair and interpolates the two delta
+    /// sets linearly. Interpolation is **unbounded**: outside `[0, 1]`
+    /// the nearest segment extrapolates rather than clamps (the
+    /// schema's worked example: with an in-between at `0.25`,
+    /// `w = -0.25` applies that shape at weight `-1`).
+    ///
+    /// Slot rules:
+    ///
+    /// * `position` / `normal` resolve station-wise; a station
+    ///   lacking the slot (an in-between without normal offsets, a
+    ///   primary without a delta buffer) reads as zeros. The output
+    ///   slot is `Some` iff the primary or any valid in-between
+    ///   carries it; its length follows the primary buffer when
+    ///   present, else the longest participating in-between buffer
+    ///   (short buffers read as zeros — `validate` reports length
+    ///   mismatches).
+    /// * `tangent` deltas have no in-between encoding in the schema —
+    ///   they scale linearly (`w ×` primary), exactly like a target
+    ///   with no in-betweens.
+    ///
+    /// With no (valid) in-betweens every slot degenerates to
+    /// `w × primary` — the glTF §3.7.2.2 linear rule —
+    /// which is why [`Primitive::apply_morph_weights`] can route
+    /// every target through this resolution unchanged.
+    pub fn at_weight(&self, w: f32) -> MorphTarget {
+        let stations = self.valid_inbetweens();
+        let mut out = MorphTarget::new();
+
+        // Tangent: always the linear rule.
+        out.tangent = self
+            .tangent
+            .as_ref()
+            .map(|d| d.iter().map(|v| [w * v[0], w * v[1], w * v[2]]).collect());
+
+        out.position = self.resolve_slot(
+            &stations,
+            w,
+            |t| t.position.as_deref(),
+            |ib| ib.position.as_deref(),
+        );
+        out.normal = self.resolve_slot(
+            &stations,
+            w,
+            |t| t.normal.as_deref(),
+            |ib| ib.normal.as_deref(),
+        );
+        out
+    }
+
+    /// The in-betweens participating in resolution: valid weights
+    /// only, every shape at a duplicated weight dropped, sorted
+    /// ascending.
+    fn valid_inbetweens(&self) -> Vec<&Inbetween> {
+        let mut v: Vec<&Inbetween> = self
+            .inbetweens
+            .iter()
+            .filter(|ib| {
+                ib.is_valid_weight()
+                    && self
+                        .inbetweens
+                        .iter()
+                        .filter(|o| o.weight == ib.weight)
+                        .count()
+                        == 1
+            })
+            .collect();
+        v.sort_by(|a, b| a.weight.total_cmp(&b.weight));
+        v
+    }
+
+    /// Piecewise-linear resolution of one 3-component slot over the
+    /// station ladder `null(0) … in-betweens … primary(1)`.
+    fn resolve_slot<'a>(
+        &'a self,
+        stations: &[&'a Inbetween],
+        w: f32,
+        primary: impl Fn(&'a MorphTarget) -> Option<&'a [[f32; 3]]>,
+        slot: impl Fn(&'a Inbetween) -> Option<&'a [[f32; 3]]>,
+    ) -> Option<Vec<[f32; 3]>> {
+        let primary_buf = primary(self);
+        let any = primary_buf.is_some() || stations.iter().any(|ib| slot(ib).is_some());
+        if !any {
+            return None;
+        }
+        let len = primary_buf.map(<[[f32; 3]]>::len).unwrap_or_else(|| {
+            stations
+                .iter()
+                .filter_map(|ib| slot(ib).map(<[[f32; 3]]>::len))
+                .max()
+                .unwrap_or(0)
+        });
+
+        // Station ladder: weight + buffer (None = null shape / absent
+        // slot, reads as zeros).
+        let mut ladder: Vec<(f32, Option<&[[f32; 3]]>)> = Vec::with_capacity(stations.len() + 2);
+        ladder.push((0.0, None));
+        for ib in stations {
+            ladder.push((ib.weight, slot(ib)));
+        }
+        ladder.push((1.0, primary_buf));
+        // Negative-weight stations sort below the null endpoint;
+        // keep the ladder sorted so bracketing works for them too.
+        ladder.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        // Bracketing segment: [s_i, s_{i+1}] with s_i <= w <= s_{i+1},
+        // clamped to the first / last segment for extrapolation.
+        let mut seg = ladder.len() - 2;
+        for i in 0..ladder.len() - 1 {
+            if w <= ladder[i + 1].0 || i == ladder.len() - 2 {
+                seg = i;
+                break;
+            }
+        }
+        let (w_a, buf_a) = ladder[seg];
+        let (w_b, buf_b) = ladder[seg + 1];
+        let span = w_b - w_a;
+        let t = if span > 0.0 { (w - w_a) / span } else { 0.0 };
+
+        let read = |buf: Option<&[[f32; 3]]>, k: usize| -> [f32; 3] {
+            buf.and_then(|b| b.get(k)).copied().unwrap_or([0.0; 3])
+        };
+        Some(
+            (0..len)
+                .map(|k| {
+                    let a = read(buf_a, k);
+                    let b = read(buf_b, k);
+                    [
+                        a[0] + t * (b[0] - a[0]),
+                        a[1] + t * (b[1] - a[1]),
+                        a[2] + t * (b[2] - a[2]),
+                    ]
+                })
+                .collect(),
+        )
+    }
+
+    /// Rebuild every per-vertex delta buffer this target carries —
+    /// the primary `position` / `normal` / `tangent` slots plus each
+    /// in-between's `position` / `normal` — through one rule,
+    /// preserving the in-between metadata (name, weight). The shared
+    /// plumbing of the vertex-pool-reshaping passes (weld, permute,
+    /// edge-midpoint interpolation, collapse blending).
+    pub(crate) fn map_buffers(
+        &self,
+        mut f: impl FnMut(&[[f32; 3]]) -> Vec<[f32; 3]>,
+    ) -> MorphTarget {
+        let mut out = MorphTarget::new();
+        out.position = self.position.as_deref().map(&mut f);
+        out.normal = self.normal.as_deref().map(&mut f);
+        out.tangent = self.tangent.as_deref().map(&mut f);
+        out.inbetweens = self
+            .inbetweens
+            .iter()
+            .map(|ib| {
+                let mut nb = Inbetween::new(ib.weight);
+                nb.name = ib.name.clone();
+                nb.position = ib.position.as_deref().map(&mut f);
+                nb.normal = ib.normal.as_deref().map(&mut f);
+                nb
+            })
+            .collect();
+        out
     }
 }
 
@@ -512,6 +800,19 @@ impl Primitive {
                         k.extend([key(v[0]), key(v[1]), key(v[2])]);
                     }
                 }
+                // In-between deltas are per-vertex parallel too.
+                for ib in &t.inbetweens {
+                    if let Some(d) = &ib.position {
+                        if let Some(v) = d.get(i) {
+                            k.extend([key(v[0]), key(v[1]), key(v[2])]);
+                        }
+                    }
+                    if let Some(d) = &ib.normal {
+                        if let Some(v) = d.get(i) {
+                            k.extend([key(v[0]), key(v[1]), key(v[2])]);
+                        }
+                    }
+                }
             }
             k
         };
@@ -582,25 +883,16 @@ impl Primitive {
         let targets = self
             .targets
             .iter()
-            .map(|t| MorphTarget {
-                position: t.position.as_ref().map(|d| {
+            .map(|t| {
+                // Every delta buffer (primary slots + in-between
+                // shapes) gathers through the same representative
+                // table.
+                t.map_buffers(|d| {
                     sources
                         .iter()
                         .map(|&i| d.get(i).copied().unwrap_or([0.0; 3]))
                         .collect()
-                }),
-                normal: t.normal.as_ref().map(|d| {
-                    sources
-                        .iter()
-                        .map(|&i| d.get(i).copied().unwrap_or([0.0; 3]))
-                        .collect()
-                }),
-                tangent: t.tangent.as_ref().map(|d| {
-                    sources
-                        .iter()
-                        .map(|&i| d.get(i).copied().unwrap_or([0.0; 3]))
-                        .collect()
-                }),
+                })
             })
             .collect();
 
@@ -2470,6 +2762,12 @@ impl Primitive {
     ///   for that vertex range (we still apply the prefix where lengths
     ///   line up). Callers should run [`crate::Scene3D::validate`]
     ///   first to catch this — the runtime path stays panic-free.
+    /// * **In-between shapes.** A target carrying valid
+    ///   [`MorphTarget::inbetweens`] contributes
+    ///   [`MorphTarget::at_weight`]`(w)` instead of `w × delta` —
+    ///   the piecewise station interpolation of the USD blend-shape
+    ///   schema. Identical to the linear rule whenever the roster is
+    ///   empty (the glTF case), so existing callers are unaffected.
     ///
     /// Cost is `O(V * (1 + T))` where `V = positions.len()` and
     /// `T = min(weights.len(), targets.len())`. Allocates one
@@ -2486,7 +2784,22 @@ impl Primitive {
             if w == 0.0 {
                 continue; // Skip no-op contributions; same observable result.
             }
-            if let Some(d) = &target.position {
+            // In-between shapes replace the linear `w × delta` rule
+            // with the piecewise station interpolation of
+            // [`MorphTarget::at_weight`]; the resolved deltas apply
+            // at weight 1. With no (valid) in-betweens `at_weight`
+            // degenerates to the linear rule exactly, so the fast
+            // path below is an optimisation, not a semantic fork.
+            let resolved;
+            let (deltas, scale): (&MorphTarget, f32) =
+                if target.inbetweens.iter().any(Inbetween::is_valid_weight) {
+                    resolved = target.at_weight(w);
+                    (&resolved, 1.0)
+                } else {
+                    (target, w)
+                };
+            let w = scale;
+            if let Some(d) = &deltas.position {
                 let lim = n.min(d.len());
                 for k in 0..lim {
                     positions[k][0] += w * d[k][0];
@@ -2494,7 +2807,7 @@ impl Primitive {
                     positions[k][2] += w * d[k][2];
                 }
             }
-            if let (Some(base), Some(d)) = (normals.as_mut(), target.normal.as_ref()) {
+            if let (Some(base), Some(d)) = (normals.as_mut(), deltas.normal.as_ref()) {
                 let lim = base.len().min(d.len());
                 for k in 0..lim {
                     base[k][0] += w * d[k][0];
@@ -2502,7 +2815,7 @@ impl Primitive {
                     base[k][2] += w * d[k][2];
                 }
             }
-            if let (Some(base), Some(d)) = (tangents.as_mut(), target.tangent.as_ref()) {
+            if let (Some(base), Some(d)) = (tangents.as_mut(), deltas.tangent.as_ref()) {
                 // TANGENT is [f32; 4] (xyz + handedness w). Morph
                 // delta is [f32; 3] — handedness is NOT morphed
                 // (spec §3.7.2.2 line 3616). Add xyz only; leave w
@@ -3610,23 +3923,13 @@ impl Primitive {
             }
             out.joints = Some(v);
         }
-        // Morph deltas: same linear-midpoint rule, per target.
+        // Morph deltas: same linear-midpoint rule, per target — every
+        // delta buffer (primary slots + in-between shapes) through
+        // one rule.
         out.targets = welded
             .targets
             .iter()
-            .map(|t| {
-                let mut nt = t.clone();
-                if let Some(ps) = &t.position {
-                    nt.position = Some(lerp_n::<3>(ps, &edge_endpoints));
-                }
-                if let Some(ns) = &t.normal {
-                    nt.normal = Some(lerp_n::<3>(ns, &edge_endpoints));
-                }
-                if let Some(ts) = &t.tangent {
-                    nt.tangent = Some(lerp_n::<3>(ts, &edge_endpoints));
-                }
-                nt
-            })
+            .map(|t| t.map_buffers(|d| lerp_n::<3>(d, &edge_endpoints)))
             .collect();
 
         // --- Emit the 1→4 connectivity ------------------------------
@@ -3750,9 +4053,7 @@ impl Primitive {
             o.joints = o.joints.as_ref().map(|_| Vec::new());
             o.weights = o.weights.as_ref().map(|_| Vec::new());
             for t in &mut o.targets {
-                t.position = t.position.as_ref().map(|_| Vec::new());
-                t.normal = t.normal.as_ref().map(|_| Vec::new());
-                t.tangent = t.tangent.as_ref().map(|_| Vec::new());
+                *t = t.map_buffers(|_| Vec::new());
             }
             o.indices = Some(Indices::U16(Vec::new()));
             o
@@ -3838,10 +4139,14 @@ impl Primitive {
             joints: [u16; 4], // first-seen member's joints
             morph: Vec<MorphAcc>,
         }
+        /// One `(position, normal)` accumulator pair for an
+        /// in-between shape, averaged like the primary deltas.
+        type InbAcc = (Option<[f64; 3]>, Option<[f64; 3]>);
         struct MorphAcc {
             position: Option<[f64; 3]>,
             normal: Option<[f64; 3]>,
             tangent: Option<[f64; 3]>,
+            inbetweens: Vec<InbAcc>,
         }
         let new_morph = || -> Vec<MorphAcc> {
             self.targets
@@ -3850,6 +4155,16 @@ impl Primitive {
                     position: t.position.as_ref().map(|_| [0.0; 3]),
                     normal: t.normal.as_ref().map(|_| [0.0; 3]),
                     tangent: t.tangent.as_ref().map(|_| [0.0; 3]),
+                    inbetweens: t
+                        .inbetweens
+                        .iter()
+                        .map(|ib| {
+                            (
+                                ib.position.as_ref().map(|_| [0.0; 3]),
+                                ib.normal.as_ref().map(|_| [0.0; 3]),
+                            )
+                        })
+                        .collect(),
                 })
                 .collect()
         };
@@ -3953,6 +4268,23 @@ impl Primitive {
                         }
                     }
                 }
+                for (ii, ib) in t.inbetweens.iter().enumerate() {
+                    let (pa, na) = &mut entry.morph[ti].inbetweens[ii];
+                    if let (Some(d), Some(acc)) = (&ib.position, pa.as_mut()) {
+                        if let Some(v) = d.get(i) {
+                            for k in 0..3 {
+                                acc[k] += v[k] as f64;
+                            }
+                        }
+                    }
+                    if let (Some(d), Some(acc)) = (&ib.normal, na.as_mut()) {
+                        if let Some(v) = d.get(i) {
+                            for k in 0..3 {
+                                acc[k] += v[k] as f64;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -4016,11 +4348,9 @@ impl Primitive {
         let mut targets: Vec<MorphTarget> = self
             .targets
             .iter()
-            .map(|t| MorphTarget {
-                position: t.position.as_ref().map(|_| vec![[0.0f32; 3]; k]),
-                normal: t.normal.as_ref().map(|_| vec![[0.0f32; 3]; k]),
-                tangent: t.tangent.as_ref().map(|_| vec![[0.0f32; 3]; k]),
-            })
+            // Zero-filled buffers in self's slot shape (primary +
+            // in-between), metadata preserved.
+            .map(|t| t.map_buffers(|_| vec![[0.0f32; 3]; k]))
             .collect();
 
         let norm3 = |v: [f64; 3]| -> [f32; 3] {
@@ -4107,6 +4437,23 @@ impl Primitive {
                         (a[1] / cnt) as f32,
                         (a[2] / cnt) as f32,
                     ];
+                }
+                for (ii, ib) in t.inbetweens.iter_mut().enumerate() {
+                    let (pa, na) = acc.morph[ti].inbetweens[ii];
+                    if let (Some(out), Some(a)) = (ib.position.as_mut(), pa) {
+                        out[ki] = [
+                            (a[0] / cnt) as f32,
+                            (a[1] / cnt) as f32,
+                            (a[2] / cnt) as f32,
+                        ];
+                    }
+                    if let (Some(out), Some(a)) = (ib.normal.as_mut(), na) {
+                        out[ki] = [
+                            (a[0] / cnt) as f32,
+                            (a[1] / cnt) as f32,
+                            (a[2] / cnt) as f32,
+                        ];
+                    }
                 }
             }
         }

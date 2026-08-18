@@ -109,11 +109,11 @@ fn carries_all_attributes() {
         [0.5, 0.5, 0.0, 0.0],
         [0.25, 0.25, 0.25, 0.25],
     ]);
-    prim.targets = vec![MorphTarget {
-        position: Some(vec![[0.1, 0.0, 0.0], [0.2, 0.0, 0.0], [0.3, 0.0, 0.0]]),
-        normal: None,
-        tangent: None,
-    }];
+    prim.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.1, 0.0, 0.0], [0.2, 0.0, 0.0], [0.3, 0.0, 0.0]]),
+        None,
+        None,
+    )];
     // Draw touches 2,0,1.
     prim.indices = Some(Indices::U32(vec![2, 0, 1]));
     let opt = prim.optimize_vertex_fetch();

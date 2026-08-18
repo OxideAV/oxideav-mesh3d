@@ -125,11 +125,11 @@ fn out_of_range_index_reported() {
 #[test]
 fn morph_target_length_mismatch_reported() {
     let mut p = one_triangle_primitive();
-    p.targets = vec![MorphTarget {
-        position: Some(vec![[0.1, 0.0, 0.0]; 2]), // 2 vs 3 positions
-        normal: None,
-        tangent: None,
-    }];
+    p.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.1, 0.0, 0.0]; 2]),
+        None,
+        None,
+    )];
     let mut s = Scene3D::new();
     s.add_mesh(Mesh::new(None).with_primitive(p));
     let errs = s.validate().unwrap_err();

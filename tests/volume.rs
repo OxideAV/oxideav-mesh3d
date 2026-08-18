@@ -444,11 +444,11 @@ fn morph_targets_ignored() {
     // Add a morph target that, if applied, would inflate every corner
     // outward — the base volume should still be 1.0.
     let n = p.positions.len();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[1.0, 1.0, 1.0]; n]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[1.0, 1.0, 1.0]; n]),
+        None,
+        None,
+    ));
     assert!((p.signed_volume() - 1.0).abs() < 1e-10);
 }
 

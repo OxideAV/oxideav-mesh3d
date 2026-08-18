@@ -84,10 +84,11 @@ fn ancestor_chain_is_folded_in() {
 #[test]
 fn morph_weights_fold_before_transform() {
     let mut prim = triangle();
-    prim.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 1.0]; 3]),
-        ..Default::default()
-    }];
+    prim.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 1.0]; 3]),
+        None,
+        None,
+    )];
     let mut s = Scene3D::new();
     let mid = s.add_mesh(Mesh::new(None).with_primitive(prim).with_weights(vec![0.5]));
     let nid = s.add_node(
@@ -110,10 +111,11 @@ fn morph_weights_fold_before_transform() {
 #[test]
 fn empty_weights_instantiate_the_non_morphed_state() {
     let mut prim = triangle();
-    prim.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 1.0]; 3]),
-        ..Default::default()
-    }];
+    prim.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 1.0]; 3]),
+        None,
+        None,
+    )];
     let mut s = Scene3D::new();
     let mid = s.add_mesh(Mesh::new(None).with_primitive(prim));
     let nid = s.add_node(Node::new().with_mesh(mid));
@@ -193,10 +195,11 @@ fn skinned_node_ignores_its_own_transform() {
 #[test]
 fn morph_folds_before_skinning() {
     let mut prim = skinned_triangle();
-    prim.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 2.0]; 3]),
-        ..Default::default()
-    }];
+    prim.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 2.0]; 3]),
+        None,
+        None,
+    )];
     let (mut s, nid) = one_joint_scene(translate([5.0, 0.0, 0.0]), prim);
     let mesh_id = s.node(nid).and_then(|n| n.mesh).unwrap();
     s.meshes[mesh_id.0 as usize].weights = vec![1.0];

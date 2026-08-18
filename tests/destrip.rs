@@ -241,11 +241,11 @@ fn to_triangle_list_on_lines_yields_empty_index_buffer() {
 fn to_triangle_list_preserves_morph_targets() {
     use oxideav_mesh3d::MorphTarget;
     let mut p = prim_with_positions(Topology::TriangleStrip, 4);
-    p.targets.push(MorphTarget {
-        position: Some(vec![[0.1, 0.0, 0.0]; 4]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[0.1, 0.0, 0.0]; 4]),
+        None,
+        None,
+    ));
     let out = p.to_triangle_list();
     // targets are per-vertex-parallel; attribute buffers unchanged so
     // they remain valid.

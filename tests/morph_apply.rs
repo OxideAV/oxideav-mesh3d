@@ -78,11 +78,11 @@ fn all_zero_weights_is_no_op() {
     // Spec line 3697: missing weights default to zero. Explicit zero
     // weight is identical to the missing case.
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[10.0, 20.0, 30.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[10.0, 20.0, 30.0]; 3]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[0.0]);
     assert_eq!(m.positions, p.positions);
     assert_eq!(m.normals.as_deref(), p.normals.as_deref());
@@ -95,11 +95,11 @@ fn all_zero_weights_is_no_op() {
 #[test]
 fn single_target_full_weight_matches_base_plus_delta() {
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     assert!(vec3_close(m.positions[0], [0.1, 0.2, 0.3], 1e-6));
     assert!(vec3_close(m.positions[1], [1.4, 0.5, 0.6], 1e-6));
@@ -109,11 +109,11 @@ fn single_target_full_weight_matches_base_plus_delta() {
 #[test]
 fn single_target_half_weight_scales_delta() {
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[2.0, 0.0, 0.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[2.0, 0.0, 0.0]; 3]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[0.5]);
     // base + 0.5 * 2.0 = base + 1.0
     assert!(vec3_close(m.positions[0], [1.0, 0.0, 0.0], 1e-6));
@@ -127,11 +127,11 @@ fn negative_weight_subtracts_delta() {
     // an "anti-pose" interpolant. This is the natural extrapolation
     // edge case (`weight < 0`).
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[1.0, 1.0, 1.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[1.0, 1.0, 1.0]; 3]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[-1.0]);
     assert!(vec3_close(m.positions[0], [-1.0, -1.0, -1.0], 1e-6));
     assert!(vec3_close(m.positions[1], [0.0, -1.0, -1.0], 1e-6));
@@ -146,16 +146,16 @@ fn two_targets_blend_linearly_per_vertex() {
     // Two targets, weights 0.25 and 0.75 → output[k] = base[k]
     // + 0.25 * target_a[k] + 0.75 * target_b[k]
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[4.0, 0.0, 0.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
-    p.targets.push(MorphTarget {
-        position: Some(vec![[0.0, 4.0, 0.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[4.0, 0.0, 0.0]; 3]),
+        None,
+        None,
+    ));
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[0.0, 4.0, 0.0]; 3]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[0.25, 0.75]);
     // base[0] = (0,0,0); +0.25*4=1 on x; +0.75*4=3 on y
     assert!(vec3_close(m.positions[0], [1.0, 3.0, 0.0], 1e-6));
@@ -172,11 +172,11 @@ fn three_targets_only_first_two_have_weights() {
     // were zero.
     let mut p = base_triangle();
     for _ in 0..3 {
-        p.targets.push(MorphTarget {
-            position: Some(vec![[1.0, 0.0, 0.0]; 3]),
-            normal: None,
-            tangent: None,
-        });
+        p.targets.push(MorphTarget::with_deltas(
+            Some(vec![[1.0, 0.0, 0.0]; 3]),
+            None,
+            None,
+        ));
     }
     let m = p.apply_morph_weights(&[0.5, 0.5]);
     // Only the first two targets contribute: base + 0.5 + 0.5 = base + 1
@@ -191,11 +191,11 @@ fn extra_weights_past_target_count_are_ignored() {
     // weights have no target to apply against and must be silently
     // dropped (don't index out of bounds, don't panic).
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[1.0, 0.0, 0.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[1.0, 0.0, 0.0]; 3]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[1.0, 99.0, -99.0, 0.5]);
     assert!(vec3_close(m.positions[0], [1.0, 0.0, 0.0], 1e-6));
     assert!(vec3_close(m.positions[1], [2.0, 0.0, 0.0], 1e-6));
@@ -208,11 +208,11 @@ fn extra_weights_past_target_count_are_ignored() {
 #[test]
 fn normal_slot_blends_when_base_and_target_present() {
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: None,
-        normal: Some(vec![[1.0, 0.0, 0.0]; 3]),
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        None,
+        Some(vec![[1.0, 0.0, 0.0]; 3]),
+        None,
+    ));
     let m = p.apply_morph_weights(&[0.5]);
     // Position should be unchanged (no position delta on this target).
     assert_eq!(m.positions, p.positions);
@@ -235,11 +235,11 @@ fn normal_target_without_base_normals_is_dropped() {
     let mut p = Primitive::new(Topology::Triangles);
     p.positions = vec![[0.0; 3]; 3];
     p.normals = None;
-    p.targets.push(MorphTarget {
-        position: None,
-        normal: Some(vec![[1.0, 0.0, 0.0]; 3]),
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        None,
+        Some(vec![[1.0, 0.0, 0.0]; 3]),
+        None,
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     assert!(m.normals.is_none());
 }
@@ -259,11 +259,11 @@ fn tangent_handedness_w_survives_unmodified() {
         p.tangents.as_ref().unwrap()[1][3],
         p.tangents.as_ref().unwrap()[2][3],
     ];
-    p.targets.push(MorphTarget {
-        position: None,
-        normal: None,
-        tangent: Some(vec![[0.1, 0.2, 0.3]; 3]),
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        None,
+        None,
+        Some(vec![[0.1, 0.2, 0.3]; 3]),
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     let t = m.tangents.unwrap();
     // xyz blended additively:
@@ -283,11 +283,11 @@ fn tangent_handedness_w_survives_unmodified() {
 #[test]
 fn three_attribute_target_blends_all_three() {
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[1.0, 0.0, 0.0]; 3]),
-        normal: Some(vec![[0.0, 1.0, 0.0]; 3]),
-        tangent: Some(vec![[0.0, 0.0, 1.0]; 3]),
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[1.0, 0.0, 0.0]; 3]),
+        Some(vec![[0.0, 1.0, 0.0]; 3]),
+        Some(vec![[0.0, 0.0, 1.0]; 3]),
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     // Position delta on x.
     assert!(vec3_close(m.positions[0], [1.0, 0.0, 0.0], 1e-6));
@@ -311,11 +311,11 @@ fn output_normals_none_when_base_normals_none_even_if_target_has_normal() {
     let mut p = Primitive::new(Topology::Triangles);
     p.positions = vec![[0.0; 3]];
     p.normals = None; // base has no normals
-    p.targets.push(MorphTarget {
-        position: None,
-        normal: Some(vec![[1.0, 1.0, 1.0]]),
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        None,
+        Some(vec![[1.0, 1.0, 1.0]]),
+        None,
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     assert!(m.normals.is_none());
 }
@@ -326,11 +326,11 @@ fn output_tangents_none_when_base_tangents_none() {
     p.positions = vec![[0.0; 3]];
     p.normals = Some(vec![[0.0, 0.0, 1.0]]);
     p.tangents = None;
-    p.targets.push(MorphTarget {
-        position: None,
-        normal: None,
-        tangent: Some(vec![[1.0, 1.0, 1.0]]),
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        None,
+        None,
+        Some(vec![[1.0, 1.0, 1.0]]),
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     assert!(m.tangents.is_none());
 }
@@ -340,11 +340,11 @@ fn target_with_only_position_leaves_normals_and_tangents_untouched() {
     let mut p = base_triangle();
     let base_normals = p.normals.clone();
     let base_tangents = p.tangents.clone();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[1.0, 0.0, 0.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[1.0, 0.0, 0.0]; 3]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     assert_eq!(m.normals, base_normals);
     assert_eq!(m.tangents, base_tangents);
@@ -357,11 +357,11 @@ fn target_with_only_position_leaves_normals_and_tangents_untouched() {
 #[test]
 fn shorter_target_delta_applies_prefix_then_leaves_remainder_alone() {
     let mut p = base_triangle(); // 3 vertices
-    p.targets.push(MorphTarget {
-        position: Some(vec![[1.0, 0.0, 0.0]]), // only 1 delta!
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[1.0, 0.0, 0.0]]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     // Vertex 0 receives the delta; vertices 1, 2 unchanged from base.
     assert!(vec3_close(m.positions[0], [1.0, 0.0, 0.0], 1e-6));
@@ -372,11 +372,11 @@ fn shorter_target_delta_applies_prefix_then_leaves_remainder_alone() {
 #[test]
 fn longer_target_delta_ignores_excess_entries() {
     let mut p = base_triangle(); // 3 vertices
-    p.targets.push(MorphTarget {
-        position: Some(vec![[1.0, 0.0, 0.0]; 10]), // 10 deltas; only 3 used
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[1.0, 0.0, 0.0]; 10]),
+        None,
+        None,
+    ));
     let m = p.apply_morph_weights(&[1.0]);
     assert_eq!(m.positions.len(), 3);
     assert!(vec3_close(m.positions[0], [1.0, 0.0, 0.0], 1e-6));
@@ -391,11 +391,11 @@ fn longer_target_delta_ignores_excess_entries() {
 #[test]
 fn morphed_attributes_round_trips_through_clone_and_eq() {
     let mut p = base_triangle();
-    p.targets.push(MorphTarget {
-        position: Some(vec![[1.0, 0.0, 0.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[1.0, 0.0, 0.0]; 3]),
+        None,
+        None,
+    ));
     let m: MorphedAttributes = p.apply_morph_weights(&[1.0]);
     let cloned = m.clone();
     assert_eq!(cloned, m);
@@ -425,10 +425,11 @@ fn morphed_attributes_reexported_at_crate_root() {
 #[test]
 fn primitive_morphed_folds_the_blend_and_consumes_targets() {
     let mut p = base_triangle();
-    p.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 4.0]; 3]),
-        ..Default::default()
-    }];
+    p.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 4.0]; 3]),
+        None,
+        None,
+    )];
     let out = p.morphed(&[0.5]);
     assert!(vec3_close(out.positions[0], [0.0, 0.0, 2.0], 1e-6));
     assert!(out.targets.is_empty(), "morph state consumed");
@@ -438,10 +439,11 @@ fn primitive_morphed_folds_the_blend_and_consumes_targets() {
 #[test]
 fn primitive_morphed_with_empty_weights_bakes_the_base_state() {
     let mut p = base_triangle();
-    p.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 4.0]; 3]),
-        ..Default::default()
-    }];
+    p.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 4.0]; 3]),
+        None,
+        None,
+    )];
     let out = p.morphed(&[]);
     assert_eq!(out.positions, p.positions, "all weights zero = base");
     assert!(out.targets.is_empty(), "roster still cleared");
@@ -453,10 +455,11 @@ fn primitive_morphed_carries_every_other_field() {
     p.uvs = vec![vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]];
     p.joints = Some(vec![[0, 0, 0, 0]; 3]);
     p.weights = Some(vec![[1.0, 0.0, 0.0, 0.0]; 3]);
-    p.targets = vec![MorphTarget {
-        position: Some(vec![[1.0, 0.0, 0.0]; 3]),
-        ..Default::default()
-    }];
+    p.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[1.0, 0.0, 0.0]; 3]),
+        None,
+        None,
+    )];
     let out = p.morphed(&[1.0]);
     assert_eq!(out.topology, p.topology);
     assert_eq!(out.uvs, p.uvs);
@@ -472,15 +475,17 @@ fn primitive_morphed_carries_every_other_field() {
 #[test]
 fn mesh_morphed_lifts_across_primitives_and_clears_defaults() {
     let mut a = base_triangle();
-    a.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 4.0]; 3]),
-        ..Default::default()
-    }];
+    a.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 4.0]; 3]),
+        None,
+        None,
+    )];
     let mut b = base_triangle();
-    b.targets = vec![MorphTarget {
-        position: Some(vec![[2.0, 0.0, 0.0]; 3]),
-        ..Default::default()
-    }];
+    b.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[2.0, 0.0, 0.0]; 3]),
+        None,
+        None,
+    )];
     let mesh = oxideav_mesh3d::Mesh::new(Some("blend".to_owned()))
         .with_primitive(a)
         .with_primitive(b)

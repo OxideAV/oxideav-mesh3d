@@ -324,12 +324,11 @@ fn large_count_no_drift() {
 fn morph_targets_ignored() {
     let mut p = Primitive::new(Topology::Triangles);
     p.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-    p.targets.push(MorphTarget {
-        // Would extend the legs to length 2 each → area 2.0.
-        position: Some(vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+        None,
+        None,
+    ));
     assert!((p.surface_area() - 0.5).abs() < 1e-12);
 }
 

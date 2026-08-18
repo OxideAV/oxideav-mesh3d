@@ -444,10 +444,11 @@ fn singular_blend_leaves_normal_untouched_but_moves_position() {
 #[test]
 fn skinned_drops_morph_targets_and_documents_order() {
     let mut prim = skinnable_triangle();
-    prim.targets = vec![oxideav_mesh3d::MorphTarget {
-        position: Some(vec![[0.0, 0.0, 1.0]; 3]),
-        ..Default::default()
-    }];
+    prim.targets = vec![oxideav_mesh3d::MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 1.0]; 3]),
+        None,
+        None,
+    )];
     let skinned = prim.skinned(&[identity()]);
     assert!(skinned.targets.is_empty(), "targets consumed/dropped");
 }

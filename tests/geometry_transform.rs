@@ -180,11 +180,11 @@ fn transformed_preserves_topology_and_indices() {
 /// deltas of known non-unit length.
 fn tri_with_morph() -> Primitive {
     let mut p = tri_with_normal();
-    p.targets = vec![oxideav_mesh3d::MorphTarget {
-        position: Some(vec![[0.0, 0.0, 2.0]; 3]),
-        normal: Some(vec![[0.5, 0.0, 0.0]; 3]),
-        tangent: Some(vec![[0.0, 3.0, 0.0]; 3]),
-    }];
+    p.targets = vec![oxideav_mesh3d::MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 2.0]; 3]),
+        Some(vec![[0.5, 0.0, 0.0]; 3]),
+        Some(vec![[0.0, 3.0, 0.0]; 3]),
+    )];
     p
 }
 

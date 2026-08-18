@@ -408,11 +408,9 @@ fn random_morphable_primitive(rng: &mut Lcg, n_verts: usize, n_targets: usize) -
         } else {
             None
         };
-        p.targets.push(oxideav_mesh3d::MorphTarget {
-            position,
-            normal,
-            tangent: None,
-        });
+        p.targets.push(oxideav_mesh3d::MorphTarget::with_deltas(
+            position, normal, None,
+        ));
     }
     p
 }

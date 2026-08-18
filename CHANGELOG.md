@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Typed in-between shapes** — `MorphTarget::inbetweens:
+  Vec<Inbetween>` gives the USD blend-shape `inbetweens:` encoding
+  (staged schema `docs/3d/usd/usdskel-usdpreviewsurface-schema.md`
+  §1.4.1) a first-class home: named corrective delta sets pinned at
+  intermediate channel weights, previously only representable through
+  `extras` side-channels.
+  - `Inbetween { name, weight, position, normal }` (+ `new` /
+    `with_name` / `with_position` / `with_normal` builders,
+    `is_valid_weight`). Absent `normal` = "no normal offsets" per the
+    schema; arrays are dense and parallel to the base positions.
+  - `MorphTarget::at_weight(w)` — the §1.4.1 resolution: valid
+    stations sorted, implicit endpoints added (null shape at `0`,
+    primary deltas at `1`), the bracketing pair interpolated linearly
+    and **unbounded** (the schema's worked example: an in-between at
+    `0.25` with channel weight `−0.25` applies at weight `−1`).
+    Authoring errors (weight `0`/`1`, non-finite, duplicate stations)
+    are ignored per the error-but-continue rule. Tangent deltas have
+    no in-between encoding and stay linear. With no in-betweens the
+    resolution degenerates to `w × delta` exactly, so
+    `Primitive::apply_morph_weights` now routes **every** target
+    through it — bit-identical for glTF-shaped (in-between-free)
+    content, and the whole downstream pipeline (`morphed`,
+    `world_mesh*`, `posed`, sampled `MorphWeights` channels) blends
+    through the stations for free.
+  - `Scene3D::validate` reports the §1.4.1 authoring errors (new
+    variants `InbetweenWeightInvalid`, `InbetweenDuplicateWeight`)
+    and length-checks the delta arrays (`AttributeLengthMismatch`
+    at `targets[i].inbetweens[j].position/.normal`).
+  - Geometry passes treat in-between buffers as what they are —
+    more per-vertex delta streams: `transformed` re-bases them
+    (position by `L`, normal by the inverse-transpose),
+    `weld_vertices` keys and gathers them, the `optimize_vertex_*`
+    permutations carry them, `subdivide_loop` /
+    `simplify_quadric*` interpolate them, `simplify_cluster`
+    averages them per cell (a new shared `MorphTarget::map_buffers`
+    plumbs one rebuild rule through primary + in-between buffers).
+  - `MorphTarget::with_deltas(position, normal, tangent)` — the
+    literal-shaped constructor for the three glTF slots.
+  - 22 integration tests (`tests/inbetweens.rs`) incl. the schema's
+    worked example and the geometry-pass interplay.
+
+### Changed
+
+- **`MorphTarget` is now `#[non_exhaustive]`** (and gains the
+  `inbetweens` field): construct via `MorphTarget::new()` +
+  per-field assignment or the new `MorphTarget::with_deltas`.
+  Workspace format crates already construct through
+  `MorphTarget::new()`, so no consumer code changes; only exhaustive
+  struct literals (none in the workspace) break.
+
 - **Typed morph-target names** — `Mesh::target_names: Vec<String>`
   lifts the de-facto convention glTF 2.0 documents in the §3.7.2.2
   implementation note (`mesh.extras.targetNames`) to a first-class

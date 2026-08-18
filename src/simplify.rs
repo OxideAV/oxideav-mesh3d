@@ -330,9 +330,7 @@ impl Primitive {
             o.joints = o.joints.as_ref().map(|_| Vec::new());
             o.weights = o.weights.as_ref().map(|_| Vec::new());
             for t in &mut o.targets {
-                t.position = t.position.as_ref().map(|_| Vec::new());
-                t.normal = t.normal.as_ref().map(|_| Vec::new());
-                t.tangent = t.tangent.as_ref().map(|_| Vec::new());
+                *t = t.map_buffers(|_| Vec::new());
             }
             o.indices = Some(Indices::U16(Vec::new()));
             o
@@ -938,23 +936,12 @@ impl QemState {
             }
             out.joints = Some(v);
         }
-        // Morph deltas: same linear blend, per target.
+        // Morph deltas: same linear blend, per target — every delta
+        // buffer (primary slots + in-between shapes) through one rule.
         out.targets = welded
             .targets
             .iter()
-            .map(|tgt| {
-                let mut nt = tgt.clone();
-                if let Some(ps) = &tgt.position {
-                    nt.position = Some(lerp_set!(ps, 3));
-                }
-                if let Some(ns) = &tgt.normal {
-                    nt.normal = Some(lerp_set!(ns, 3));
-                }
-                if let Some(ts) = &tgt.tangent {
-                    nt.tangent = Some(lerp_set!(ts, 3));
-                }
-                nt
-            })
+            .map(|tgt| tgt.map_buffers(|d| lerp_set!(d, 3)))
             .collect();
 
         // Remapped index buffer.

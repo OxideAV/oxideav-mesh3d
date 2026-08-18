@@ -114,8 +114,8 @@ pub use material::{
     Sheen, Specular, TextureRef, TextureTransform, Transmission, Volume,
 };
 pub use mesh::{
-    EdgeManifoldReport, Indices, Mesh, MorphTarget, MorphedAttributes, OrientationReport,
-    Primitive, Topology, TopologySummary, VariantMapping,
+    EdgeManifoldReport, Inbetween, Indices, Mesh, MorphTarget, MorphedAttributes,
+    OrientationReport, Primitive, Topology, TopologySummary, VariantMapping,
 };
 pub use optimize::{simulate_cache, CacheStats, DEFAULT_CACHE_SIZE};
 pub use pose::Pose;

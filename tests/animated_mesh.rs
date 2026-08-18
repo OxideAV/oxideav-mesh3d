@@ -155,10 +155,11 @@ fn sampling_clamps_beyond_duration() {
 fn morphable_scene() -> (Scene3D, NodeId) {
     let mut prim = Primitive::new(Topology::Triangles);
     prim.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-    prim.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 4.0]; 3]),
-        ..Default::default()
-    }];
+    prim.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 4.0]; 3]),
+        None,
+        None,
+    )];
     let mut s = Scene3D::new();
     let mid = s.add_mesh(
         Mesh::new(None)

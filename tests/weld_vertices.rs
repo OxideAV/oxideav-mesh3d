@@ -204,11 +204,11 @@ fn multiple_uv_sets_all_participate() {
 fn same_position_different_morph_delta_stays_split() {
     let mut p = Primitive::new(Topology::Triangles);
     p.positions = vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-    p.targets = vec![MorphTarget {
-        position: Some(vec![[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]]),
-        normal: None,
-        tangent: None,
-    }];
+    p.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]]),
+        None,
+        None,
+    )];
     let w = p.weld_vertices();
     // Vertices 0 and 1 share base position but have different morph
     // deltas -> distinct.
@@ -226,11 +226,11 @@ fn morph_delta_buffers_are_gathered_with_the_pool() {
         [1.0, 0.0, 0.0], // 1
         [0.0, 0.0, 0.0], // 2 == 0 (and same morph delta below)
     ];
-    p.targets = vec![MorphTarget {
-        position: Some(vec![[7.0, 0.0, 0.0], [8.0, 0.0, 0.0], [7.0, 0.0, 0.0]]),
-        normal: None,
-        tangent: None,
-    }];
+    p.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[7.0, 0.0, 0.0], [8.0, 0.0, 0.0], [7.0, 0.0, 0.0]]),
+        None,
+        None,
+    )];
     let w = p.weld_vertices();
     assert_eq!(w.positions.len(), 2);
     // Pool morph deltas follow the deduplicated vertices in first-seen

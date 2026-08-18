@@ -88,21 +88,21 @@ fn primitive_with_two_morph_targets_clone_round_trip() {
     prim.normals = Some(vec![[0.0, 0.0, 1.0]; 3]);
 
     // Target 0: "smile" — POSITION + NORMAL deltas on three vertices.
-    let smile = MorphTarget {
-        position: Some(vec![[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]]),
-        normal: Some(vec![[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]]),
-        tangent: None,
-    };
+    let smile = MorphTarget::with_deltas(
+        Some(vec![[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]]),
+        Some(vec![[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]]),
+        None,
+    );
     // Target 1: "frown" — POSITION + NORMAL with opposite deltas.
-    let frown = MorphTarget {
-        position: Some(vec![[-0.1, 0.0, 0.0], [0.0, -0.1, 0.0], [0.0, 0.0, -0.1]]),
-        normal: Some(vec![
+    let frown = MorphTarget::with_deltas(
+        Some(vec![[-0.1, 0.0, 0.0], [0.0, -0.1, 0.0], [0.0, 0.0, -0.1]]),
+        Some(vec![
             [-0.01, 0.0, 0.0],
             [0.0, -0.01, 0.0],
             [0.0, 0.0, -0.01],
         ]),
-        tangent: None,
-    };
+        None,
+    );
 
     prim.targets = vec![smile.clone(), frown.clone()];
     assert_eq!(prim.targets.len(), 2);
@@ -130,11 +130,8 @@ fn primitive_with_two_morph_targets_clone_round_trip() {
 fn morph_target_with_tangent_slot_round_trips() {
     // §3.7.2.2: morph TANGENT delta is VEC3 (xyz only) — handedness
     // `w` on the base TANGENT is not morphed.
-    let target = MorphTarget {
-        position: None,
-        normal: None,
-        tangent: Some(vec![[0.5, 0.0, 0.0], [-0.5, 0.0, 0.0]]),
-    };
+    let target =
+        MorphTarget::with_deltas(None, None, Some(vec![[0.5, 0.0, 0.0], [-0.5, 0.0, 0.0]]));
 
     let mut prim = Primitive::new(Topology::Triangles);
     prim.positions = vec![[0.0; 3], [1.0, 0.0, 0.0]];
@@ -205,11 +202,11 @@ fn mesh_constructed_via_builders_has_expected_field_layout() {
 fn primitive_constructed_via_new_then_field_assignment() {
     let mut p = Primitive::new(Topology::Triangles);
     p.positions = vec![[0.0, 0.0, 0.0]];
-    p.targets.push(MorphTarget {
-        position: Some(vec![[0.5, 0.0, 0.0]]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[0.5, 0.0, 0.0]]),
+        None,
+        None,
+    ));
     assert_eq!(p.positions.len(), 1);
     assert_eq!(p.targets.len(), 1);
 }

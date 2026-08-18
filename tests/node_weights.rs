@@ -37,10 +37,11 @@ fn identity() -> [[f32; 4]; 4] {
 fn morphable_primitive() -> Primitive {
     let mut prim = Primitive::new(Topology::Triangles);
     prim.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-    prim.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 4.0]; 3]),
-        ..Default::default()
-    }];
+    prim.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 4.0]; 3]),
+        None,
+        None,
+    )];
     prim
 }
 

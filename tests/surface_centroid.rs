@@ -386,11 +386,11 @@ fn morph_targets_do_not_affect_centroid() {
     p.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let c_bare = p.surface_centroid().unwrap();
 
-    p.targets.push(MorphTarget {
-        position: Some(vec![[10.0, 10.0, 10.0]; 3]),
-        normal: None,
-        tangent: None,
-    });
+    p.targets.push(MorphTarget::with_deltas(
+        Some(vec![[10.0, 10.0, 10.0]; 3]),
+        None,
+        None,
+    ));
     let c_with_targets = p.surface_centroid().unwrap();
     assert!(approx_eq3(c_bare, c_with_targets, 1e-12));
 }

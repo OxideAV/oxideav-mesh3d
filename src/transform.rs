@@ -181,6 +181,20 @@ impl Primitive {
                     *d = transform_dir(l, *d);
                 }
             }
+            // In-between shapes are delta sets too: position offsets
+            // by L, normal offsets by the inverse-transpose.
+            for ib in &mut target.inbetweens {
+                if let Some(dp) = ib.position.as_mut() {
+                    for d in dp.iter_mut() {
+                        *d = transform_dir(l, *d);
+                    }
+                }
+                if let (Some(nm), Some(dn)) = (normal_mat, ib.normal.as_mut()) {
+                    for d in dn.iter_mut() {
+                        *d = transform_dir(nm, *d);
+                    }
+                }
+            }
         }
 
         out

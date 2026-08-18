@@ -273,11 +273,11 @@ fn tangent_handedness_majority_vote() {
 fn morph_targets_roster_and_average_preserved() {
     let mut src = grid_sheet(8);
     let n = src.positions.len();
-    src.targets = vec![MorphTarget {
-        position: Some(vec![[0.0, 0.0, 0.5]; n]),
-        normal: None,
-        tangent: None,
-    }];
+    src.targets = vec![MorphTarget::with_deltas(
+        Some(vec![[0.0, 0.0, 0.5]; n]),
+        None,
+        None,
+    )];
     let s = src.simplify_cluster(4);
     assert_eq!(s.targets.len(), 1);
     let pos = s.targets[0].position.as_ref().unwrap();

@@ -2190,6 +2190,10 @@ impl Scene3D {
     ///   morph-target count of every contained primitive (glTF 2.0
     ///   §3.7.2.2 implementation note — the `targetNames` array and
     ///   all primitive `targets` arrays must have the same length).
+    /// * Every [`Inbetween`](crate::Inbetween) declares a legal,
+    ///   unique weight station (finite, not `0`/`1`, no duplicates
+    ///   within one target) and its delta arrays match the base
+    ///   `positions` length.
     /// * A non-empty `Node::weights` override sits on a node that
     ///   instantiates a mesh, and its length matches the morph-target
     ///   count of every primitive of that mesh (glTF 2.0 `node.weights`
@@ -2515,6 +2519,46 @@ impl Scene3D {
                                 expected: n_pos,
                                 actual: v.len(),
                             });
+                        }
+                    }
+                    // In-between shapes (USD blend-shape §1.4.1
+                    // authoring rules): the endpoint weights 0 and 1
+                    // are implicitly defined and must not be
+                    // authored, weights must be finite, and no two
+                    // in-betweens of one target may share a weight.
+                    // Delta arrays are per-vertex parallel like the
+                    // primary slots.
+                    for (ii, ib) in tgt.inbetweens.iter().enumerate() {
+                        let ib_loc =
+                            |field: &str| here(&format!("targets[{ti}].inbetweens[{ii}]{field}"));
+                        if !ib.is_valid_weight() {
+                            errors.push(ValidationError::InbetweenWeightInvalid {
+                                location: ib_loc(""),
+                                weight: ib.weight,
+                            });
+                        } else if tgt.inbetweens[..ii].iter().any(|o| o.weight == ib.weight) {
+                            errors.push(ValidationError::InbetweenDuplicateWeight {
+                                location: ib_loc(""),
+                                weight: ib.weight,
+                            });
+                        }
+                        if let Some(v) = &ib.position {
+                            if v.len() != n_pos {
+                                errors.push(ValidationError::AttributeLengthMismatch {
+                                    location: ib_loc(".position"),
+                                    expected: n_pos,
+                                    actual: v.len(),
+                                });
+                            }
+                        }
+                        if let Some(v) = &ib.normal {
+                            if v.len() != n_pos {
+                                errors.push(ValidationError::AttributeLengthMismatch {
+                                    location: ib_loc(".normal"),
+                                    expected: n_pos,
+                                    actual: v.len(),
+                                });
+                            }
                         }
                     }
                 }
@@ -2857,6 +2901,20 @@ pub enum ValidationError {
         target_names: usize,
         primitive_targets: usize,
     },
+    /// An [`Inbetween`](crate::Inbetween) declares an illegal weight
+    /// station: non-finite, or exactly `0.0` / `1.0` (the USD
+    /// blend-shape schema defines those endpoints implicitly — the
+    /// null shape and the primary deltas — and forbids authoring
+    /// them). [`MorphTarget::at_weight`](crate::MorphTarget::at_weight)
+    /// ignores the shape.
+    InbetweenWeightInvalid { location: String, weight: f32 },
+    /// Two in-betweens of one [`MorphTarget`](crate::MorphTarget)
+    /// share a weight station (forbidden — averaging colliding shapes
+    /// would leave the result unnamed and non-round-trippable).
+    /// Reported on the second and later claimants;
+    /// [`MorphTarget::at_weight`](crate::MorphTarget::at_weight)
+    /// ignores every shape at the duplicated weight.
+    InbetweenDuplicateWeight { location: String, weight: f32 },
     /// A [`Node::weights`](crate::Node::weights) override is non-empty
     /// and its length disagrees with the morph-target count of one of
     /// the instantiated mesh's primitives (glTF 2.0 `node.weights`:
@@ -3008,6 +3066,14 @@ impl std::fmt::Display for ValidationError {
             } => write!(
                 f,
                 "{location}: mesh names {target_names} morph targets but primitive carries {primitive_targets}"
+            ),
+            Self::InbetweenWeightInvalid { location, weight } => write!(
+                f,
+                "{location}: in-between weight {weight} is not a legal station (finite, not 0 or 1)"
+            ),
+            Self::InbetweenDuplicateWeight { location, weight } => write!(
+                f,
+                "{location}: duplicate in-between weight station {weight}"
             ),
             Self::NodeMorphWeightCountMismatch {
                 location,

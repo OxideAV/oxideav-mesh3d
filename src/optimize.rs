@@ -552,16 +552,13 @@ pub(crate) fn gather_vertices(src: &Primitive, perm: &[usize]) -> Primitive {
 /// permutation `perm` (output vertex `j` gathers source vertex
 /// `perm[j]`).
 pub(crate) fn permute_morph(t: &MorphTarget, perm: &[usize]) -> MorphTarget {
-    let g3 = |src: &Vec<[f32; 3]>| -> Vec<[f32; 3]> {
+    // Every delta buffer (primary slots + in-between shapes) gathers
+    // through the same permutation.
+    t.map_buffers(|src| {
         perm.iter()
             .map(|&i| src.get(i).copied().unwrap_or([0.0; 3]))
             .collect()
-    };
-    MorphTarget {
-        position: t.position.as_ref().map(&g3),
-        normal: t.normal.as_ref().map(&g3),
-        tangent: t.tangent.as_ref().map(&g3),
-    }
+    })
 }
 
 /// Pack a flat `u32` index list into the narrowest glTF width that holds
