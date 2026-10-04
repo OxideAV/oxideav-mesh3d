@@ -526,8 +526,8 @@ pub(crate) fn gather_vertices(src: &Primitive, perm: &[usize]) -> Primitive {
 
     let mut out = src.clone();
     out.positions = g3(&src.positions);
-    out.normals = src.normals.as_ref().map(&g3);
-    out.tangents = src.tangents.as_ref().map(&g4);
+    out.normals = src.normals.as_ref().map(g3);
+    out.tangents = src.tangents.as_ref().map(g4);
     out.uvs = src
         .uvs
         .iter()
@@ -537,13 +537,13 @@ pub(crate) fn gather_vertices(src: &Primitive, perm: &[usize]) -> Primitive {
                 .collect()
         })
         .collect();
-    out.colors = src.colors.iter().map(&g4).collect();
+    out.colors = src.colors.iter().map(g4).collect();
     out.joints = src.joints.as_ref().map(|s| {
         perm.iter()
             .map(|&i| s.get(i).copied().unwrap_or([0; 4]))
             .collect()
     });
-    out.weights = src.weights.as_ref().map(&g4);
+    out.weights = src.weights.as_ref().map(g4);
     out.targets = src.targets.iter().map(|t| permute_morph(t, perm)).collect();
     out
 }
