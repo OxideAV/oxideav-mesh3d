@@ -74,6 +74,7 @@ pub mod encoder;
 pub mod error;
 pub mod extrude;
 pub mod graph;
+pub mod hit_attributes;
 pub mod instance_bvh;
 pub mod light;
 pub mod material;
@@ -99,7 +100,7 @@ pub use audio::{
     AudioData, AudioEmitter, AudioEmitterId, AudioSource, AudioSourceId, AuralMode, DistanceModel,
     SpatialAudio,
 };
-pub use bvh::{Bvh, BvhNode};
+pub use bvh::{Bvh, BvhBuildOptions, BvhBuildStrategy, BvhNode};
 pub use camera::Camera;
 pub use compose::AppendOffsets;
 pub use curvature::CurvatureReport;
@@ -107,7 +108,7 @@ pub use decoder::Mesh3DDecoder;
 pub use encoder::Mesh3DEncoder;
 pub use error::{Error, Result};
 pub use extrude::Profile2D;
-pub use instance_bvh::{Instance, InstanceBvh, InstanceBvhNode};
+pub use instance_bvh::{HitCandidate, Instance, InstanceBvh, InstanceBvhNode, SceneHit};
 pub use light::Light;
 pub use material::{
     AlphaMode, Anisotropy, Clearcoat, DiffuseTransmission, Iridescence, Material, MaterialExt,
@@ -119,7 +120,7 @@ pub use mesh::{
 };
 pub use optimize::{simulate_cache, CacheStats, DEFAULT_CACHE_SIZE};
 pub use pose::Pose;
-pub use ray::{Ray, RayHit};
+pub use ray::{PreparedRay, Ray, RayHit, RayQuery, TriangleTest};
 pub use registry::Mesh3DRegistry;
 pub use scene::{
     Axis, BoundingBox, CameraId, LightId, MaterialId, MaterialVariantId, MeshId, Node, NodeId,

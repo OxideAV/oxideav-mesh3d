@@ -91,9 +91,10 @@ fn single_instance_one_leaf() {
 
 #[test]
 fn grid_4_instances_single_leaf() {
-    // 4 == LEAF_THRESHOLD, so the build stops at the root leaf.
+    // 4 == LEAF_THRESHOLD, so the object-median build stops at the
+    // root leaf.
     let s = grid_scene(4, 3.0);
-    let b = s.build_instance_bvh().unwrap();
+    let b = InstanceBvh::build_with(&s, &oxideav_mesh3d::BvhBuildOptions::object_median()).unwrap();
     assert_eq!(b.instance_count(), 4);
     assert_eq!(b.node_count(), 1);
     assert_eq!(b.leaf_count(), 1);
@@ -475,7 +476,7 @@ fn deterministic_build() {
     for (n1, n2) in b1.nodes.iter().zip(b2.nodes.iter()) {
         assert_eq!(n1.instance_count, n2.instance_count);
         assert_eq!(n1.left_or_first, n2.left_or_first);
-        assert_eq!(n1.right_child, n2.right_child);
+        assert_eq!(n1.right_child(), n2.right_child());
     }
     for (i1, i2) in b1.instances.iter().zip(b2.instances.iter()) {
         assert_eq!(i1.node, i2.node);
