@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.6...v0.0.7) - 2026-10-04
+
+### Fixed
+
+- *(clippy)* pass Copy closures by value to Option::map (needless_borrows_for_generic_args)
+
+### Other
+
+- ray accel: brute-force cross-validation suite, ray_bench example, docs
+- keep the authored front side on mirrored instances
+- SAH BVH + robust prepared-ray traversal + two-level scene BVH with full hit records
+
 ### Added
 
 - Binned surface-area-heuristic BVH builder (MacDonald & Booth 1990;
