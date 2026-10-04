@@ -178,10 +178,40 @@ are skipped or fall back rather than panic), and topology-aware
   hierarchy-free target (STL/OBJ) needs. All navigation shares the
   first-arrival DFS semantics of `world_node_transforms`.
 - **Ray queries** — `Ray` / `RayHit`, `ray::intersect_triangle`
-  (Möller-Trumbore) / `intersect_aabb` (slab), `Primitive::
-  intersect_ray` / `any_ray_intersection`, an object-median per-
-  primitive `Bvh`, a scene-level `InstanceBvh`, and a world-space
-  `Scene3D::intersect_ray` returning `SceneRayHit`.
+  (Möller-Trumbore) / `intersect_aabb` (slab), brute-force
+  `Primitive::intersect_ray` / `any_ray_intersection` and
+  `Scene3D::intersect_ray` (`SceneRayHit`), plus the accelerated
+  path a ray tracer builds on:
+  - `Bvh` — per-primitive BVH with a **binned-SAH** builder
+    (MacDonald & Booth 1990; Wald 2007) or the legacy object-median
+    one (`BvhBuildOptions` / `BvhBuildStrategy`), flattened into
+    32-byte `#[repr(C)]` `BvhNode`s (`min, left_or_first, max, count`
+    — byte-identical to a WGSL `vec3f,u32,vec3f,u32` struct, children
+    stored as an adjacent pair in depth-first order; `node_words()`
+    for GPU upload), depth bounded to ≤ 64.
+  - `PreparedRay` — per-ray constants (reciprocal direction, sign
+    masks, watertight shear); robust slab test (Williams et al. 2005,
+    Ize 2013 `1 + 2γ(3)` far-distance scaling, NaN/±∞/−0 safe).
+    `TriangleTest::{MollerTrumbore, Watertight}` — the latter is
+    Woop, Benthin & Wald 2013 (no leaks through shared edges).
+    `RayQuery { t_min, t_max, triangle_test }`.
+  - Allocation-free ordered (front-to-back, early-out) closest-hit
+    and any-hit traversal on a fixed stack: `Bvh::closest_hit[_filtered]`
+    / `occluded[_filtered]`; filters take a closure so alpha-`MASK`
+    geometry can be skipped (also in shadow rays). `Bvh::refit`
+    updates bounds after vertex edits.
+  - `InstanceBvh` — two-level structure: SAH TLAS over node-mesh
+    instances + one shared BLAS per mesh primitive. `closest_hit`
+    returns a `SceneHit` (instance / node / mesh / primitive /
+    triangle index, vertex indices, barycentrics, `t`, world hit
+    point, unit world geometric normal — inverse-transpose, glTF
+    mirroring rule — and `front_face`); `occluded` for shadow rays;
+    `HitCandidate` filters; world-space attribute helpers
+    `shading_normal` / `uv(set)` / `tangent` / `color(set)` (local
+    versions: `Primitive::interpolate_*`); `refit` after node
+    transform / vertex updates.
+  - `cargo run --release --example ray_bench` compares builders and
+    triangle tests (Mrays/s, single thread).
 - **Geometry transform** — `Primitive::transformed(m)` /
   `Mesh::transformed(m)` bake an affine 4×4 into the vertex data:
   positions move by the full affine, normals by the **inverse-transpose**

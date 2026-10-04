@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Binned surface-area-heuristic BVH builder (MacDonald & Booth 1990;
+  Wald 2007) for `Bvh` and `InstanceBvh`, now the default;
+  `BvhBuildOptions` / `BvhBuildStrategy` keep the object-median
+  builder selectable. Depth is bounded (count-median fallback past
+  depth 32) so traversal runs on a fixed stack.
+- `PreparedRay` (robust slab test per Williams et al. 2005 / Ize 2013),
+  `TriangleTest::Watertight` (Woop, Benthin & Wald 2013) alongside
+  Möller-Trumbore, and `RayQuery { t_min, t_max, triangle_test }`.
+- `Bvh::closest_hit[_filtered]`, `Bvh::occluded[_filtered]`,
+  `Bvh::refit`, `Bvh::depth`, `Bvh::sah_cost`, `Bvh::node_words`,
+  `Bvh::triangle_vertices`.
+- `InstanceBvh` is now a real two-level structure (TLAS + shared
+  per-primitive BLAS in `mesh_bvhs`) with `closest_hit[_filtered]` →
+  `SceneHit` (ids, triangle + vertex indices, barycentrics, world
+  position, glTF-mirroring-aware world geometric normal, front face),
+  `occluded[_filtered]` with `HitCandidate` filters, world-space
+  `shading_normal` / `uv` / `tangent` / `color`, `refit`;
+  `Instance::mirrored`.
+- `Primitive::interpolate_{position,normal,uv,tangent,color}` and
+  `Primitive::triangle_normal`.
+- `examples/ray_bench.rs` throughput benchmark and `tests/ray_accel.rs`
+  brute-force cross-validation suite.
+
+### Changed
+
+- **Breaking:** `BvhNode` / `InstanceBvhNode` are 32-byte `#[repr(C)]`
+  GPU-layout nodes (`min`, `left_or_first`, `max`, count) with child
+  pairs stored adjacently; `bounds()` and `right_child()` are methods
+  instead of fields.
+- `Bvh::intersect_ray` / `any_ray_intersection` no longer allocate per
+  ray (≈100× faster on large meshes); `InstanceBvh::intersect_ray`
+  walks per-primitive BVHs instead of brute-forcing each mesh.
+
 ## [0.0.6](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.5...v0.0.6) - 2026-08-18
 
 ### Other
