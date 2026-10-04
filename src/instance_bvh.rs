@@ -48,9 +48,12 @@
 //!
 //! The geometric normal follows glTF 2.0 §3.7.4 ("when the determinant
 //! of a node's global transform is negative, the winding order is
-//! clockwise"): it is `normalize(M⁻ᵀ · (e1 × e2))`, negated for a
-//! mirroring (negative-determinant) instance, so it always points to
-//! the side the asset author considers *front* after mirroring.
+//! clockwise"): it is `normalize(M⁻ᵀ · (e1 × e2))` with `e1 × e2` the
+//! local CCW normal. The inverse transpose carries the authored front
+//! side through any affine transform, mirroring included — for a
+//! negative-determinant instance this equals `-normalize` of the
+//! cross product of the *world-space* edges, i.e. the clockwise world
+//! winding is treated as front, exactly as glTF prescribes.
 //! `front_face` is `true` when the ray direction opposes it.
 //!
 //! [`InstanceBvh::shading_normal`], [`InstanceBvh::uv`],
@@ -92,10 +95,10 @@ pub struct Instance {
     /// Affine inverse of `world` (bottom row `[0, 0, 0, 1]`).
     pub world_inv: [[f32; 4]; 4],
     /// `true` when `det(world) < 0` (a mirroring transform): the
-    /// primitive's winding is flipped in world space (glTF 2.0
-    /// §3.7.4), which [`SceneHit::geometric_normal`] /
-    /// [`SceneHit::front_face`] and [`InstanceBvh::tangent`] account
-    /// for.
+    /// primitive's world-space winding is clockwise (glTF 2.0 §3.7.4).
+    /// [`SceneHit::geometric_normal`] / [`SceneHit::front_face`] are
+    /// computed through the inverse transpose and already account for
+    /// it; [`InstanceBvh::tangent`] flips the bitangent sign.
     pub mirrored: bool,
 }
 
@@ -208,9 +211,10 @@ pub struct SceneHit {
     pub barycentric: [f32; 3],
     /// World-space hit point.
     pub position: [f32; 3],
-    /// Unit world-space geometric normal, oriented by the triangle's
-    /// winding with glTF mirroring applied (never flipped towards the
-    /// ray).
+    /// Unit world-space geometric normal on the authored front side
+    /// (`M⁻ᵀ · (e1 × e2)` normalised — for a mirroring instance this is
+    /// opposite to the world-space edge cross product, per glTF's
+    /// clockwise-front rule). Never flipped towards the ray.
     pub geometric_normal: [f32; 3],
     /// `true` when the ray hits the side `geometric_normal` points to
     /// (`dot(ray.direction, geometric_normal) < 0`).
@@ -300,14 +304,13 @@ impl InstanceBvh {
     }
 
     /// Closest-hit query in `[0, t_max]` (Möller-Trumbore), reported in
-    /// the legacy [`SceneRayHit`] shape (mesh-local `RayHit` whose
-    /// `front_face` is relative to the untransformed local winding).
+    /// the legacy [`SceneRayHit`] shape (mesh-local triangle index /
+    /// barycentrics, world `t`).
     /// Same `t` / hit point as [`Scene3D::intersect_ray`]; on an exact
     /// tie between instances the winner may differ. Prefer
     /// [`InstanceBvh::closest_hit`] for rendering.
     pub fn intersect_ray(&self, scene: &Scene3D, ray: Ray, t_max: f32) -> Option<SceneRayHit> {
         let h = self.closest_hit(scene, ray, &RayQuery::new(t_max))?;
-        let mirrored = self.instances[h.instance as usize].mirrored;
         Some(SceneRayHit {
             node: h.node,
             primitive_index: h.primitive_index,
@@ -315,7 +318,7 @@ impl InstanceBvh {
                 t: h.t,
                 triangle_index: h.triangle_index,
                 barycentric: h.barycentric,
-                front_face: h.front_face != mirrored,
+                front_face: h.front_face,
             },
         })
     }
@@ -543,11 +546,9 @@ impl InstanceBvh {
         ];
         let position = xform_point(&inst.world, local);
         let n_local = cross(sub(p1, p0), sub(p2, p0));
-        let mut n = normal_to_world(&inst.world_inv, n_local);
-        if inst.mirrored {
-            n = [-n[0], -n[1], -n[2]];
-        }
-        let geometric_normal = normalize_or_zero(n);
+        // Inverse-transpose keeps the authored outward side even for
+        // a mirroring instance (glTF: det < 0 ⇒ clockwise front faces).
+        let geometric_normal = normalize_or_zero(normal_to_world(&inst.world_inv, n_local));
         let front_face = dot(ray.ray.direction, geometric_normal) < 0.0;
         Some(SceneHit {
             instance: b.instance,
