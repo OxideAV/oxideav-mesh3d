@@ -476,9 +476,10 @@ fn animation_sampler_empty_keyframes_reported() {
     });
     s.add_animation(anim);
     let errs = s.validate().unwrap_err();
-    assert!(errs
-        .iter()
-        .any(|e| matches!(e, ValidationError::AnimationSamplerEmpty { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, ValidationError::AnimationSamplerEmpty { .. }))
+    );
 }
 
 #[test]
@@ -608,9 +609,10 @@ fn animation_morph_weights_must_be_multiple_of_keyframes() {
     });
     s.add_animation(anim);
     let errs = s.validate().unwrap_err();
-    assert!(errs
-        .iter()
-        .any(|e| matches!(e, ValidationError::AnimationSamplerLengthMismatch { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, ValidationError::AnimationSamplerLengthMismatch { .. }))
+    );
 }
 
 #[test]
@@ -815,9 +817,10 @@ fn uv_set_beyond_primitive_channels_reported() {
 fn texture_on_uvless_primitive_reported() {
     let s = textured_prim_scene(TextureRef::new(TextureId(0)), 0);
     let errs = s.validate().unwrap_err();
-    assert!(errs
-        .iter()
-        .any(|e| matches!(e, ValidationError::UvSetOutOfRange { available: 0, .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, ValidationError::UvSetOutOfRange { available: 0, .. }))
+    );
 }
 
 #[test]
@@ -827,9 +830,10 @@ fn transform_uv_set_override_is_the_checked_value() {
     let r = TextureRef::new(TextureId(0)).with_transform(TextureTransform::new().with_uv_set(3));
     let s = textured_prim_scene(r, 1);
     let errs = s.validate().unwrap_err();
-    assert!(errs
-        .iter()
-        .any(|e| matches!(e, ValidationError::UvSetOutOfRange { uv_set: 3, .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, ValidationError::UvSetOutOfRange { uv_set: 3, .. }))
+    );
 
     // And the converse: an out-of-range base set redeemed by an
     // in-range override validates clean.

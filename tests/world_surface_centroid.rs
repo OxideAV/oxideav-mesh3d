@@ -124,9 +124,10 @@ fn primitive_world_centroid_non_triangle_topology_none() {
     let mut p = Primitive::new(Topology::Lines);
     p.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
     assert!(p.world_surface_centroid(IDENTITY).is_none());
-    assert!(p
-        .world_surface_centroid(translation_matrix([5.0, 0.0, 0.0]))
-        .is_none());
+    assert!(
+        p.world_surface_centroid(translation_matrix([5.0, 0.0, 0.0]))
+            .is_none()
+    );
 }
 
 /// Empty positions → `None`.

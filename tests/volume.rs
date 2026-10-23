@@ -67,7 +67,7 @@ fn unit_cube_ccw() -> Primitive {
 fn unit_cube_cw() -> Primitive {
     let mut p = unit_cube_ccw();
     // Swap last two corners of every triangle to reverse winding.
-    for tri in p.positions.chunks_exact_mut(3) {
+    for tri in p.positions.as_chunks_mut::<3>().0 {
         tri.swap(1, 2);
     }
     p

@@ -752,15 +752,15 @@ impl Primitive {
             let mut k = Vec::new();
             let p = self.positions[i];
             k.extend([key(p[0]), key(p[1]), key(p[2])]);
-            if let Some(ns) = &self.normals {
-                if let Some(v) = ns.get(i) {
-                    k.extend([key(v[0]), key(v[1]), key(v[2])]);
-                }
+            if let Some(ns) = &self.normals
+                && let Some(v) = ns.get(i)
+            {
+                k.extend([key(v[0]), key(v[1]), key(v[2])]);
             }
-            if let Some(ts) = &self.tangents {
-                if let Some(v) = ts.get(i) {
-                    k.extend([key(v[0]), key(v[1]), key(v[2]), key(v[3])]);
-                }
+            if let Some(ts) = &self.tangents
+                && let Some(v) = ts.get(i)
+            {
+                k.extend([key(v[0]), key(v[1]), key(v[2]), key(v[3])]);
             }
             for set in &self.uvs {
                 if let Some(v) = set.get(i) {
@@ -772,45 +772,45 @@ impl Primitive {
                     k.extend([key(v[0]), key(v[1]), key(v[2]), key(v[3])]);
                 }
             }
-            if let Some(js) = &self.joints {
-                if let Some(v) = js.get(i) {
-                    k.extend([v[0] as u32, v[1] as u32, v[2] as u32, v[3] as u32]);
-                }
+            if let Some(js) = &self.joints
+                && let Some(v) = js.get(i)
+            {
+                k.extend([v[0] as u32, v[1] as u32, v[2] as u32, v[3] as u32]);
             }
-            if let Some(ws) = &self.weights {
-                if let Some(v) = ws.get(i) {
-                    k.extend([key(v[0]), key(v[1]), key(v[2]), key(v[3])]);
-                }
+            if let Some(ws) = &self.weights
+                && let Some(v) = ws.get(i)
+            {
+                k.extend([key(v[0]), key(v[1]), key(v[2]), key(v[3])]);
             }
             // Morph deltas are per-vertex parallel — a corner that
             // differs only in a morph delta is a distinct vertex.
             for t in &self.targets {
-                if let Some(d) = &t.position {
-                    if let Some(v) = d.get(i) {
-                        k.extend([key(v[0]), key(v[1]), key(v[2])]);
-                    }
+                if let Some(d) = &t.position
+                    && let Some(v) = d.get(i)
+                {
+                    k.extend([key(v[0]), key(v[1]), key(v[2])]);
                 }
-                if let Some(d) = &t.normal {
-                    if let Some(v) = d.get(i) {
-                        k.extend([key(v[0]), key(v[1]), key(v[2])]);
-                    }
+                if let Some(d) = &t.normal
+                    && let Some(v) = d.get(i)
+                {
+                    k.extend([key(v[0]), key(v[1]), key(v[2])]);
                 }
-                if let Some(d) = &t.tangent {
-                    if let Some(v) = d.get(i) {
-                        k.extend([key(v[0]), key(v[1]), key(v[2])]);
-                    }
+                if let Some(d) = &t.tangent
+                    && let Some(v) = d.get(i)
+                {
+                    k.extend([key(v[0]), key(v[1]), key(v[2])]);
                 }
                 // In-between deltas are per-vertex parallel too.
                 for ib in &t.inbetweens {
-                    if let Some(d) = &ib.position {
-                        if let Some(v) = d.get(i) {
-                            k.extend([key(v[0]), key(v[1]), key(v[2])]);
-                        }
+                    if let Some(d) = &ib.position
+                        && let Some(v) = d.get(i)
+                    {
+                        k.extend([key(v[0]), key(v[1]), key(v[2])]);
                     }
-                    if let Some(d) = &ib.normal {
-                        if let Some(v) = d.get(i) {
-                            k.extend([key(v[0]), key(v[1]), key(v[2])]);
-                        }
+                    if let Some(d) = &ib.normal
+                        && let Some(v) = d.get(i)
+                    {
+                        k.extend([key(v[0]), key(v[1]), key(v[2])]);
                     }
                 }
             }
@@ -3706,13 +3706,7 @@ impl Primitive {
             apex: [u32; 2],
             napex: usize,
         }
-        let ekey = |a: u32, b: u32| -> (u32, u32) {
-            if a < b {
-                (a, b)
-            } else {
-                (b, a)
-            }
-        };
+        let ekey = |a: u32, b: u32| -> (u32, u32) { if a < b { (a, b) } else { (b, a) } };
         let mut edges: HashMap<(u32, u32), EdgeInfo> = HashMap::new();
         for &[a, b, c] in &valid {
             for (u, v, w) in [(a, b, c), (b, c, a), (c, a, b)] {
@@ -4197,33 +4191,32 @@ impl Primitive {
                 }
             });
             vtx_slot[i] = entry.slot;
-            if entry.count == 0 {
-                if let Some(js) = &self.joints {
-                    if let Some(v) = js.get(i) {
-                        entry.joints = *v;
-                    }
-                }
+            if entry.count == 0
+                && let Some(js) = &self.joints
+                && let Some(v) = js.get(i)
+            {
+                entry.joints = *v;
             }
             entry.count += 1;
             let p = self.positions[i];
             for (acc, &c) in entry.pos.iter_mut().zip(p.iter()) {
                 *acc += c as f64;
             }
-            if let Some(ns) = &self.normals {
-                if let Some(v) = ns.get(i) {
-                    for (acc, &c) in entry.normal.iter_mut().zip(v.iter()) {
-                        *acc += c as f64;
-                    }
+            if let Some(ns) = &self.normals
+                && let Some(v) = ns.get(i)
+            {
+                for (acc, &c) in entry.normal.iter_mut().zip(v.iter()) {
+                    *acc += c as f64;
                 }
             }
-            if let Some(ts) = &self.tangents {
-                if let Some(v) = ts.get(i) {
-                    for (acc, &c) in entry.tangent_xyz.iter_mut().zip(v.iter()) {
-                        *acc += c as f64;
-                    }
-                    if v[3] >= 0.0 {
-                        entry.tangent_w_pos += 1;
-                    }
+            if let Some(ts) = &self.tangents
+                && let Some(v) = ts.get(i)
+            {
+                for (acc, &c) in entry.tangent_xyz.iter_mut().zip(v.iter()) {
+                    *acc += c as f64;
+                }
+                if v[3] >= 0.0 {
+                    entry.tangent_w_pos += 1;
                 }
             }
             for (s, set) in self.uvs.iter().enumerate() {
@@ -4239,49 +4232,49 @@ impl Primitive {
                     }
                 }
             }
-            if let Some(ws) = &self.weights {
-                if let Some(v) = ws.get(i) {
-                    for (acc, &c) in entry.weights.iter_mut().zip(v.iter()) {
-                        *acc += c as f64;
-                    }
+            if let Some(ws) = &self.weights
+                && let Some(v) = ws.get(i)
+            {
+                for (acc, &c) in entry.weights.iter_mut().zip(v.iter()) {
+                    *acc += c as f64;
                 }
             }
             for (ti, t) in self.targets.iter().enumerate() {
-                if let (Some(d), Some(acc)) = (&t.position, entry.morph[ti].position.as_mut()) {
-                    if let Some(v) = d.get(i) {
-                        for k in 0..3 {
-                            acc[k] += v[k] as f64;
-                        }
+                if let (Some(d), Some(acc)) = (&t.position, entry.morph[ti].position.as_mut())
+                    && let Some(v) = d.get(i)
+                {
+                    for k in 0..3 {
+                        acc[k] += v[k] as f64;
                     }
                 }
-                if let (Some(d), Some(acc)) = (&t.normal, entry.morph[ti].normal.as_mut()) {
-                    if let Some(v) = d.get(i) {
-                        for k in 0..3 {
-                            acc[k] += v[k] as f64;
-                        }
+                if let (Some(d), Some(acc)) = (&t.normal, entry.morph[ti].normal.as_mut())
+                    && let Some(v) = d.get(i)
+                {
+                    for k in 0..3 {
+                        acc[k] += v[k] as f64;
                     }
                 }
-                if let (Some(d), Some(acc)) = (&t.tangent, entry.morph[ti].tangent.as_mut()) {
-                    if let Some(v) = d.get(i) {
-                        for k in 0..3 {
-                            acc[k] += v[k] as f64;
-                        }
+                if let (Some(d), Some(acc)) = (&t.tangent, entry.morph[ti].tangent.as_mut())
+                    && let Some(v) = d.get(i)
+                {
+                    for k in 0..3 {
+                        acc[k] += v[k] as f64;
                     }
                 }
                 for (ii, ib) in t.inbetweens.iter().enumerate() {
                     let (pa, na) = &mut entry.morph[ti].inbetweens[ii];
-                    if let (Some(d), Some(acc)) = (&ib.position, pa.as_mut()) {
-                        if let Some(v) = d.get(i) {
-                            for k in 0..3 {
-                                acc[k] += v[k] as f64;
-                            }
+                    if let (Some(d), Some(acc)) = (&ib.position, pa.as_mut())
+                        && let Some(v) = d.get(i)
+                    {
+                        for k in 0..3 {
+                            acc[k] += v[k] as f64;
                         }
                     }
-                    if let (Some(d), Some(acc)) = (&ib.normal, na.as_mut()) {
-                        if let Some(v) = d.get(i) {
-                            for k in 0..3 {
-                                acc[k] += v[k] as f64;
-                            }
+                    if let (Some(d), Some(acc)) = (&ib.normal, na.as_mut())
+                        && let Some(v) = d.get(i)
+                    {
+                        for k in 0..3 {
+                            acc[k] += v[k] as f64;
                         }
                     }
                 }
@@ -4810,20 +4803,20 @@ impl Primitive {
             }
             for (slot, (a, b)) in [(ia, ib), (ib, ic), (ic, ia)].into_iter().enumerate() {
                 let key = if a < b { (a, b) } else { (b, a) };
-                if let Some(faces) = edge_faces.get(&key) {
-                    if faces.len() == 2 {
-                        // Exactly two sharers — the neighbour is the one
-                        // that is not this face.
-                        let neighbour = if faces[0] == fi as u32 {
-                            faces[1]
-                        } else {
-                            faces[0]
-                        };
-                        out[fi][slot] = Some(neighbour);
-                    }
-                    // len == 1 (boundary) or len ≥ 3 (non-manifold):
-                    // no single well-defined neighbour → leave None.
+                if let Some(faces) = edge_faces.get(&key)
+                    && faces.len() == 2
+                {
+                    // Exactly two sharers — the neighbour is the one
+                    // that is not this face.
+                    let neighbour = if faces[0] == fi as u32 {
+                        faces[1]
+                    } else {
+                        faces[0]
+                    };
+                    out[fi][slot] = Some(neighbour);
                 }
+                // len == 1 (boundary) or len ≥ 3 (non-manifold):
+                // no single well-defined neighbour → leave None.
             }
         }
 
@@ -5755,11 +5748,7 @@ impl Mesh {
                 any = true;
             }
         }
-        if !any {
-            None
-        } else {
-            Some(total)
-        }
+        if !any { None } else { Some(total) }
     }
 
     /// Transform-aware unit-density inertia tensor across every contained
@@ -5806,11 +5795,7 @@ impl Mesh {
                 any = true;
             }
         }
-        if !any {
-            None
-        } else {
-            Some(total)
-        }
+        if !any { None } else { Some(total) }
     }
 
     /// Closest-hit ray query across every contained primitive.
@@ -5968,10 +5953,10 @@ fn triangulate_loop_3d(pts3: &[[f64; 3]], orig: &[u32]) -> Option<Vec<[u32; 3]>>
     let mut keep: Vec<u32> = Vec::with_capacity(k);
     for i in 0..k {
         let q = [dot(pts3[i], u), dot(pts3[i], v)];
-        if let Some(last) = p2.last() {
-            if *last == q {
-                continue;
-            }
+        if let Some(last) = p2.last()
+            && *last == q
+        {
+            continue;
         }
         p2.push(q);
         keep.push(orig[i]);
@@ -6080,9 +6065,5 @@ fn triangulate_loop_3d(pts3: &[[f64; 3]], orig: &[u32]) -> Option<Vec<[u32; 3]>>
     if cross2(p2[prev[last]], p2[last], p2[next[last]]) > 0.0 {
         tris.push([keep[prev[last]], keep[last], keep[next[last]]]);
     }
-    if tris.is_empty() {
-        None
-    } else {
-        Some(tris)
-    }
+    if tris.is_empty() { None } else { Some(tris) }
 }

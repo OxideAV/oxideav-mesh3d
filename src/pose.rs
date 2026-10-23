@@ -32,7 +32,7 @@
 
 use crate::animation::{Animation, AnimationProperty, SampledValue};
 use crate::mesh::Mesh;
-use crate::scene::{mat4_mul, NodeId, Scene3D, Transform};
+use crate::scene::{NodeId, Scene3D, Transform, mat4_mul};
 
 /// One animation evaluated at one timestamp — per-node TRS overrides
 /// plus morph-weight vectors, indexed by `NodeId.0`.

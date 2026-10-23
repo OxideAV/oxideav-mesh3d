@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use oxideav_mesh3d::{simulate_cache, Indices, Primitive, Topology, DEFAULT_CACHE_SIZE};
+use oxideav_mesh3d::{DEFAULT_CACHE_SIZE, Indices, Primitive, Topology, simulate_cache};
 
 // --- helpers ---------------------------------------------------------
 
@@ -24,7 +24,9 @@ fn idx_vec(p: &Primitive) -> Vec<u32> {
 /// so two orderings of the same mesh compare equal.
 fn tri_set(idx: &[u32]) -> Vec<[u32; 3]> {
     let mut out: Vec<[u32; 3]> = idx
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             let mut t = [c[0], c[1], c[2]];
             t.sort_unstable();
@@ -63,7 +65,12 @@ fn grid(w: u32, h: u32) -> Primitive {
 fn grid_scrambled(w: u32, h: u32) -> Primitive {
     let g = grid(w, h);
     let idx = idx_vec(&g);
-    let tris: Vec<[u32; 3]> = idx.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let tris: Vec<[u32; 3]> = idx
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
     // Interleave the two halves so neighbours in the cell grid end up far
     // apart in the triangle stream.
     let half = tris.len() / 2;

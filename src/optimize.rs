@@ -357,11 +357,7 @@ impl Primitive {
             .iter()
             .filter_map(|&raw| {
                 let s = raw as usize;
-                if s < n {
-                    Some(remap[s])
-                } else {
-                    None
-                }
+                if s < n { Some(remap[s]) } else { None }
             })
             .collect();
 

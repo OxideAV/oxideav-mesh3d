@@ -703,10 +703,10 @@ impl QemState {
             if let Some([a, b, c]) = self.faces[fi] {
                 for (u, v) in [(a, b), (b, c), (c, a)] {
                     let k = if u < v { (u, v) } else { (v, u) };
-                    if seen.insert(k) {
-                        if let Some(cand) = self.make_candidate(k.0, k.1) {
-                            heap.push(cand);
-                        }
+                    if seen.insert(k)
+                        && let Some(cand) = self.make_candidate(k.0, k.1)
+                    {
+                        heap.push(cand);
                     }
                 }
             }
@@ -864,7 +864,7 @@ impl QemState {
         };
 
         macro_rules! lerp_set {
-            ($src:expr, $k:expr) => {{
+            ($src:expr_2021, $k:expr_2021) => {{
                 let src = $src;
                 let mut v: Vec<[f32; $k]> = Vec::with_capacity(order.len());
                 for &o in &order {

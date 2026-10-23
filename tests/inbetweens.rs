@@ -107,9 +107,11 @@ fn inbetween_only_slot_is_resolved() {
     // must still materialise (peaking at the station, fading to zero
     // at both endpoints).
     let mut t = primary_target(1);
-    t.inbetweens = vec![Inbetween::new(0.5)
-        .with_position(vec![[0.5, 0.0, 0.0]])
-        .with_normal(vec![[0.0, 0.0, 1.0]])];
+    t.inbetweens = vec![
+        Inbetween::new(0.5)
+            .with_position(vec![[0.5, 0.0, 0.0]])
+            .with_normal(vec![[0.0, 0.0, 1.0]]),
+    ];
     let r = t.at_weight(0.5);
     assert!(close3(r.normal.as_ref().unwrap()[0], [0.0, 0.0, 1.0], 1e-6));
     let r = t.at_weight(1.0);
@@ -391,9 +393,11 @@ fn cluster_averages_inbetween_buffers() {
     // Two triangles over the strip.
     prim.indices = Some(oxideav_mesh3d::Indices::U32(vec![0, 1, 4, 1, 5, 4]));
     let mut t = primary_target(8);
-    t.inbetweens = vec![Inbetween::new(0.5)
-        .with_name("half")
-        .with_position(vec![[0.9, 0.0, 0.0]; 8])];
+    t.inbetweens = vec![
+        Inbetween::new(0.5)
+            .with_name("half")
+            .with_position(vec![[0.9, 0.0, 0.0]; 8]),
+    ];
     prim.targets = vec![t];
     let out = prim.simplify_cluster(2);
     let n = out.positions.len();

@@ -18,9 +18,11 @@ fn one_triangle_primitive() -> Primitive {
 #[test]
 fn scene_and_primitive_default_to_no_variants() {
     assert!(Scene3D::new().material_variants.is_empty());
-    assert!(Primitive::new(Topology::Triangles)
-        .variant_mappings
-        .is_empty());
+    assert!(
+        Primitive::new(Topology::Triangles)
+            .variant_mappings
+            .is_empty()
+    );
 }
 
 #[test]
@@ -124,8 +126,8 @@ fn duplicate_variant_within_one_mapping_reported() {
 #[test]
 fn append_unifies_variant_rosters_by_name() {
     let mut dst = variant_scene(); // variants: Red(0), Blue(1)
-                                   // Source scene declares Blue + Green — Blue must unify with dst's,
-                                   // Green must join the roster.
+    // Source scene declares Blue + Green — Blue must unify with dst's,
+    // Green must join the roster.
     let mut src = Scene3D::new();
     let alt = src.add_material(Material::new().with_name("src-alt"));
     let blue = src.add_material_variant("Blue");

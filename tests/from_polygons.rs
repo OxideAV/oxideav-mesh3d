@@ -53,7 +53,7 @@ fn concave_polygon_triangulates_to_its_own_area() {
     let faces = vec![vec![0, 1, 2, 3, 4, 5]];
     let prim = Primitive::from_polygons(positions, &faces);
     assert_eq!(prim.triangle_indices().len(), 4); // 6-gon -> 4 tris
-                                                  // The L area: a 2x2 square minus the 1x1 top-right notch = 3.
+    // The L area: a 2x2 square minus the 1x1 top-right notch = 3.
     assert!(
         (prim.surface_area() - 3.0).abs() < 1e-9,
         "L area = {}",

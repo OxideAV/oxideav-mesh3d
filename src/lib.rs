@@ -118,7 +118,7 @@ pub use mesh::{
     EdgeManifoldReport, Inbetween, Indices, Mesh, MorphTarget, MorphedAttributes,
     OrientationReport, Primitive, Topology, TopologySummary, VariantMapping,
 };
-pub use optimize::{simulate_cache, CacheStats, DEFAULT_CACHE_SIZE};
+pub use optimize::{CacheStats, DEFAULT_CACHE_SIZE, simulate_cache};
 pub use pose::Pose;
 pub use ray::{PreparedRay, Ray, RayHit, RayQuery, TriangleTest};
 pub use registry::Mesh3DRegistry;

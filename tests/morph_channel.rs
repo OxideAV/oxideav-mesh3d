@@ -86,53 +86,63 @@ fn constructor_rejects_structural_malformations() {
     // Empty keyframes.
     assert!(AnimationSampler::morph_weights(vec![], vec![], Interpolation::Linear).is_none());
     // Frame count mismatch.
-    assert!(AnimationSampler::morph_weights(
-        vec![0.0, 1.0],
-        vec![vec![0.0]],
-        Interpolation::Linear
-    )
-    .is_none());
+    assert!(
+        AnimationSampler::morph_weights(vec![0.0, 1.0], vec![vec![0.0]], Interpolation::Linear)
+            .is_none()
+    );
     // Ragged stride.
-    assert!(AnimationSampler::morph_weights(
-        vec![0.0, 1.0],
-        vec![vec![0.0, 0.0], vec![1.0]],
-        Interpolation::Linear
-    )
-    .is_none());
+    assert!(
+        AnimationSampler::morph_weights(
+            vec![0.0, 1.0],
+            vec![vec![0.0, 0.0], vec![1.0]],
+            Interpolation::Linear
+        )
+        .is_none()
+    );
     // Zero stride.
-    assert!(AnimationSampler::morph_weights(
-        vec![0.0, 1.0],
-        vec![vec![], vec![]],
-        Interpolation::Linear
-    )
-    .is_none());
+    assert!(
+        AnimationSampler::morph_weights(
+            vec![0.0, 1.0],
+            vec![vec![], vec![]],
+            Interpolation::Linear
+        )
+        .is_none()
+    );
     // Non-increasing timestamps (§3.6 strictly increasing).
-    assert!(AnimationSampler::morph_weights(
-        vec![0.0, 0.0],
-        vec![vec![0.0], vec![1.0]],
-        Interpolation::Linear
-    )
-    .is_none());
-    assert!(AnimationSampler::morph_weights(
-        vec![1.0, 0.5],
-        vec![vec![0.0], vec![1.0]],
-        Interpolation::Linear
-    )
-    .is_none());
+    assert!(
+        AnimationSampler::morph_weights(
+            vec![0.0, 0.0],
+            vec![vec![0.0], vec![1.0]],
+            Interpolation::Linear
+        )
+        .is_none()
+    );
+    assert!(
+        AnimationSampler::morph_weights(
+            vec![1.0, 0.5],
+            vec![vec![0.0], vec![1.0]],
+            Interpolation::Linear
+        )
+        .is_none()
+    );
     // Non-finite timestamp.
-    assert!(AnimationSampler::morph_weights(
-        vec![0.0, f32::NAN],
-        vec![vec![0.0], vec![1.0]],
-        Interpolation::Linear
-    )
-    .is_none());
+    assert!(
+        AnimationSampler::morph_weights(
+            vec![0.0, f32::NAN],
+            vec![vec![0.0], vec![1.0]],
+            Interpolation::Linear
+        )
+        .is_none()
+    );
     // CubicSpline needs the tangent-triple constructor.
-    assert!(AnimationSampler::morph_weights(
-        vec![0.0, 1.0],
-        vec![vec![0.0], vec![1.0]],
-        Interpolation::CubicSpline
-    )
-    .is_none());
+    assert!(
+        AnimationSampler::morph_weights(
+            vec![0.0, 1.0],
+            vec![vec![0.0], vec![1.0]],
+            Interpolation::CubicSpline
+        )
+        .is_none()
+    );
 }
 
 // ---------------------------------------------------------------- //
@@ -182,21 +192,25 @@ fn cubic_midpoint_matches_manual_hermite() {
 #[test]
 fn cubic_constructor_rejects_table_mismatches() {
     // in_tangents short.
-    assert!(AnimationSampler::morph_weights_cubic(
-        vec![0.0, 1.0],
-        vec![vec![0.0]],
-        vec![vec![0.0], vec![1.0]],
-        vec![vec![0.0], vec![0.0]],
-    )
-    .is_none());
+    assert!(
+        AnimationSampler::morph_weights_cubic(
+            vec![0.0, 1.0],
+            vec![vec![0.0]],
+            vec![vec![0.0], vec![1.0]],
+            vec![vec![0.0], vec![0.0]],
+        )
+        .is_none()
+    );
     // Stride disagreement across tables.
-    assert!(AnimationSampler::morph_weights_cubic(
-        vec![0.0, 1.0],
-        vec![vec![0.0], vec![0.0]],
-        vec![vec![0.0, 0.0], vec![1.0, 1.0]],
-        vec![vec![0.0], vec![0.0]],
-    )
-    .is_none());
+    assert!(
+        AnimationSampler::morph_weights_cubic(
+            vec![0.0, 1.0],
+            vec![vec![0.0], vec![0.0]],
+            vec![vec![0.0, 0.0], vec![1.0, 1.0]],
+            vec![vec![0.0], vec![0.0]],
+        )
+        .is_none()
+    );
 }
 
 // ---------------------------------------------------------------- //
@@ -305,12 +319,14 @@ fn with_channel_and_channel_for() {
         .channel_for(NodeId(3), AnimationProperty::MorphWeights)
         .expect("channel present");
     assert_eq!(ch.target.node, NodeId(3));
-    assert!(anim
-        .channel_for(NodeId(3), AnimationProperty::Rotation)
-        .is_none());
-    assert!(anim
-        .channel_for(NodeId(9), AnimationProperty::MorphWeights)
-        .is_none());
+    assert!(
+        anim.channel_for(NodeId(3), AnimationProperty::Rotation)
+            .is_none()
+    );
+    assert!(
+        anim.channel_for(NodeId(9), AnimationProperty::MorphWeights)
+            .is_none()
+    );
 }
 
 #[test]

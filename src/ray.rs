@@ -420,11 +420,7 @@ impl PreparedRay {
         // the interval unconstrained on that axis.
         let t0 = t_min.max(tx0).max(ty0).max(tz0);
         let t1 = t_max.min(tx1.min(ty1).min(tz1) * ROBUST_TFAR_SCALE);
-        if t0 <= t1 {
-            Some(t0)
-        } else {
-            None
-        }
+        if t0 <= t1 { Some(t0) } else { None }
     }
 
     /// Ray-triangle test with the selected algorithm, accepting hits
@@ -624,14 +620,16 @@ mod tests {
     #[test]
     fn ray_parallel_to_triangle_misses() {
         let r = Ray::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
-        assert!(intersect_triangle(
-            r,
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0],
-            f32::INFINITY,
-        )
-        .is_none());
+        assert!(
+            intersect_triangle(
+                r,
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0],
+                f32::INFINITY,
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -639,28 +637,32 @@ mod tests {
         // Hit point would be at (2,2) on the z=1 plane — outside the
         // unit triangle.
         let r = Ray::new([2.0, 2.0, 0.0], [0.0, 0.0, 1.0]);
-        assert!(intersect_triangle(
-            r,
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0],
-            f32::INFINITY,
-        )
-        .is_none());
+        assert!(
+            intersect_triangle(
+                r,
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0],
+                f32::INFINITY,
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn behind_origin_misses() {
         // Hit point would be at t = -1.
         let r = Ray::new([0.3333, 0.3333, 2.0], [0.0, 0.0, 1.0]);
-        assert!(intersect_triangle(
-            r,
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0],
-            f32::INFINITY,
-        )
-        .is_none());
+        assert!(
+            intersect_triangle(
+                r,
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0],
+                f32::INFINITY,
+            )
+            .is_none()
+        );
     }
 
     #[test]

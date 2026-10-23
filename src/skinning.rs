@@ -56,7 +56,7 @@
 //!   shape for "not skinned") is left at its rest pose.
 
 use crate::mesh::{Mesh, Primitive};
-use crate::scene::{mat4_mul, NodeId, Scene3D};
+use crate::scene::{NodeId, Scene3D, mat4_mul};
 
 /// Blend `out += w * m` over the 4x4 (row-major, column-vector).
 fn mat4_madd(out: &mut [[f32; 4]; 4], w: f32, m: &[[f32; 4]; 4]) {
@@ -498,31 +498,29 @@ impl Primitive {
                 m[2][0] * p[0] + m[2][1] * p[1] + m[2][2] * p[2] + m[2][3],
             ];
 
-            if let Some(normals) = out.normals.as_mut() {
-                if let Some(nv) = normals.get_mut(v) {
-                    if let Some(it) = linear_inverse_transpose(&m) {
-                        if let Some(u) = normalize3(mul3(it, *nv)) {
-                            *nv = u;
-                        }
-                    }
-                }
+            if let Some(normals) = out.normals.as_mut()
+                && let Some(nv) = normals.get_mut(v)
+                && let Some(it) = linear_inverse_transpose(&m)
+                && let Some(u) = normalize3(mul3(it, *nv))
+            {
+                *nv = u;
             }
 
-            if let Some(tangents) = out.tangents.as_mut() {
-                if let Some(tv) = tangents.get_mut(v) {
-                    let l = [
-                        [m[0][0], m[0][1], m[0][2]],
-                        [m[1][0], m[1][1], m[1][2]],
-                        [m[2][0], m[2][1], m[2][2]],
-                    ];
-                    if let Some(u) = normalize3(mul3(l, [tv[0], tv[1], tv[2]])) {
-                        tv[0] = u[0];
-                        tv[1] = u[1];
-                        tv[2] = u[2];
-                    }
-                    if linear_det(&m) < 0.0 {
-                        tv[3] = -tv[3];
-                    }
+            if let Some(tangents) = out.tangents.as_mut()
+                && let Some(tv) = tangents.get_mut(v)
+            {
+                let l = [
+                    [m[0][0], m[0][1], m[0][2]],
+                    [m[1][0], m[1][1], m[1][2]],
+                    [m[2][0], m[2][1], m[2][2]],
+                ];
+                if let Some(u) = normalize3(mul3(l, [tv[0], tv[1], tv[2]])) {
+                    tv[0] = u[0];
+                    tv[1] = u[1];
+                    tv[2] = u[2];
+                }
+                if linear_det(&m) < 0.0 {
+                    tv[3] = -tv[3];
                 }
             }
         }

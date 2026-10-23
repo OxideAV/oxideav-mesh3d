@@ -1075,14 +1075,12 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if n_meshes > 0 {
-                    if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                        if let Some(local) = mesh.bounding_box() {
-                            out[idx] = Some(local.transform(world));
-                        }
-                    }
-                }
+            if let Some(m) = node.mesh
+                && n_meshes > 0
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+                && let Some(local) = mesh.bounding_box()
+            {
+                out[idx] = Some(local.transform(world));
             }
             // Walk children in reverse so leftmost child is popped first
             // (deterministic ordering for snapshot consumers).
@@ -1154,16 +1152,15 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                    if let Some(b) = mesh.bounding_box() {
-                        let xf = b.transform(world);
-                        acc = Some(match acc {
-                            None => xf,
-                            Some(a) => a.union(xf),
-                        });
-                    }
-                }
+            if let Some(m) = node.mesh
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+                && let Some(b) = mesh.bounding_box()
+            {
+                let xf = b.transform(world);
+                acc = Some(match acc {
+                    None => xf,
+                    Some(a) => a.union(xf),
+                });
             }
             // Walk children in reverse so leftmost child is popped first
             // (deterministic for the deterministic-debug-output use case).
@@ -1370,11 +1367,7 @@ impl Scene3D {
                 any = true;
             }
         }
-        if !any {
-            None
-        } else {
-            Some(total)
-        }
+        if !any { None } else { Some(total) }
     }
 
     /// Transform-aware total surface area across every node-instantiated
@@ -1464,11 +1457,11 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                    for prim in &mesh.primitives {
-                        total += prim.world_surface_area(world);
-                    }
+            if let Some(m) = node.mesh
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+            {
+                for prim in &mesh.primitives {
+                    total += prim.world_surface_area(world);
                 }
             }
             // Walk children in reverse so leftmost child is popped first.
@@ -1566,15 +1559,15 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                    let det = mat3_det_of_world(world);
-                    if det.is_finite() {
-                        let local = mesh.signed_volume();
-                        let scaled = det * local;
-                        if scaled.is_finite() {
-                            total += scaled;
-                        }
+            if let Some(m) = node.mesh
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+            {
+                let det = mat3_det_of_world(world);
+                if det.is_finite() {
+                    let local = mesh.signed_volume();
+                    let scaled = det * local;
+                    if scaled.is_finite() {
+                        total += scaled;
                     }
                 }
             }
@@ -1683,19 +1676,19 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                    for prim in &mesh.primitives {
-                        let area = prim.world_surface_area(world);
-                        if area == 0.0 || !area.is_finite() {
-                            continue;
-                        }
-                        if let Some(c) = prim.world_surface_centroid(world) {
-                            sum_x += c[0] * area;
-                            sum_y += c[1] * area;
-                            sum_z += c[2] * area;
-                            sum_area += area;
-                        }
+            if let Some(m) = node.mesh
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+            {
+                for prim in &mesh.primitives {
+                    let area = prim.world_surface_area(world);
+                    if area == 0.0 || !area.is_finite() {
+                        continue;
+                    }
+                    if let Some(c) = prim.world_surface_centroid(world) {
+                        sum_x += c[0] * area;
+                        sum_y += c[1] * area;
+                        sum_z += c[2] * area;
+                        sum_area += area;
                     }
                 }
             }
@@ -1808,19 +1801,19 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                    for prim in &mesh.primitives {
-                        let v = prim.world_signed_volume(world);
-                        if v == 0.0 || !v.is_finite() {
-                            continue;
-                        }
-                        if let Some(c) = prim.world_volume_centroid(world) {
-                            sum_x += c[0] * v;
-                            sum_y += c[1] * v;
-                            sum_z += c[2] * v;
-                            sum_v += v;
-                        }
+            if let Some(m) = node.mesh
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+            {
+                for prim in &mesh.primitives {
+                    let v = prim.world_signed_volume(world);
+                    if v == 0.0 || !v.is_finite() {
+                        continue;
+                    }
+                    if let Some(c) = prim.world_volume_centroid(world) {
+                        sum_x += c[0] * v;
+                        sum_y += c[1] * v;
+                        sum_z += c[2] * v;
+                        sum_v += v;
                     }
                 }
             }
@@ -1926,28 +1919,23 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                    if let Some(t) = mesh.world_inertia_tensor(world) {
-                        for r in 0..3 {
-                            for c in 0..3 {
-                                total[r][c] += t[r][c];
-                            }
-                        }
-                        any = true;
+            if let Some(m) = node.mesh
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+                && let Some(t) = mesh.world_inertia_tensor(world)
+            {
+                for r in 0..3 {
+                    for c in 0..3 {
+                        total[r][c] += t[r][c];
                     }
                 }
+                any = true;
             }
             // Walk children in reverse so leftmost child is popped first.
             for child in node.children.iter().rev() {
                 stack.push((*child, world));
             }
         }
-        if any {
-            Some(total)
-        } else {
-            None
-        }
+        if any { Some(total) } else { None }
     }
 
     /// Closest-hit ray query across every reachable node-mesh
@@ -2056,29 +2044,28 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                    if let Some(world_inv) = mat4_affine_inverse(world) {
-                        let local_ray = ray_into_local(world_inv, ray);
-                        if let Some((prim_idx, hit)) = mesh.intersect_ray(local_ray, best_t) {
-                            // hit.t is in the local-frame ray
-                            // parameter, which equals the world-frame
-                            // ray parameter (affine change of frame is
-                            // parameter-preserving). Shrink best_t.
-                            // A later instance whose hit ties exactly
-                            // (`hit.t == best_t`) is not allowed to
-                            // override the existing winner — the
-                            // earlier-visited (leftmost-first DFS)
-                            // instance is the deterministic winner.
-                            if best.is_none() || hit.t < best_t {
-                                best_t = hit.t;
-                                best = Some(SceneRayHit {
-                                    node: nid,
-                                    primitive_index: prim_idx,
-                                    hit,
-                                });
-                            }
-                        }
+            if let Some(m) = node.mesh
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+                && let Some(world_inv) = mat4_affine_inverse(world)
+            {
+                let local_ray = ray_into_local(world_inv, ray);
+                if let Some((prim_idx, hit)) = mesh.intersect_ray(local_ray, best_t) {
+                    // hit.t is in the local-frame ray
+                    // parameter, which equals the world-frame
+                    // ray parameter (affine change of frame is
+                    // parameter-preserving). Shrink best_t.
+                    // A later instance whose hit ties exactly
+                    // (`hit.t == best_t`) is not allowed to
+                    // override the existing winner — the
+                    // earlier-visited (leftmost-first DFS)
+                    // instance is the deterministic winner.
+                    if best.is_none() || hit.t < best_t {
+                        best_t = hit.t;
+                        best = Some(SceneRayHit {
+                            node: nid,
+                            primitive_index: prim_idx,
+                            hit,
+                        });
                     }
                 }
             }
@@ -2137,24 +2124,23 @@ impl Scene3D {
             visited[idx] = true;
             let node = &self.nodes[idx];
             let world = mat4_mul(parent, node.transform.to_matrix());
-            if let Some(m) = node.mesh {
-                if let Some(mesh) = self.meshes.get(m.0 as usize) {
-                    if let Some(world_inv) = mat4_affine_inverse(world) {
-                        let local_ray = ray_into_local(world_inv, ray);
-                        // We reuse the closest-hit primitive walk —
-                        // it has the same finite-time termination
-                        // contract and short-circuits at the first
-                        // primitive hit within `t_max`. A dedicated
-                        // any-hit `Mesh::any_ray_intersection`
-                        // wouldn't change the answer; the closest-hit
-                        // walk still examines every primitive in
-                        // `mesh` because each primitive's hit might
-                        // be closer than the last, but it returns
-                        // `Some(_)` whenever any does.
-                        if mesh.intersect_ray(local_ray, t_max).is_some() {
-                            return true;
-                        }
-                    }
+            if let Some(m) = node.mesh
+                && let Some(mesh) = self.meshes.get(m.0 as usize)
+                && let Some(world_inv) = mat4_affine_inverse(world)
+            {
+                let local_ray = ray_into_local(world_inv, ray);
+                // We reuse the closest-hit primitive walk —
+                // it has the same finite-time termination
+                // contract and short-circuits at the first
+                // primitive hit within `t_max`. A dedicated
+                // any-hit `Mesh::any_ray_intersection`
+                // wouldn't change the answer; the closest-hit
+                // walk still examines every primitive in
+                // `mesh` because each primitive's hit might
+                // be closer than the last, but it returns
+                // `Some(_)` whenever any does.
+                if mesh.intersect_ray(local_ray, t_max).is_some() {
+                    return true;
                 }
             }
             for child in node.children.iter().rev() {
@@ -2246,50 +2232,50 @@ impl Scene3D {
                     });
                 }
             }
-            if let Some(m) = node.mesh {
-                if (m.0 as usize) >= n_meshes {
-                    errors.push(ValidationError::DanglingId {
-                        location: format!("nodes[{i}].mesh"),
-                        id: m.0,
-                        arena: "meshes",
-                    });
-                }
+            if let Some(m) = node.mesh
+                && (m.0 as usize) >= n_meshes
+            {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("nodes[{i}].mesh"),
+                    id: m.0,
+                    arena: "meshes",
+                });
             }
-            if let Some(c) = node.camera {
-                if (c.0 as usize) >= n_cameras {
-                    errors.push(ValidationError::DanglingId {
-                        location: format!("nodes[{i}].camera"),
-                        id: c.0,
-                        arena: "cameras",
-                    });
-                }
+            if let Some(c) = node.camera
+                && (c.0 as usize) >= n_cameras
+            {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("nodes[{i}].camera"),
+                    id: c.0,
+                    arena: "cameras",
+                });
             }
-            if let Some(l) = node.light {
-                if (l.0 as usize) >= n_lights {
-                    errors.push(ValidationError::DanglingId {
-                        location: format!("nodes[{i}].light"),
-                        id: l.0,
-                        arena: "lights",
-                    });
-                }
+            if let Some(l) = node.light
+                && (l.0 as usize) >= n_lights
+            {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("nodes[{i}].light"),
+                    id: l.0,
+                    arena: "lights",
+                });
             }
-            if let Some(s) = node.skin {
-                if (s.0 as usize) >= n_skins {
-                    errors.push(ValidationError::DanglingId {
-                        location: format!("nodes[{i}].skin"),
-                        id: s.0,
-                        arena: "skins",
-                    });
-                }
+            if let Some(s) = node.skin
+                && (s.0 as usize) >= n_skins
+            {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("nodes[{i}].skin"),
+                    id: s.0,
+                    arena: "skins",
+                });
             }
-            if let Some(e) = node.audio_emitter {
-                if (e.0 as usize) >= n_emitters {
-                    errors.push(ValidationError::DanglingId {
-                        location: format!("nodes[{i}].audio_emitter"),
-                        id: e.0,
-                        arena: "audio_emitters",
-                    });
-                }
+            if let Some(e) = node.audio_emitter
+                && (e.0 as usize) >= n_emitters
+            {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("nodes[{i}].audio_emitter"),
+                    id: e.0,
+                    arena: "audio_emitters",
+                });
             }
             // Node-level morph-weight overrides (glTF 2.0
             // `node.weights`): only meaningful on a node that
@@ -2329,23 +2315,23 @@ impl Scene3D {
             for (pi, prim) in mesh.primitives.iter().enumerate() {
                 let n_pos = prim.positions.len();
                 let here = |field: &str| format!("meshes[{mi}].primitives[{pi}].{field}");
-                if let Some(v) = &prim.normals {
-                    if v.len() != n_pos {
-                        errors.push(ValidationError::AttributeLengthMismatch {
-                            location: here("normals"),
-                            expected: n_pos,
-                            actual: v.len(),
-                        });
-                    }
+                if let Some(v) = &prim.normals
+                    && v.len() != n_pos
+                {
+                    errors.push(ValidationError::AttributeLengthMismatch {
+                        location: here("normals"),
+                        expected: n_pos,
+                        actual: v.len(),
+                    });
                 }
-                if let Some(v) = &prim.tangents {
-                    if v.len() != n_pos {
-                        errors.push(ValidationError::AttributeLengthMismatch {
-                            location: here("tangents"),
-                            expected: n_pos,
-                            actual: v.len(),
-                        });
-                    }
+                if let Some(v) = &prim.tangents
+                    && v.len() != n_pos
+                {
+                    errors.push(ValidationError::AttributeLengthMismatch {
+                        location: here("tangents"),
+                        expected: n_pos,
+                        actual: v.len(),
+                    });
                 }
                 for (k, set) in prim.uvs.iter().enumerate() {
                     if set.len() != n_pos {
@@ -2365,14 +2351,14 @@ impl Scene3D {
                         });
                     }
                 }
-                if let Some(v) = &prim.joints {
-                    if v.len() != n_pos {
-                        errors.push(ValidationError::AttributeLengthMismatch {
-                            location: here("joints"),
-                            expected: n_pos,
-                            actual: v.len(),
-                        });
-                    }
+                if let Some(v) = &prim.joints
+                    && v.len() != n_pos
+                {
+                    errors.push(ValidationError::AttributeLengthMismatch {
+                        location: here("joints"),
+                        expected: n_pos,
+                        actual: v.len(),
+                    });
                 }
                 if let Some(v) = &prim.weights {
                     if v.len() != n_pos {
@@ -2411,14 +2397,14 @@ impl Scene3D {
                         });
                     }
                 }
-                if let Some(m) = prim.material {
-                    if (m.0 as usize) >= n_materials {
-                        errors.push(ValidationError::DanglingId {
-                            location: here("material"),
-                            id: m.0,
-                            arena: "materials",
-                        });
-                    }
+                if let Some(m) = prim.material
+                    && (m.0 as usize) >= n_materials
+                {
+                    errors.push(ValidationError::DanglingId {
+                        location: here("material"),
+                        id: m.0,
+                        arena: "materials",
+                    });
                 }
                 // KHR_materials_variants mappings: material + variant
                 // ids must be live, and across the whole mappings list
@@ -2494,32 +2480,32 @@ impl Scene3D {
                 }
                 for (ti, tgt) in prim.targets.iter().enumerate() {
                     let tgt_loc = |field: &str| here(&format!("targets[{ti}].{field}"));
-                    if let Some(v) = &tgt.position {
-                        if v.len() != n_pos {
-                            errors.push(ValidationError::AttributeLengthMismatch {
-                                location: tgt_loc("position"),
-                                expected: n_pos,
-                                actual: v.len(),
-                            });
-                        }
+                    if let Some(v) = &tgt.position
+                        && v.len() != n_pos
+                    {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: tgt_loc("position"),
+                            expected: n_pos,
+                            actual: v.len(),
+                        });
                     }
-                    if let Some(v) = &tgt.normal {
-                        if v.len() != n_pos {
-                            errors.push(ValidationError::AttributeLengthMismatch {
-                                location: tgt_loc("normal"),
-                                expected: n_pos,
-                                actual: v.len(),
-                            });
-                        }
+                    if let Some(v) = &tgt.normal
+                        && v.len() != n_pos
+                    {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: tgt_loc("normal"),
+                            expected: n_pos,
+                            actual: v.len(),
+                        });
                     }
-                    if let Some(v) = &tgt.tangent {
-                        if v.len() != n_pos {
-                            errors.push(ValidationError::AttributeLengthMismatch {
-                                location: tgt_loc("tangent"),
-                                expected: n_pos,
-                                actual: v.len(),
-                            });
-                        }
+                    if let Some(v) = &tgt.tangent
+                        && v.len() != n_pos
+                    {
+                        errors.push(ValidationError::AttributeLengthMismatch {
+                            location: tgt_loc("tangent"),
+                            expected: n_pos,
+                            actual: v.len(),
+                        });
                     }
                     // In-between shapes (USD blend-shape §1.4.1
                     // authoring rules): the endpoint weights 0 and 1
@@ -2542,23 +2528,23 @@ impl Scene3D {
                                 weight: ib.weight,
                             });
                         }
-                        if let Some(v) = &ib.position {
-                            if v.len() != n_pos {
-                                errors.push(ValidationError::AttributeLengthMismatch {
-                                    location: ib_loc(".position"),
-                                    expected: n_pos,
-                                    actual: v.len(),
-                                });
-                            }
+                        if let Some(v) = &ib.position
+                            && v.len() != n_pos
+                        {
+                            errors.push(ValidationError::AttributeLengthMismatch {
+                                location: ib_loc(".position"),
+                                expected: n_pos,
+                                actual: v.len(),
+                            });
                         }
-                        if let Some(v) = &ib.normal {
-                            if v.len() != n_pos {
-                                errors.push(ValidationError::AttributeLengthMismatch {
-                                    location: ib_loc(".normal"),
-                                    expected: n_pos,
-                                    actual: v.len(),
-                                });
-                            }
+                        if let Some(v) = &ib.normal
+                            && v.len() != n_pos
+                        {
+                            errors.push(ValidationError::AttributeLengthMismatch {
+                                location: ib_loc(".normal"),
+                                expected: n_pos,
+                                actual: v.len(),
+                            });
                         }
                     }
                 }
@@ -2598,12 +2584,12 @@ impl Scene3D {
                 }
                 // A `KHR_texture_transform` with a non-finite affine
                 // component would poison every coordinate it maps.
-                if let Some(t) = r.transform {
-                    if !t.is_finite() {
-                        errors.push(ValidationError::TextureTransformNotFinite {
-                            location: format!("materials[{mi}].{field}.transform"),
-                        });
-                    }
+                if let Some(t) = r.transform
+                    && !t.is_finite()
+                {
+                    errors.push(ValidationError::TextureTransformNotFinite {
+                        location: format!("materials[{mi}].{field}.transform"),
+                    });
                 }
             }
         }
@@ -2661,14 +2647,14 @@ impl Scene3D {
                     arena: "skeletons",
                 });
             }
-            if let Some(r) = skin.root_node {
-                if (r.0 as usize) >= n_nodes {
-                    errors.push(ValidationError::DanglingId {
-                        location: format!("skins[{si}].root_node"),
-                        id: r.0,
-                        arena: "nodes",
-                    });
-                }
+            if let Some(r) = skin.root_node
+                && (r.0 as usize) >= n_nodes
+            {
+                errors.push(ValidationError::DanglingId {
+                    location: format!("skins[{si}].root_node"),
+                    id: r.0,
+                    arena: "nodes",
+                });
             }
         }
 
@@ -2832,14 +2818,14 @@ impl Scene3D {
                             .and_then(|m| self.meshes.get(m.0 as usize))
                             .and_then(|mesh| mesh.primitives.first())
                             .map(|prim| prim.targets.len());
-                        if let Some(targets) = targets {
-                            if stride != targets {
-                                errors.push(ValidationError::AnimationMorphStrideMismatch {
-                                    location: loc(".sampler"),
-                                    stride,
-                                    targets,
-                                });
-                            }
+                        if let Some(targets) = targets
+                            && stride != targets
+                        {
+                            errors.push(ValidationError::AnimationMorphStrideMismatch {
+                                location: loc(".sampler"),
+                                stride,
+                                targets,
+                            });
                         }
                     }
                 }
@@ -3145,7 +3131,10 @@ impl std::fmt::Display for ValidationError {
                 "{location}: joint index {joint} is out of range for a {joint_count}-joint skeleton"
             ),
             Self::JointWeightInvalid { location, value } => {
-                write!(f, "{location}: joint weight {value} is negative or non-finite")
+                write!(
+                    f,
+                    "{location}: joint weight {value} is negative or non-finite"
+                )
             }
             Self::DuplicateVariantMapping { location, variant } => {
                 write!(

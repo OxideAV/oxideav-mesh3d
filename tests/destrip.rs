@@ -99,15 +99,21 @@ fn strip_indexed_dereferences_then_alternates() {
 
 #[test]
 fn strip_too_short_yields_empty() {
-    assert!(prim_with_positions(Topology::TriangleStrip, 0)
-        .triangle_indices()
-        .is_empty());
-    assert!(prim_with_positions(Topology::TriangleStrip, 1)
-        .triangle_indices()
-        .is_empty());
-    assert!(prim_with_positions(Topology::TriangleStrip, 2)
-        .triangle_indices()
-        .is_empty());
+    assert!(
+        prim_with_positions(Topology::TriangleStrip, 0)
+            .triangle_indices()
+            .is_empty()
+    );
+    assert!(
+        prim_with_positions(Topology::TriangleStrip, 1)
+            .triangle_indices()
+            .is_empty()
+    );
+    assert!(
+        prim_with_positions(Topology::TriangleStrip, 2)
+            .triangle_indices()
+            .is_empty()
+    );
     assert_eq!(
         prim_with_positions(Topology::TriangleStrip, 3).triangle_indices(),
         vec![[0, 1, 2]]
@@ -144,9 +150,11 @@ fn fan_indexed_uses_first_index_as_anchor() {
 
 #[test]
 fn fan_too_short_yields_empty() {
-    assert!(prim_with_positions(Topology::TriangleFan, 2)
-        .triangle_indices()
-        .is_empty());
+    assert!(
+        prim_with_positions(Topology::TriangleFan, 2)
+            .triangle_indices()
+            .is_empty()
+    );
     assert_eq!(
         prim_with_positions(Topology::TriangleFan, 3).triangle_indices(),
         vec![[0, 1, 2]]
@@ -169,12 +177,16 @@ fn points_yield_empty_triangle_list() {
 
 #[test]
 fn line_strip_and_loop_yield_empty() {
-    assert!(prim_with_positions(Topology::LineStrip, 4)
-        .triangle_indices()
-        .is_empty());
-    assert!(prim_with_positions(Topology::LineLoop, 4)
-        .triangle_indices()
-        .is_empty());
+    assert!(
+        prim_with_positions(Topology::LineStrip, 4)
+            .triangle_indices()
+            .is_empty()
+    );
+    assert!(
+        prim_with_positions(Topology::LineLoop, 4)
+            .triangle_indices()
+            .is_empty()
+    );
 }
 
 // ---- to_triangle_list (Primitive materialisation) ------------------------

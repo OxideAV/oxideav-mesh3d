@@ -42,9 +42,11 @@ fn identity_apply_is_exact_no_op() {
 
 #[test]
 fn non_identity_fields_break_is_identity() {
-    assert!(!TextureTransform::new()
-        .with_offset([0.1, 0.0])
-        .is_identity());
+    assert!(
+        !TextureTransform::new()
+            .with_offset([0.1, 0.0])
+            .is_identity()
+    );
     assert!(!TextureTransform::new().with_rotation(0.1).is_identity());
     assert!(!TextureTransform::new().with_scale([2.0, 1.0]).is_identity());
     // A texCoord-only override still changes sampling, so it is not

@@ -110,9 +110,11 @@ fn concave_l_shape_triangulates() {
 fn too_few_vertices_is_none() {
     assert!(Profile2D::new(vec![]).triangulate().is_none());
     assert!(Profile2D::new(vec![[0.0, 0.0]]).triangulate().is_none());
-    assert!(Profile2D::new(vec![[0.0, 0.0], [1.0, 0.0]])
-        .triangulate()
-        .is_none());
+    assert!(
+        Profile2D::new(vec![[0.0, 0.0], [1.0, 0.0]])
+            .triangulate()
+            .is_none()
+    );
 }
 
 #[test]
@@ -341,9 +343,11 @@ fn invalid_direction_is_none() {
 
 #[test]
 fn degenerate_profile_extrusion_is_none() {
-    assert!(Profile2D::new(vec![])
-        .extrude([0.0, 0.0, 1.0], 1.0)
-        .is_none());
+    assert!(
+        Profile2D::new(vec![])
+            .extrude([0.0, 0.0, 1.0], 1.0)
+            .is_none()
+    );
     let collinear = Profile2D::new(vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]);
     assert!(collinear.extrude([0.0, 0.0, 1.0], 1.0).is_none());
 }

@@ -129,40 +129,40 @@ fn merge_all(rest: &[&Primitive], base: &Primitive) -> Primitive {
             let dst = out.normals.as_mut().unwrap();
             match &p.normals {
                 Some(src) => append_or_fill(dst, src, vcount, FILL_NORMAL),
-                None => dst.extend(std::iter::repeat(FILL_NORMAL).take(vcount)),
+                None => dst.extend(std::iter::repeat_n(FILL_NORMAL, vcount)),
             }
         }
         if want_tangents {
             let dst = out.tangents.as_mut().unwrap();
             match &p.tangents {
                 Some(src) => append_or_fill(dst, src, vcount, FILL_TANGENT),
-                None => dst.extend(std::iter::repeat(FILL_TANGENT).take(vcount)),
+                None => dst.extend(std::iter::repeat_n(FILL_TANGENT, vcount)),
             }
         }
         if want_joints {
             let dst = out.joints.as_mut().unwrap();
             match &p.joints {
                 Some(src) => append_or_fill(dst, src, vcount, FILL_JOINTS),
-                None => dst.extend(std::iter::repeat(FILL_JOINTS).take(vcount)),
+                None => dst.extend(std::iter::repeat_n(FILL_JOINTS, vcount)),
             }
         }
         if want_weights {
             let dst = out.weights.as_mut().unwrap();
             match &p.weights {
                 Some(src) => append_or_fill(dst, src, vcount, FILL_WEIGHTS),
-                None => dst.extend(std::iter::repeat(FILL_WEIGHTS).take(vcount)),
+                None => dst.extend(std::iter::repeat_n(FILL_WEIGHTS, vcount)),
             }
         }
         for s in 0..uv_sets {
             match p.uvs.get(s) {
                 Some(src) => append_or_fill(&mut out.uvs[s], src, vcount, FILL_UV),
-                None => out.uvs[s].extend(std::iter::repeat(FILL_UV).take(vcount)),
+                None => out.uvs[s].extend(std::iter::repeat_n(FILL_UV, vcount)),
             }
         }
         for s in 0..color_sets {
             match p.colors.get(s) {
                 Some(src) => append_or_fill(&mut out.colors[s], src, vcount, FILL_COLOR),
-                None => out.colors[s].extend(std::iter::repeat(FILL_COLOR).take(vcount)),
+                None => out.colors[s].extend(std::iter::repeat_n(FILL_COLOR, vcount)),
             }
         }
 
@@ -190,7 +190,7 @@ fn append_or_fill<T: Copy>(dst: &mut Vec<T>, src: &[T], vcount: usize, fill: T) 
     let take = src.len().min(vcount);
     dst.extend_from_slice(&src[..take]);
     if take < vcount {
-        dst.extend(std::iter::repeat(fill).take(vcount - take));
+        dst.extend(std::iter::repeat_n(fill, vcount - take));
     }
 }
 

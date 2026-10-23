@@ -241,14 +241,21 @@ fn cache_then_fetch_is_lossless_and_local() {
         }
     }
     // Reverse the triangle stream to scramble draw order.
-    let tris: Vec<[u32; 3]> = idx.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let tris: Vec<[u32; 3]> = idx
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
     let scrambled: Vec<u32> = tris.iter().rev().flat_map(|t| t.iter().copied()).collect();
     prim.indices = Some(Indices::U32(scrambled));
 
     // Reference resolved tuples before optimisation.
     let want = {
         let mut v: Vec<[u32; 3]> = idx_vec(&prim)
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| {
                 // resolve to position-tuple identity via position x,y
                 let p0 = prim.positions[c[0] as usize];
@@ -271,7 +278,9 @@ fn cache_then_fetch_is_lossless_and_local() {
 
     let got = {
         let mut v: Vec<[u32; 3]> = idx_vec(&opt)
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| {
                 let p0 = opt.positions[c[0] as usize];
                 let p1 = opt.positions[c[1] as usize];

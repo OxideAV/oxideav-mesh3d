@@ -70,9 +70,9 @@
 //! these guards builds to `None`. Primitives whose triangles are all
 //! unusable get no BLAS (`None`) and are never hit.
 
-use crate::bvh::{build_tree, sah_cost, tree_depth, BvhBuildOptions, SlotHit};
+use crate::bvh::{BvhBuildOptions, SlotHit, build_tree, sah_cost, tree_depth};
 use crate::ray::{PreparedRay, Ray, RayHit, RayQuery};
-use crate::scene::{mat4_affine_inverse, mat4_mul, ray_into_local, BoundingBox, MeshId, NodeId};
+use crate::scene::{BoundingBox, MeshId, NodeId, mat4_affine_inverse, mat4_mul, ray_into_local};
 use crate::{Bvh, Primitive, Scene3D, SceneRayHit};
 
 /// One reachable node-mesh instance in a [`Scene3D`].
@@ -286,14 +286,14 @@ impl InstanceBvh {
         let mut mesh_bvhs: Vec<Vec<Option<Bvh>>> = vec![Vec::new(); scene.meshes.len()];
         for inst in &instances {
             let m = inst.mesh.0 as usize;
-            if mesh_bvhs[m].is_empty() {
-                if let Some(mesh) = scene.meshes.get(m) {
-                    mesh_bvhs[m] = mesh
-                        .primitives
-                        .iter()
-                        .map(|p| Bvh::build_with(p, options))
-                        .collect();
-                }
+            if mesh_bvhs[m].is_empty()
+                && let Some(mesh) = scene.meshes.get(m)
+            {
+                mesh_bvhs[m] = mesh
+                    .primitives
+                    .iter()
+                    .map(|p| Bvh::build_with(p, options))
+                    .collect();
             }
         }
         Some(InstanceBvh {
@@ -854,21 +854,19 @@ fn gather_instances(scene: &Scene3D) -> Vec<Instance> {
             continue;
         };
         let world = mat4_mul(parent, node.transform.to_matrix());
-        if let Some(m_id) = node.mesh {
-            if let Some(mesh) = scene.mesh(m_id) {
-                if let Some(local) = mesh.bounding_box() {
-                    if let Some(world_inv) = mat4_affine_inverse(world) {
-                        out.push(Instance {
-                            node: nid,
-                            mesh: m_id,
-                            bounds: local.transform(world),
-                            world,
-                            world_inv,
-                            mirrored: det3(&world) < 0.0,
-                        });
-                    }
-                }
-            }
+        if let Some(m_id) = node.mesh
+            && let Some(mesh) = scene.mesh(m_id)
+            && let Some(local) = mesh.bounding_box()
+            && let Some(world_inv) = mat4_affine_inverse(world)
+        {
+            out.push(Instance {
+                node: nid,
+                mesh: m_id,
+                bounds: local.transform(world),
+                world,
+                world_inv,
+                mirrored: det3(&world) < 0.0,
+            });
         }
         // Reverse so leftmost child pops first.
         for child in node.children.iter().rev() {

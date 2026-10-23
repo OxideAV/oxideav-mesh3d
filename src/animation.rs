@@ -121,7 +121,7 @@ impl AnimationSampler {
         // consumes. For Vec3 / Quat / non-MorphWeights Scalar this is
         // always `factor`; for MorphWeights it's `factor * morph_count`.
         let total = self.values.len();
-        if total == 0 || total % (n * factor) != 0 {
+        if total == 0 || !total.is_multiple_of(n * factor) {
             return None;
         }
         let per_frame_scalars = total / (n * factor);

@@ -152,11 +152,7 @@ impl WrapMode {
             Self::Repeat => coord - coord.floor(),
             Self::MirroredRepeat => {
                 let m = coord - 2.0 * (coord / 2.0).floor();
-                if m > 1.0 {
-                    2.0 - m
-                } else {
-                    m
-                }
+                if m > 1.0 { 2.0 - m } else { m }
             }
         }
     }

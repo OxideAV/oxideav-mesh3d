@@ -105,10 +105,10 @@ fn clean_loop(pts: &[[f32; 2]], base: u32) -> Vec<RingVertex> {
     let mut out: Vec<RingVertex> = Vec::with_capacity(pts.len());
     for (i, p) in pts.iter().enumerate() {
         let q = [f64::from(p[0]), f64::from(p[1])];
-        if let Some(last) = out.last() {
-            if last.p == q {
-                continue;
-            }
+        if let Some(last) = out.last()
+            && last.p == q
+        {
+            continue;
         }
         out.push(RingVertex {
             p: q,
@@ -152,7 +152,7 @@ fn bridge_hole(ring: &[RingVertex], hole: &[RingVertex]) -> Option<Vec<RingVerte
         let b = ring[(i + 1) % n].p;
         if (a[1] > m[1]) != (b[1] > m[1]) {
             let t = a[0] + (m[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
-            if t >= m[0] && t.is_finite() && best.map_or(true, |(bx, _)| t < bx) {
+            if t >= m[0] && t.is_finite() && best.is_none_or(|(bx, _)| t < bx) {
                 best = Some((t, i));
             }
         }
@@ -207,7 +207,7 @@ fn bridge_hole(ring: &[RingVertex], hole: &[RingVertex]) -> Option<Vec<RingVerte
             continue; // behind the ray origin
         }
         let key = (dy / dx, dx * dx + dy * dy);
-        if best_key.map_or(true, |bk| key < bk) {
+        if best_key.is_none_or(|bk| key < bk) {
             best_key = Some(key);
             p_i = j;
         }
@@ -290,7 +290,7 @@ fn ear_clip(ring: &[RingVertex], area_eps: f64) -> Option<Vec<[u32; 3]>> {
 
     // Unlink i; emit its ear triangle unless (near-)zero-area.
     macro_rules! clip {
-        ($i:expr, $emit:expr) => {{
+        ($i:expr_2021, $emit:expr_2021) => {{
             let i = $i;
             if $emit {
                 let c2 = cross_at(i, &prev, &next);

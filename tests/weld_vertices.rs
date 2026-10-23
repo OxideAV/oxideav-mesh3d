@@ -370,8 +370,8 @@ fn strip_topology_index_order_matches_source() {
     let before = p.triangle_indices();
     let w = p.weld_vertices();
     assert_eq!(w.positions.len(), 3); // 0 and 3 merge
-                                      // Triangle expansion over the welded pool resolves to the same
-                                      // vertex positions as the original.
+    // Triangle expansion over the welded pool resolves to the same
+    // vertex positions as the original.
     let after = w.triangle_indices();
     assert_eq!(before.len(), after.len());
     let pos_before: Vec<_> = before

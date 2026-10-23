@@ -718,10 +718,10 @@ fn instance_aabb_acts_as_ray_prefilter() {
     let ray = Ray::new([-5.0, 0.5, 0.5], [1.0, 0.0, 0.0]);
     let mut prefiltered: Vec<NodeId> = Vec::new();
     for (i, slot) in bounds.iter().enumerate() {
-        if let Some(box_) = slot {
-            if box_.intersect_ray(ray, f32::INFINITY).is_some() {
-                prefiltered.push(NodeId(i as u32));
-            }
+        if let Some(box_) = slot
+            && box_.intersect_ray(ray, f32::INFINITY).is_some()
+        {
+            prefiltered.push(NodeId(i as u32));
         }
     }
     // a and b are on the +X line; c is off in +Y.

@@ -119,9 +119,9 @@
 //! re-check vertex indices against the primitive passed at query time
 //! and never panic on a mismatched primitive.
 
+use crate::Primitive;
 use crate::ray::{PreparedRay, Ray, RayHit, RayQuery, TriangleTest};
 use crate::scene::BoundingBox;
-use crate::Primitive;
 
 /// Which top-down builder [`Bvh::build_with`] /
 /// [`crate::InstanceBvh::build_with`] use. See the module docs.
@@ -1078,7 +1078,7 @@ fn sah_split(
                 continue;
             }
             let cost = acc.half_area() * nl as f32 + right_area[p + 1] * nr as f32;
-            if best.map_or(true, |(c, _, _)| cost < c) {
+            if best.is_none_or(|(c, _, _)| cost < c) {
                 best = Some((cost, axis, p));
             }
         }

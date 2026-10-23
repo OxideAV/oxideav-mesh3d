@@ -243,7 +243,9 @@ fn spatial_then_fetch_geometry_invariant() {
     // Resolve drawn tuples as sorted bit-triples for comparison.
     let resolve = |p: &Primitive| {
         let mut v: Vec<[u32; 9]> = idx_vec(p)
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| {
                 let a = p.positions[c[0] as usize];
                 let b = p.positions[c[1] as usize];

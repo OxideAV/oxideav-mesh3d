@@ -181,9 +181,10 @@ fn nan_weight_is_reported() {
     let mut s = Scene3D::new();
     s.add_mesh(Mesh::new(None).with_primitive(prim));
     let errs = s.validate().unwrap_err();
-    assert!(errs
-        .iter()
-        .any(|e| matches!(e, ValidationError::JointWeightInvalid { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, ValidationError::JointWeightInvalid { .. }))
+    );
 }
 
 #[test]

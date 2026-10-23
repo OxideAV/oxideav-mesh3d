@@ -16,8 +16,8 @@ use std::io::{Cursor, Read, Result as IoResult};
 use std::sync::Arc;
 
 use oxideav_mesh3d::{
-    asset::ReadSeek, AssetSource, AudioData, AudioEmitter, AudioSource, AudioSourceId, AuralMode,
-    DistanceModel, ImageData, InMemoryAsset, Node, RawStorage, Scene3D, SpatialAudio, Texture,
+    AssetSource, AudioData, AudioEmitter, AudioSource, AudioSourceId, AuralMode, DistanceModel,
+    ImageData, InMemoryAsset, Node, RawStorage, Scene3D, SpatialAudio, Texture, asset::ReadSeek,
 };
 
 // ─────────────────────────── AssetSource ────────────────────────────

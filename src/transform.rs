@@ -217,7 +217,7 @@ impl Primitive {
     pub fn reverse_winding(&self) -> Primitive {
         let mut out = self.to_triangle_list();
         if let Some(crate::mesh::Indices::U32(idx)) = &mut out.indices {
-            for tri in idx.chunks_exact_mut(3) {
+            for tri in idx.as_chunks_mut::<3>().0 {
                 tri.swap(1, 2);
             }
         }
