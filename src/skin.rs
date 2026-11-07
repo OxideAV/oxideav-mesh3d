@@ -36,6 +36,7 @@ impl Skeleton {
 /// stores it explicitly (most do). When `None`, the renderer finds
 /// the lowest-common-ancestor of `Skeleton::joints` itself.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Skin {
     pub skeleton: SkeletonId,
     pub root_node: Option<NodeId>,

@@ -17,6 +17,7 @@ mod standalone {
 
     /// Crate-local error type used when the `registry` feature is off.
     #[derive(Debug)]
+    #[non_exhaustive]
     pub enum Error {
         /// Bytes don't match what the decoder expected.
         InvalidData(String),

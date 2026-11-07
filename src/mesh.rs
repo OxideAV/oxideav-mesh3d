@@ -404,12 +404,20 @@ impl MorphTarget {
 /// violations). When no mapping names the active variant (or no
 /// variant is active), the base `material` applies.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct VariantMapping {
     /// Material applied while one of [`variants`](Self::variants) is
     /// active.
     pub material: MaterialId,
     /// The variants this mapping responds to.
     pub variants: Vec<MaterialVariantId>,
+}
+
+impl VariantMapping {
+    /// Build a [`VariantMapping`] from its fields.
+    pub fn new(material: MaterialId, variants: Vec<MaterialVariantId>) -> Self {
+        Self { material, variants }
+    }
 }
 
 /// One drawable submesh.
@@ -5172,6 +5180,7 @@ impl Primitive {
 /// the actual edge endpoints can re-derive them by walking
 /// [`Primitive::triangle_indices`] themselves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EdgeManifoldReport {
     /// Total number of distinct undirected edges seen across all
     /// triangles. Sum of the three bucket counts.
@@ -5219,6 +5228,7 @@ impl EdgeManifoldReport {
 /// slots do not inflate it — so the Euler identity stays meaningful for
 /// a primitive whose `positions` pool carries slack.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TopologySummary {
     /// **V** — distinct vertex indices referenced by a valid triangle
     /// (not `positions.len()`).
@@ -5263,6 +5273,7 @@ pub struct TopologySummary {
 /// actual re-oriented triangle indices. This struct is only the
 /// scalar tally; it never retains the per-edge adjacency map.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct OrientationReport {
     /// Number of triangles whose corners were reordered (`[a, b, c] →
     /// [a, c, b]`) to bring their winding into agreement with the
@@ -5298,6 +5309,7 @@ pub struct OrientationReport {
 /// should consume these as the input to skinning/projection rather
 /// than re-blending each frame.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct MorphedAttributes {
     /// Blended `POSITION` buffer, length equal to the source
     /// primitive's `positions.len()`.
@@ -5309,6 +5321,30 @@ pub struct MorphedAttributes {
     /// preserved verbatim (spec §3.7.2.2 forbids morphing handedness).
     /// Length matches `positions`.
     pub tangents: Option<Vec<[f32; 4]>>,
+}
+
+impl MorphedAttributes {
+    /// Build a [`MorphedAttributes`] from its blended positions; normals and
+    /// tangents start absent.
+    pub fn new(positions: Vec<[f32; 3]>) -> Self {
+        Self {
+            positions,
+            normals: None,
+            tangents: None,
+        }
+    }
+
+    /// Set `normals`.
+    pub fn with_normals(mut self, v: Option<Vec<[f32; 3]>>) -> Self {
+        self.normals = v;
+        self
+    }
+
+    /// Set `tangents`.
+    pub fn with_tangents(mut self, v: Option<Vec<[f32; 4]>>) -> Self {
+        self.tangents = v;
+        self
+    }
 }
 
 /// A named bag of [`Primitive`]s sharing nothing but a name.

@@ -26,6 +26,13 @@ pub struct AnimationTarget {
     pub property: AnimationProperty,
 }
 
+impl AnimationTarget {
+    /// Build a [`AnimationTarget`] from its fields.
+    pub fn new(node: NodeId, property: AnimationProperty) -> Self {
+        Self { node, property }
+    }
+}
+
 /// How values between keyframes are interpolated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Interpolation {
@@ -50,6 +57,17 @@ pub struct AnimationSampler {
     pub interpolation: Interpolation,
 }
 
+impl AnimationSampler {
+    /// Build a [`AnimationSampler`] from its fields.
+    pub fn new(keyframes: Vec<f32>, values: AnimationValues, interpolation: Interpolation) -> Self {
+        Self {
+            keyframes,
+            values,
+            interpolation,
+        }
+    }
+}
+
 /// One evaluated sampler value at a specific timestamp, returned by
 /// [`AnimationSampler::sample`].
 ///
@@ -60,6 +78,7 @@ pub struct AnimationSampler {
 /// per-mesh morph-target count and there is no fixed-width arity that
 /// covers every animation.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum SampledValue {
     Vec3([f32; 3]),
     /// Unit quaternion in xyzw order. The result of

@@ -263,6 +263,7 @@ pub enum AlphaMode {
 /// - **unlit** — a flag selecting a constant-shaded (lighting-
 ///   independent) model that uses only the base-colour term.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct MaterialExt {
     /// Multiplier on the material's emissive value
     /// (`KHR_materials_emissive_strength`). The shaded emission is
@@ -329,6 +330,80 @@ pub struct MaterialExt {
     pub diffuse_transmission: Option<DiffuseTransmission>,
 }
 
+impl MaterialExt {
+    /// Set `emissive_strength`.
+    pub fn with_emissive_strength(mut self, v: Option<f32>) -> Self {
+        self.emissive_strength = v;
+        self
+    }
+
+    /// Set `ior`.
+    pub fn with_ior(mut self, v: Option<f32>) -> Self {
+        self.ior = v;
+        self
+    }
+
+    /// Set `specular`.
+    pub fn with_specular(mut self, v: Option<Specular>) -> Self {
+        self.specular = v;
+        self
+    }
+
+    /// Set `unlit`.
+    pub fn with_unlit(mut self, v: bool) -> Self {
+        self.unlit = v;
+        self
+    }
+
+    /// Set `clearcoat`.
+    pub fn with_clearcoat(mut self, v: Option<Clearcoat>) -> Self {
+        self.clearcoat = v;
+        self
+    }
+
+    /// Set `sheen`.
+    pub fn with_sheen(mut self, v: Option<Sheen>) -> Self {
+        self.sheen = v;
+        self
+    }
+
+    /// Set `transmission`.
+    pub fn with_transmission(mut self, v: Option<Transmission>) -> Self {
+        self.transmission = v;
+        self
+    }
+
+    /// Set `volume`.
+    pub fn with_volume(mut self, v: Option<Volume>) -> Self {
+        self.volume = v;
+        self
+    }
+
+    /// Set `iridescence`.
+    pub fn with_iridescence(mut self, v: Option<Iridescence>) -> Self {
+        self.iridescence = v;
+        self
+    }
+
+    /// Set `anisotropy`.
+    pub fn with_anisotropy(mut self, v: Option<Anisotropy>) -> Self {
+        self.anisotropy = v;
+        self
+    }
+
+    /// Set `dispersion`.
+    pub fn with_dispersion(mut self, v: Option<f32>) -> Self {
+        self.dispersion = v;
+        self
+    }
+
+    /// Set `diffuse_transmission`.
+    pub fn with_diffuse_transmission(mut self, v: Option<DiffuseTransmission>) -> Self {
+        self.diffuse_transmission = v;
+        self
+    }
+}
+
 /// `KHR_materials_clearcoat` parameters: a thin, glossy isotropic
 /// lacquer layer applied on top of the base material. The clearcoat
 /// has its own intensity, roughness, and (optionally) a dedicated
@@ -357,6 +432,44 @@ pub struct Clearcoat {
     /// Scale applied to the clearcoat normal map's XY components
     /// (`clearcoatNormalTexture.scale`). Default `1.0`.
     pub normal_scale: f32,
+}
+
+impl Clearcoat {
+    /// Set `factor`.
+    pub fn with_factor(mut self, v: f32) -> Self {
+        self.factor = v;
+        self
+    }
+
+    /// Set `factor_texture`.
+    pub fn with_factor_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.factor_texture = v;
+        self
+    }
+
+    /// Set `roughness`.
+    pub fn with_roughness(mut self, v: f32) -> Self {
+        self.roughness = v;
+        self
+    }
+
+    /// Set `roughness_texture`.
+    pub fn with_roughness_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.roughness_texture = v;
+        self
+    }
+
+    /// Set `normal_texture`.
+    pub fn with_normal_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.normal_texture = v;
+        self
+    }
+
+    /// Set `normal_scale`.
+    pub fn with_normal_scale(mut self, v: f32) -> Self {
+        self.normal_scale = v;
+        self
+    }
 }
 
 impl Default for Clearcoat {
@@ -392,6 +505,32 @@ pub struct Sheen {
     pub roughness_texture: Option<TextureRef>,
 }
 
+impl Sheen {
+    /// Set `color_factor`.
+    pub fn with_color_factor(mut self, v: [f32; 3]) -> Self {
+        self.color_factor = v;
+        self
+    }
+
+    /// Set `color_texture`.
+    pub fn with_color_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.color_texture = v;
+        self
+    }
+
+    /// Set `roughness`.
+    pub fn with_roughness(mut self, v: f32) -> Self {
+        self.roughness = v;
+        self
+    }
+
+    /// Set `roughness_texture`.
+    pub fn with_roughness_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.roughness_texture = v;
+        self
+    }
+}
+
 impl Default for Sheen {
     fn default() -> Self {
         Self {
@@ -415,6 +554,20 @@ pub struct Transmission {
     pub factor: f32,
     /// Transmission texture (`transmissionTexture`), `R` channel.
     pub factor_texture: Option<TextureRef>,
+}
+
+impl Transmission {
+    /// Set `factor`.
+    pub fn with_factor(mut self, v: f32) -> Self {
+        self.factor = v;
+        self
+    }
+
+    /// Set `factor_texture`.
+    pub fn with_factor_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.factor_texture = v;
+        self
+    }
 }
 
 impl Default for Transmission {
@@ -456,6 +609,32 @@ pub struct Volume {
     /// medium (`attenuationColor`), linear RGB. Default `[1,1,1]` (no
     /// tint).
     pub attenuation_color: [f32; 3],
+}
+
+impl Volume {
+    /// Set `thickness`.
+    pub fn with_thickness(mut self, v: f32) -> Self {
+        self.thickness = v;
+        self
+    }
+
+    /// Set `thickness_texture`.
+    pub fn with_thickness_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.thickness_texture = v;
+        self
+    }
+
+    /// Set `attenuation_distance`.
+    pub fn with_attenuation_distance(mut self, v: Option<f32>) -> Self {
+        self.attenuation_distance = v;
+        self
+    }
+
+    /// Set `attenuation_color`.
+    pub fn with_attenuation_color(mut self, v: [f32; 3]) -> Self {
+        self.attenuation_color = v;
+        self
+    }
 }
 
 impl Volume {
@@ -507,6 +686,44 @@ pub struct Iridescence {
     pub thickness_texture: Option<TextureRef>,
 }
 
+impl Iridescence {
+    /// Set `factor`.
+    pub fn with_factor(mut self, v: f32) -> Self {
+        self.factor = v;
+        self
+    }
+
+    /// Set `factor_texture`.
+    pub fn with_factor_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.factor_texture = v;
+        self
+    }
+
+    /// Set `ior`.
+    pub fn with_ior(mut self, v: f32) -> Self {
+        self.ior = v;
+        self
+    }
+
+    /// Set `thickness_min`.
+    pub fn with_thickness_min(mut self, v: f32) -> Self {
+        self.thickness_min = v;
+        self
+    }
+
+    /// Set `thickness_max`.
+    pub fn with_thickness_max(mut self, v: f32) -> Self {
+        self.thickness_max = v;
+        self
+    }
+
+    /// Set `thickness_texture`.
+    pub fn with_thickness_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.thickness_texture = v;
+        self
+    }
+}
+
 impl Default for Iridescence {
     fn default() -> Self {
         Self {
@@ -539,6 +756,26 @@ pub struct Anisotropy {
     /// tangent-space direction in `[-1,1]`, `B` the strength in
     /// `[0,1]`.
     pub texture: Option<TextureRef>,
+}
+
+impl Anisotropy {
+    /// Set `strength`.
+    pub fn with_strength(mut self, v: f32) -> Self {
+        self.strength = v;
+        self
+    }
+
+    /// Set `rotation`.
+    pub fn with_rotation(mut self, v: f32) -> Self {
+        self.rotation = v;
+        self
+    }
+
+    /// Set `texture`.
+    pub fn with_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.texture = v;
+        self
+    }
 }
 
 impl Default for Anisotropy {
@@ -584,6 +821,32 @@ pub struct DiffuseTransmission {
     pub color_texture: Option<TextureRef>,
 }
 
+impl DiffuseTransmission {
+    /// Set `factor`.
+    pub fn with_factor(mut self, v: f32) -> Self {
+        self.factor = v;
+        self
+    }
+
+    /// Set `factor_texture`.
+    pub fn with_factor_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.factor_texture = v;
+        self
+    }
+
+    /// Set `color_factor`.
+    pub fn with_color_factor(mut self, v: [f32; 3]) -> Self {
+        self.color_factor = v;
+        self
+    }
+
+    /// Set `color_texture`.
+    pub fn with_color_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.color_texture = v;
+        self
+    }
+}
+
 impl Default for DiffuseTransmission {
     fn default() -> Self {
         Self {
@@ -616,6 +879,32 @@ pub struct Specular {
     /// F0-colour texture (`specularColorTexture`); the `RGB` channels
     /// (sRGB-encoded) multiply [`color_factor`](Self::color_factor).
     pub color_texture: Option<TextureRef>,
+}
+
+impl Specular {
+    /// Set `factor`.
+    pub fn with_factor(mut self, v: f32) -> Self {
+        self.factor = v;
+        self
+    }
+
+    /// Set `factor_texture`.
+    pub fn with_factor_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.factor_texture = v;
+        self
+    }
+
+    /// Set `color_factor`.
+    pub fn with_color_factor(mut self, v: [f32; 3]) -> Self {
+        self.color_factor = v;
+        self
+    }
+
+    /// Set `color_texture`.
+    pub fn with_color_texture(mut self, v: Option<TextureRef>) -> Self {
+        self.color_texture = v;
+        self
+    }
 }
 
 impl Default for Specular {

@@ -101,6 +101,7 @@ impl MinFilter {
 /// the mip axis of a [`MinFilter`], see
 /// [`MinFilter::mipmap_mode`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MipmapMode {
     /// Only the base level is sampled; no mip chain is needed.
     Disabled,

@@ -80,6 +80,7 @@ use crate::{Bvh, Primitive, Scene3D, SceneRayHit};
 /// Built by [`InstanceBvh::build`]; stored in the TLAS's leaf order
 /// (index = [`SceneHit::instance`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Instance {
     /// The scene-graph node that produced this instance.
     pub node: NodeId,
@@ -169,6 +170,7 @@ impl InstanceBvhNode {
 /// to look up the material and evaluate an alpha mask at the
 /// candidate's texture coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct HitCandidate {
     /// Index into [`InstanceBvh::instances`].
     pub instance: u32,
@@ -189,6 +191,7 @@ pub struct HitCandidate {
 /// Closest-hit record of an [`InstanceBvh`] query. See the module docs
 /// for the conventions.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct SceneHit {
     /// Index into [`InstanceBvh::instances`] (world matrix lookup).
     pub instance: u32,
@@ -229,6 +232,7 @@ pub struct SceneHit {
 /// connectivity changes; node transforms and vertex positions can be
 /// updated in place with [`InstanceBvh::refit`].
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct InstanceBvh {
     /// TLAS nodes; node `0` is the root.
     pub nodes: Vec<InstanceBvhNode>,

@@ -58,6 +58,7 @@ use crate::mesh::{Indices, Primitive, Topology};
 /// triangulation of a non-simple profile is unspecified (it still
 /// terminates, but the covered area is meaningless).
 #[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
 pub struct Profile2D {
     /// Outer boundary loop.
     pub outer: Vec<[f32; 2]>,

@@ -98,6 +98,7 @@ use crate::mesh::{Indices, Primitive};
 /// [`Primitive::curvature`]). Use [`CurvatureReport::welded`] to recover
 /// the position pool the indices refer to.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct CurvatureReport {
     /// Pointwise Gaussian curvature `K = defect / A_mixed` at each
     /// welded vertex (`1/length²`).

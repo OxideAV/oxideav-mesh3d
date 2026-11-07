@@ -78,6 +78,7 @@ use crate::mesh::{Indices, Primitive, Topology};
 
 /// Tunables for a smoothing pass.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct SmoothOptions {
     /// Number of relaxation iterations. `0` is a no-op (positions
     /// returned unchanged, after the weld). Laplacian runs this many
@@ -87,6 +88,20 @@ pub struct SmoothOptions {
     /// triangle, and — defensively — non-manifold edges owned by three
     /// or more) so the silhouette is preserved. Default `true`.
     pub preserve_boundary: bool,
+}
+
+impl SmoothOptions {
+    /// Set `iterations`.
+    pub fn with_iterations(mut self, v: u32) -> Self {
+        self.iterations = v;
+        self
+    }
+
+    /// Set `preserve_boundary`.
+    pub fn with_preserve_boundary(mut self, v: bool) -> Self {
+        self.preserve_boundary = v;
+        self
+    }
 }
 
 impl Default for SmoothOptions {

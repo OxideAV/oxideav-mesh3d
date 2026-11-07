@@ -868,10 +868,7 @@ fn variant_mapping_material_uv_set_checked() {
     let mut p = one_triangle_primitive();
     p.uvs = vec![vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]];
     p.material = Some(base);
-    p.variant_mappings = vec![oxideav_mesh3d::VariantMapping {
-        material: altid,
-        variants: vec![red],
-    }];
+    p.variant_mappings = vec![oxideav_mesh3d::VariantMapping::new(altid, vec![red])];
     let mid = s.add_mesh(Mesh::new(None).with_primitive(p));
     let nid = s.add_node(Node::new().with_mesh(mid));
     s.add_root(nid);
@@ -899,10 +896,7 @@ fn shared_base_and_mapping_material_reports_once() {
     let mut p = one_triangle_primitive();
     p.uvs = vec![vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]];
     p.material = Some(matid);
-    p.variant_mappings = vec![oxideav_mesh3d::VariantMapping {
-        material: matid,
-        variants: vec![red],
-    }];
+    p.variant_mappings = vec![oxideav_mesh3d::VariantMapping::new(matid, vec![red])];
     s.add_mesh(Mesh::new(None).with_primitive(p));
     let errs = s.validate().unwrap_err();
     let uv_errs = errs

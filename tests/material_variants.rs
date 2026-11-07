@@ -53,10 +53,7 @@ fn variant_scene() -> Scene3D {
     let blue = s.add_material_variant("Blue");
     let mut p = one_triangle_primitive();
     p.material = Some(base);
-    p.variant_mappings = vec![VariantMapping {
-        material: alt,
-        variants: vec![red, blue],
-    }];
+    p.variant_mappings = vec![VariantMapping::new(alt, vec![red, blue])];
     let mid = s.add_mesh(Mesh::new(None).with_primitive(p));
     let nid = s.add_node(Node::new().with_mesh(mid));
     s.add_root(nid);
@@ -99,10 +96,7 @@ fn duplicate_variant_across_mappings_reported() {
     let alt2 = s.add_material(Material::new());
     s.meshes[0].primitives[0]
         .variant_mappings
-        .push(VariantMapping {
-            material: alt2,
-            variants: vec![MaterialVariantId(0)],
-        });
+        .push(VariantMapping::new(alt2, vec![MaterialVariantId(0)]));
     let errs = s.validate().unwrap_err();
     assert!(errs.iter().any(|e| matches!(
         e,
@@ -133,10 +127,7 @@ fn append_unifies_variant_rosters_by_name() {
     let blue = src.add_material_variant("Blue");
     let green = src.add_material_variant("Green");
     let mut p = one_triangle_primitive();
-    p.variant_mappings = vec![VariantMapping {
-        material: alt,
-        variants: vec![blue, green],
-    }];
+    p.variant_mappings = vec![VariantMapping::new(alt, vec![blue, green])];
     let mid = src.add_mesh(Mesh::new(None).with_primitive(p));
     let nid = src.add_node(Node::new().with_mesh(mid));
     src.add_root(nid);
@@ -167,10 +158,7 @@ fn merge_by_material_keeps_variant_divergent_primitives_apart() {
     a.material = Some(base);
     let mut b = one_triangle_primitive();
     b.material = Some(base);
-    b.variant_mappings = vec![VariantMapping {
-        material: alt,
-        variants: vec![red],
-    }];
+    b.variant_mappings = vec![VariantMapping::new(alt, vec![red])];
     // Same base material as `b` AND the same mappings: fuses with `b`.
     let mut c = one_triangle_primitive();
     c.material = Some(base);
@@ -187,10 +175,7 @@ fn merge_by_material_keeps_variant_divergent_primitives_apart() {
     assert_eq!(merged.primitives[1].positions.len(), 6);
     assert_eq!(
         merged.primitives[1].variant_mappings,
-        vec![VariantMapping {
-            material: alt,
-            variants: vec![red],
-        }]
+        vec![VariantMapping::new(alt, vec![red])]
     );
 }
 
@@ -206,14 +191,8 @@ fn material_for_variant_activation_rule() {
     let mut p = one_triangle_primitive();
     p.material = Some(base);
     p.variant_mappings = vec![
-        VariantMapping {
-            material: alt_a,
-            variants: vec![red, green],
-        },
-        VariantMapping {
-            material: alt_b,
-            variants: vec![blue],
-        },
+        VariantMapping::new(alt_a, vec![red, green]),
+        VariantMapping::new(alt_b, vec![blue]),
     ];
 
     // Active variant claimed by a mapping: that mapping's material.
@@ -239,14 +218,8 @@ fn material_for_variant_first_mapping_wins_on_duplicates() {
     // be deterministic — first listing wins.
     let mut p = one_triangle_primitive();
     p.variant_mappings = vec![
-        VariantMapping {
-            material: MaterialId(1),
-            variants: vec![MaterialVariantId(0)],
-        },
-        VariantMapping {
-            material: MaterialId(2),
-            variants: vec![MaterialVariantId(0)],
-        },
+        VariantMapping::new(MaterialId(1), vec![MaterialVariantId(0)]),
+        VariantMapping::new(MaterialId(2), vec![MaterialVariantId(0)]),
     ];
     assert_eq!(
         p.material_for_variant(Some(MaterialVariantId(0))),
@@ -258,10 +231,10 @@ fn material_for_variant_first_mapping_wins_on_duplicates() {
 fn transformed_preserves_variant_mappings() {
     let mut p = one_triangle_primitive();
     p.material = Some(MaterialId(0));
-    p.variant_mappings = vec![VariantMapping {
-        material: MaterialId(1),
-        variants: vec![MaterialVariantId(0)],
-    }];
+    p.variant_mappings = vec![VariantMapping::new(
+        MaterialId(1),
+        vec![MaterialVariantId(0)],
+    )];
     let scale2 = [
         [2.0, 0.0, 0.0, 0.0],
         [0.0, 2.0, 0.0, 0.0],

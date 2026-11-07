@@ -7,8 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Constructors / builders so callers can build records without struct
+  literals: `RayHit::new`, `VariantMapping::new`, `MorphedAttributes::new`
+  with `with_normals` / `with_tangents`, `AnimationSampler::new`,
+  `AnimationTarget::new`, `RawStorage::new`, `RayQuery::with_t_max`,
+  and `with_*` setters for every field of `BvhBuildOptions`,
+  `SmoothOptions`, `MaterialExt`, `Clearcoat`, `Sheen`, `Transmission`,
+  `Volume`, `Iridescence`, `Anisotropy`, `DiffuseTransmission` and
+  `Specular`.
+
 ### Changed
 
+- API hygiene: `#[non_exhaustive]` on the enums `Error`,
+  `TriangleTest`, `BvhBuildStrategy`, `MipmapMode`, `DistanceModel` and
+  `SampledValue`, and on the records `Scene3D`, `SceneRayHit`, `Skin`,
+  `RayHit`, `RayQuery`, `Bvh`, `BvhBuildOptions`, `InstanceBvh`,
+  `Instance`, `HitCandidate`, `SceneHit`, `CurvatureReport`,
+  `EdgeManifoldReport`, `TopologySummary`, `OrientationReport`,
+  `MorphedAttributes`, `VariantMapping`, `MaterialExt`, `Profile2D`,
+  `AppendOffsets`, `CacheStats`, `Pose` and `SmoothOptions`. Build them
+  through `Default` / the existing and new constructors. No behaviour
+  change.
 - edition 2024, MSRV 1.95
 
 ## [0.0.7](https://github.com/OxideAV/oxideav-mesh3d/compare/v0.0.6...v0.0.7) - 2026-10-04

@@ -44,10 +44,9 @@ fn bumped_grid(bump: f32) -> Primitive {
 #[test]
 fn zero_iterations_is_identity() {
     let prim = bumped_grid(0.5);
-    let opts = SmoothOptions {
-        iterations: 0,
-        preserve_boundary: true,
-    };
+    let opts = SmoothOptions::default()
+        .with_iterations(0)
+        .with_preserve_boundary(true);
     let out = prim.smooth_laplacian(1.0, opts);
     // Same vertex count, centre still bumped.
     assert_eq!(out.positions.len(), prim.positions.len());
@@ -91,17 +90,15 @@ fn iterating_reduces_the_bump_monotonically() {
     let prim = bumped_grid(1.0);
     let one = prim.smooth_laplacian(
         0.5,
-        SmoothOptions {
-            iterations: 1,
-            preserve_boundary: true,
-        },
+        SmoothOptions::default()
+            .with_iterations(1)
+            .with_preserve_boundary(true),
     );
     let three = prim.smooth_laplacian(
         0.5,
-        SmoothOptions {
-            iterations: 3,
-            preserve_boundary: true,
-        },
+        SmoothOptions::default()
+            .with_iterations(3)
+            .with_preserve_boundary(true),
     );
     assert!(three.positions[4][2] < one.positions[4][2]);
 }
@@ -133,17 +130,15 @@ fn boundary_can_be_smoothed_when_not_preserved() {
     prim.positions[0] = [0.0, 0.0, 0.7];
     let pinned = prim.smooth_laplacian(
         1.0,
-        SmoothOptions {
-            iterations: 1,
-            preserve_boundary: true,
-        },
+        SmoothOptions::default()
+            .with_iterations(1)
+            .with_preserve_boundary(true),
     );
     let out = prim.smooth_laplacian(
         1.0,
-        SmoothOptions {
-            iterations: 1,
-            preserve_boundary: false,
-        },
+        SmoothOptions::default()
+            .with_iterations(1)
+            .with_preserve_boundary(false),
     );
     // All grid positions are distinct, so weld preserves vertex 0 (the
     // lifted corner) as welded index 0. Pinned: untouched. Unpinned: the
@@ -186,10 +181,9 @@ fn taubin_preserves_volume_better_than_laplacian() {
     let v0 = prim.volume();
     assert!(v0 > 0.0);
 
-    let opts = SmoothOptions {
-        iterations: 10,
-        preserve_boundary: true,
-    };
+    let opts = SmoothOptions::default()
+        .with_iterations(10)
+        .with_preserve_boundary(true);
     let lap = prim.smooth_laplacian(0.5, opts).volume();
     let taub = prim.smooth_taubin(0.33, -0.34, opts).volume();
 

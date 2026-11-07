@@ -135,6 +135,17 @@ pub struct RawStorage<'a> {
     pub uncompressed_size: Option<u64>,
 }
 
+impl<'a> RawStorage<'a> {
+    /// Build a [`RawStorage`] from its fields.
+    pub fn new(scheme: &'a str, bytes: &'a [u8], uncompressed_size: Option<u64>) -> Self {
+        Self {
+            scheme,
+            bytes,
+            uncompressed_size,
+        }
+    }
+}
+
 /// Trivial in-memory [`AssetSource`] backed by an owned `Vec<u8>`.
 ///
 /// Construct one when a caller already has the bytes on hand (a unit

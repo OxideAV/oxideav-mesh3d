@@ -101,11 +101,24 @@ impl Ray {
 /// signal a caller pairs with [`crate::Material::double_sided`] to
 /// decide whether to act on it.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct RayHit {
     pub t: f32,
     pub triangle_index: usize,
     pub barycentric: [f32; 3],
     pub front_face: bool,
+}
+
+impl RayHit {
+    /// Build a [`RayHit`] from its fields.
+    pub fn new(t: f32, triangle_index: usize, barycentric: [f32; 3], front_face: bool) -> Self {
+        Self {
+            t,
+            triangle_index,
+            barycentric,
+            front_face,
+        }
+    }
 }
 
 /// Möller-Trumbore ray-triangle intersection.
@@ -215,10 +228,19 @@ pub fn intersect_aabb(ray: Ray, min: [f32; 3], max: [f32; 3], t_max: f32) -> Opt
 /// * `triangle_test` — leaf intersection algorithm (see
 ///   [`TriangleTest`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct RayQuery {
     pub t_min: f32,
     pub t_max: f32,
     pub triangle_test: TriangleTest,
+}
+
+impl RayQuery {
+    /// Set `t_max`.
+    pub fn with_t_max(mut self, v: f32) -> Self {
+        self.t_max = v;
+        self
+    }
 }
 
 impl RayQuery {
@@ -272,6 +294,7 @@ impl Default for RayQuery {
 ///   that round to exactly zero are re-evaluated in `f64` as the
 ///   paper prescribes. No epsilon is involved.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TriangleTest {
     /// Möller-Trumbore (default; matches the brute-force primitive
     /// queries bit-for-bit).

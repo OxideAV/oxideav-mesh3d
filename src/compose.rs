@@ -48,6 +48,7 @@ use crate::scene::{NodeId, Scene3D};
 /// **before** the append so the values are the pre-append destination
 /// arena lengths.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AppendOffsets {
     pub nodes: u32,
     pub meshes: u32,

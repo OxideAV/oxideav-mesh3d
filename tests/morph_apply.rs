@@ -406,16 +406,8 @@ fn morphed_attributes_round_trips_through_clone_and_eq() {
 fn morphed_attributes_reexported_at_crate_root() {
     // Both type paths must resolve to the same type — the re-export
     // must be a `pub use`, not a duplicate definition.
-    let _via_root: oxideav_mesh3d::MorphedAttributes = MorphedAttributes {
-        positions: vec![],
-        normals: None,
-        tangents: None,
-    };
-    let _via_module: oxideav_mesh3d::mesh::MorphedAttributes = MorphedAttributes {
-        positions: vec![],
-        normals: None,
-        tangents: None,
-    };
+    let _via_root: oxideav_mesh3d::MorphedAttributes = MorphedAttributes::new(vec![]);
+    let _via_module: oxideav_mesh3d::mesh::MorphedAttributes = MorphedAttributes::new(vec![]);
 }
 
 // ---------------------------------------------------------------------------

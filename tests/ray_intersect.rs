@@ -555,12 +555,7 @@ fn aabb_passes_then_primitive_hits() {
 
 #[test]
 fn ray_hit_is_clone_copy_partial_eq() {
-    let h = RayHit {
-        t: 1.0,
-        triangle_index: 7,
-        barycentric: [0.3, 0.3, 0.4],
-        front_face: true,
-    };
+    let h = RayHit::new(1.0, 7, [0.3, 0.3, 0.4], true);
     let h2 = h;
     assert_eq!(h, h2);
 }

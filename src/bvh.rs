@@ -126,6 +126,7 @@ use crate::scene::BoundingBox;
 /// Which top-down builder [`Bvh::build_with`] /
 /// [`crate::InstanceBvh::build_with`] use. See the module docs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum BvhBuildStrategy {
     /// Midpoint of the centroid bound on its largest axis
     /// (Goldsmith & Salmon 1987). Cheap, but blind to primitive size
@@ -139,6 +140,7 @@ pub enum BvhBuildStrategy {
 
 /// Tuning knobs for BVH construction.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct BvhBuildOptions {
     /// Builder selection.
     pub strategy: BvhBuildStrategy,
@@ -154,6 +156,38 @@ pub struct BvhBuildOptions {
     pub traversal_cost: f32,
     /// SAH cost of one primitive intersection.
     pub intersection_cost: f32,
+}
+
+impl BvhBuildOptions {
+    /// Set `strategy`.
+    pub fn with_strategy(mut self, v: BvhBuildStrategy) -> Self {
+        self.strategy = v;
+        self
+    }
+
+    /// Set `max_leaf_size`.
+    pub fn with_max_leaf_size(mut self, v: usize) -> Self {
+        self.max_leaf_size = v;
+        self
+    }
+
+    /// Set `sah_bins`.
+    pub fn with_sah_bins(mut self, v: usize) -> Self {
+        self.sah_bins = v;
+        self
+    }
+
+    /// Set `traversal_cost`.
+    pub fn with_traversal_cost(mut self, v: f32) -> Self {
+        self.traversal_cost = v;
+        self
+    }
+
+    /// Set `intersection_cost`.
+    pub fn with_intersection_cost(mut self, v: f32) -> Self {
+        self.intersection_cost = v;
+        self
+    }
 }
 
 impl BvhBuildOptions {
@@ -261,6 +295,7 @@ impl BvhNode {
 /// reference to read vertex positions, so after moving vertices call
 /// [`Bvh::refit`] (or rebuild) before querying again.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Bvh {
     /// Flat array of nodes; node `0` is the root.
     pub nodes: Vec<BvhNode>,

@@ -237,6 +237,7 @@ pub enum AuralMode {
 /// using `min_distance` / `max_distance` / `rolloff_factor` from
 /// the parent [`SpatialAudio`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DistanceModel {
     /// `gain = 1 - rolloff * ((d - min) / (max - min))`, clamped to `[0, 1]`.
     Linear,

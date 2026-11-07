@@ -116,6 +116,7 @@ fn label(o: &BvhBuildOptions) -> &'static str {
     match o.strategy {
         BvhBuildStrategy::ObjectMedian => "median",
         BvhBuildStrategy::BinnedSah => "sah",
+        _ => "other",
     }
 }
 

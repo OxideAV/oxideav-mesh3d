@@ -46,6 +46,7 @@ use crate::mesh::{Indices, MorphTarget, Primitive, Topology};
 /// vary, but FIFO tracks the relative quality of two orderings the same
 /// way and is the standard yardstick.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct CacheStats {
     /// Cache size used for the simulation (slots).
     pub cache_size: usize,

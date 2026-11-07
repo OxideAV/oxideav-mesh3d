@@ -41,6 +41,7 @@ use crate::scene::{NodeId, Scene3D, Transform, mat4_mul};
 /// that node. Built by [`Animation::sample_pose`]; consumed by
 /// [`Pose::local_transform`] and [`Scene3D::posed_node_transforms`].
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Pose {
     /// Sampled `Translation` per node.
     pub translations: Vec<Option<[f32; 3]>>,

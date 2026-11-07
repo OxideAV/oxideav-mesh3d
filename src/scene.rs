@@ -679,6 +679,7 @@ impl Default for Node {
 ///   reconstructs the world hit point via
 ///   `world_ray.point_at(scene_hit.hit.t)`.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct SceneRayHit {
     pub node: NodeId,
     pub primitive_index: usize,
@@ -693,6 +694,7 @@ pub struct SceneRayHit {
 /// with [`Scene3D::add_node`] is not automatically a root, so that
 /// child nodes added later can be re-parented without re-shuffling.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Scene3D {
     pub nodes: Vec<Node>,
     pub roots: Vec<NodeId>,
